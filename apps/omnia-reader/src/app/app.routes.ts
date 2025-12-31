@@ -1,5 +1,5 @@
 import { Route } from '@angular/router';
-import { Viewer } from './components/viewer';
+import { Viewer } from './components/viewer/viewer';
 
 export const appRoutes: Route[] = [
   {
