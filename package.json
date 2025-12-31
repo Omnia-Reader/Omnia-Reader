@@ -2,7 +2,9 @@
   "name": "@omnia-reader/source",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "start": "nx serve omnia-reader --port=4200"
+  },
   "private": true,
   "devDependencies": {
     "@angular-devkit/core": "~21.0.0",
