@@ -1,0 +1,6 @@
+version: "3"
+
+tasks:
+  angular-material:
+    cmds:
+      - npm install @angular/material @angular/cdk @angular/animations
