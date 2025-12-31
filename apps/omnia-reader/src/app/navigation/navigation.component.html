@@ -3,12 +3,10 @@
       [attr.role]="(isHandset$ | async) ? 'dialog' : 'navigation'"
       [mode]="(isHandset$ | async) ? 'over' : 'side'"
       [opened]="(isHandset$ | async) === false">
-    <mat-toolbar>Omnia Reader</mat-toolbar>
+    <mat-toolbar class="cursor-pointer" [routerLink]="'/'">Omnia Reader</mat-toolbar>
     <mat-divider></mat-divider>
     <mat-nav-list>
-      <a mat-list-item href="#">Link 1</a>
-      <a mat-list-item href="#">Link 2</a>
-      <a mat-list-item href="#">Link 3</a>
+      <a mat-list-item [routerLink]="'viewer'">Viewer</a>
     </mat-nav-list>
   </mat-sidenav>
   <mat-sidenav-content>
