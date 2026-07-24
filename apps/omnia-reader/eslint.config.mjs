@@ -8,6 +8,8 @@ export default [
   {
     files: ['**/*.ts'],
     rules: {
+      // Newly enabled by the Angular 22 preset; preserve the pre-upgrade behavior.
+      '@angular-eslint/prefer-on-push-component-change-detection': 'off',
       '@angular-eslint/directive-selector': [
         'error',
         {
@@ -28,7 +30,11 @@ export default [
   },
   {
     files: ['**/*.html'],
-    // Override or add rules here
-    rules: {},
+    rules: {
+      // Newly enabled preset rules; they were not enforced before the upgrade.
+      '@angular-eslint/template/click-events-have-key-events': 'off',
+      '@angular-eslint/template/interactive-supports-focus': 'off',
+      '@angular-eslint/template/label-has-associated-control': 'off',
+    },
   },
 ];

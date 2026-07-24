@@ -1,4 +1,4 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy } from '@angular/core';
 import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
 import { AsyncPipe } from '@angular/common';
 import { MatToolbarModule } from '@angular/material/toolbar';
@@ -14,6 +14,7 @@ import { RouterLink, RouterOutlet } from '@angular/router';
   selector: 'omnia-navigation',
   templateUrl: './navigation.component.html',
   styleUrl: './navigation.component.scss',
+  changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
     MatToolbarModule,
     MatButtonModule,

@@ -5,10 +5,16 @@ import {
   OnDestroy,
   ChangeDetectorRef,
   ViewEncapsulation,
-  inject
+  inject,
+  ChangeDetectionStrategy,
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import { EpubParser, EpubMetadata, EpubSpineItem, TocItem } from './epub-parser';
+import {
+  EpubParser,
+  EpubMetadata,
+  EpubSpineItem,
+  TocItem,
+} from './epub-parser';
 
 interface ChapterContent {
   spineItem: EpubSpineItem;
@@ -21,10 +27,12 @@ interface ChapterContent {
   imports: [],
   templateUrl: './viewer.html',
   styleUrl: './viewer.scss',
+  changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.ShadowDom,
 })
 export class Viewer implements OnDestroy {
-  @ViewChild('contentContainer', { static: false }) contentContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('contentContainer', { static: false })
+  contentContainer!: ElementRef<HTMLDivElement>;
 
   parser: EpubParser | null = null;
   metadata: EpubMetadata | null = null;
@@ -77,7 +85,10 @@ export class Viewer implements OnDestroy {
 
       // Extract EPUB stylesheets
       this.epubStylesheets = await this.parser.extractStylesheets();
-      console.log('✅ EPUB stylesheets extracted:', this.epubStylesheets.length);
+      console.log(
+        '✅ EPUB stylesheets extracted:',
+        this.epubStylesheets.length,
+      );
 
       // Load all chapters for continuous scrolling
       await this.loadAllChapters();
@@ -87,7 +98,6 @@ export class Viewer implements OnDestroy {
 
       this.isLoading = false;
       this.cdr.detectChanges();
-
     } catch (err) {
       this.isLoading = false;
       this.errorMessage = `Failed to load EPUB: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -107,12 +117,13 @@ export class Viewer implements OnDestroy {
       try {
         const spineItem = this.spine[i];
         const content = await this.parser.getChapterContent(spineItem.href);
-        const sanitizedContent = this.sanitizer.bypassSecurityTrustHtml(content);
+        const sanitizedContent =
+          this.sanitizer.bypassSecurityTrustHtml(content);
 
         this.chapters.push({
           spineItem,
           content: sanitizedContent,
-          index: i
+          index: i,
         });
 
         console.log(`✅ Loaded chapter ${i + 1}/${this.spine.length}`);
@@ -135,7 +146,9 @@ export class Viewer implements OnDestroy {
       return;
     }
 
-    const chapterElement = this.contentContainer.nativeElement.querySelector(`#chapter-${tocItem.spineIndex}`);
+    const chapterElement = this.contentContainer.nativeElement.querySelector(
+      `#chapter-${tocItem.spineIndex}`,
+    );
 
     if (!chapterElement) {
       console.warn(`Chapter element not found: chapter-${tocItem.spineIndex}`);
@@ -144,14 +157,20 @@ export class Viewer implements OnDestroy {
 
     // If there's an anchor, try to find the specific element within the chapter
     if (tocItem.anchor) {
-      const anchorElement = chapterElement.querySelector(`#${tocItem.anchor}, a[name="${tocItem.anchor}"]`);
+      const anchorElement = chapterElement.querySelector(
+        `#${tocItem.anchor}, a[name="${tocItem.anchor}"]`,
+      );
 
       if (anchorElement) {
         anchorElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        console.log(`Navigated to chapter ${tocItem.spineIndex}, anchor: ${tocItem.anchor}`);
+        console.log(
+          `Navigated to chapter ${tocItem.spineIndex}, anchor: ${tocItem.anchor}`,
+        );
         return;
       } else {
-        console.warn(`Anchor not found: ${tocItem.anchor}, scrolling to chapter instead`);
+        console.warn(
+          `Anchor not found: ${tocItem.anchor}, scrolling to chapter instead`,
+        );
       }
     }
 
@@ -242,4 +261,3 @@ export class Viewer implements OnDestroy {
     this.chapters = [];
   }
 }
-
