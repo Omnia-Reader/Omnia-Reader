@@ -1,0 +1,53 @@
+# https://learn.chatgpt.com/docs/config-file/config-basic
+model="gpt-5.6-sol"
+model_reasoning_effort = "high"
+
+# https://learn.chatgpt.com/docs/agent-approvals-security#run-without-approval-prompts
+sandbox_mode="workspace-write"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+
+[sandbox_workspace_write]
+network_access = true
+
+[mcp_servers.codegraph]
+command = "codegraph"
+args = ["serve", "--mcp"]
+
+[mcp_servers.firecrawl]
+command = "npx"
+args = ["-y", "firecrawl-mcp"]
+env = { FIRECRAWL_API_URL = "http://127.0.0.1:3002" }
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest"]
+
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
+
+[mcp_servers.nx]
+command = "npx"
+args = ["nx", "mcp", "--disableTelemetry"]
+env = { npm_config_cache = "/tmp/omnia-reader-nx-mcp-cache" }
+
+[mcp_servers.angular-cli]
+command = "npx"
+args = ["ng", "mcp", "--read-only"]
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+env = { npm_config_cache = "/tmp/omnia-reader-context7-mcp-cache" }
+startup_timeout_sec = 20
+
+[mcp_servers.engram]
+command = "engram"
+args = ["mcp"]
+
+[mcp_servers.mobile]
+command = "npx"
+args = ["-y", "@mobilenext/mobile-mcp@0.0.62"]
+env = { MOBILEMCP_DISABLE_TELEMETRY = "1", npm_config_cache = "/tmp/omnia-reader-mobile-mcp-cache" }
+startup_timeout_sec = 30
