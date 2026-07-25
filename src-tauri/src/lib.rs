@@ -110,7 +110,13 @@ fn take_opened_publications(
         .opened
         .lock()
         .map_err(|_| "The native publication queue is unavailable".to_owned())?;
-    Ok(std::mem::take(&mut *opened))
+    let publications = std::mem::take(&mut *opened);
+    #[cfg(feature = "native-e2e")]
+    eprintln!(
+        "native-e2e: frontend drained {} publication(s)",
+        publications.len()
+    );
+    Ok(publications)
 }
 
 #[tauri::command]
@@ -329,8 +335,18 @@ fn register_opened_publications(
 }
 
 fn emit_opened_publications(app: &AppHandle, paths: impl IntoIterator<Item = FilePath>) {
-    if matches!(register_opened_publications(app, paths), Ok(count) if count > 0) {
-        let _ = app.emit("publications-opened", ());
+    match register_opened_publications(app, paths) {
+        Ok(count) if count > 0 => {
+            #[cfg(feature = "native-e2e")]
+            eprintln!("native-e2e: queued {count} forwarded publication(s)");
+            let _ = app.emit("publications-opened", ());
+        }
+        #[cfg(feature = "native-e2e")]
+        Ok(_) => eprintln!("native-e2e: forwarded arguments contained no publications"),
+        #[cfg(feature = "native-e2e")]
+        Err(error) => eprintln!("native-e2e: failed to queue forwarded publications: {error}"),
+        #[cfg(not(feature = "native-e2e"))]
+        _ => {}
     }
 }
 
@@ -414,27 +430,32 @@ fn publication_name(path: &FilePath, kind: PublicationKind) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Tauri requires the single-instance plugin to be registered first so a
+    // second process cannot initialize another window before forwarding its
+    // publication arguments to the existing application.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        let paths =
+            desktop_argument_paths(args.into_iter().skip(1).map(PathBuf::from), Path::new(&cwd));
+        emit_opened_publications(app, paths);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .manage(PublicationSources::default())
-        .manage(BackupExports::default())
+        .manage(BackupExports::default());
+    #[cfg(all(desktop, feature = "native-e2e"))]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    let builder = builder
         .setup(|_app| {
             #[cfg(desktop)]
             {
-                _app.handle()
-                    .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-                        let paths = desktop_argument_paths(
-                            args.into_iter().skip(1).map(PathBuf::from),
-                            Path::new(&cwd),
-                        );
-                        emit_opened_publications(app, paths);
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }))?;
                 let paths = startup_publication_paths();
                 let _ = register_opened_publications(_app.handle(), paths);
             }

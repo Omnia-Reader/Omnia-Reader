@@ -195,7 +195,7 @@ npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 473 Rust + 4 bridge inputs + 4 CI actions)
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (1/1)
 npm run native:build                                     PASS (deb + rpm + AppImage)
-Initial production bundle                                459.58 kB (114.60 kB estimated transfer)
+Initial production bundle                                459.88 kB (114.67 kB estimated transfer)
 Schema-v8 migration and corrupt-record recovery tests     PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
@@ -232,6 +232,7 @@ WebKit production PDF and EPUB reader journeys            PASS
 WebKit fixed-layout/RTL/link-policy EPUB E2E              PASS
 WebKit WCAG A/AA library/settings/PDF/EPUB E2E             PASS (4/4)
 Tauri Linux amd64 deb/rpm/AppImage release bundles        PASS
+Tauri native PDF startup/EPUB forwarding/navigation E2E   PASS
 Tauri Android aarch64 debug APK and AAB                  PASS
 Tauri Android aarch64 Rust type check                    PASS
 Tauri Android back-listener and root-exit adapter tests   PASS
@@ -243,9 +244,13 @@ lazy EPUB chunk and outside the initial application bundle.
 
 The following release requirements remain open:
 
-- Native ingress is implemented, but Android intent and desktop
-  association/single-instance behavior still need emulator and packaged-app
-  end-to-end gates. Mobile back-button behavior is implemented and covered by
+- Native ingress is implemented. A feature-gated Linux native-host journey now
+  verifies a cold-start PDF argument, rendered PDF canvas, button and arrow
+  navigation, a second-process EPUB argument forwarded through Tauri's
+  single-instance plugin, rendered EPUB iframe content, and EPUB button and
+  arrow navigation. Operating-system association activation from installed
+  bundles and Android intents still need packaged-app/emulator end-to-end
+  gates. Mobile back-button behavior is implemented and covered by
   adapter/unit tests plus the shared Chromium Escape journey, but still needs
   an Android emulator and physical-device runtime gate. Lifecycle tests,
   signing, and signed release distributables remain. Read-only GitHub Actions jobs
@@ -255,8 +260,9 @@ The following release requirements remain open:
   Android APK/AAB command passes locally; the first hosted matrix run remains
   required. The documented WebKit/GTK development packages are installed on
   the local Linux build host, and a warning-free production build now produces
-  a 5.7 MB Debian package, 5.7 MB RPM, and 82 MB AppImage. Packaged-app
-  ingress/lifecycle E2E, signing, and publishing remain release requirements.
+  a 5.7 MB Debian package, 5.7 MB RPM, and 82 MB AppImage. Installed-association
+  activation, drag/drop in a native host, background/termination lifecycle,
+  signing, and publishing remain release requirements.
 - The browser clients, shared coordinator, secure same-origin gateway core,
   GitHub App/Git LFS provider adapter, MEGA gateway/SDK bridge client, and
   pinned native MEGA bridge source and non-root container packaging are
@@ -852,8 +858,13 @@ Current native implementation notes:
   invokes the narrow native app-exit command instead of relying on WebView
   history.
 - The Linux amd64 Tauri production build is warning-free and produces validated
-  Debian, RPM, and AppImage artifacts. Packaged-app file-association,
-  single-instance, drag/drop, and lifecycle journeys remain to be automated.
+  Debian, RPM, and AppImage artifacts. A debug-only, feature-gated native
+  WebDriver endpoint verifies cold-start PDF ingestion and second-process EPUB
+  forwarding through the real single-instance plugin, then exercises rendered
+  content and both arrow/button navigation paths. The runner uses deterministic
+  generated fixtures, isolated XDG storage, and the W3C protocol directly, so
+  Ubuntu needs no separate `webkit2gtk-driver` package. Installed-association,
+  native drag/drop, and background/termination lifecycle journeys remain.
 - Android initialization and aarch64 debug APK assembly are verified. Runtime
   picker/open-with and hardware-back behavior still need an emulator and
   physical-device gate.
@@ -974,6 +985,10 @@ conformance remains a release gate.
 - Implemented: read-only, immutable-action CI packaging for unsigned
   Linux/Windows/macOS verification bundles and Android aarch64 debug APK/AAB
   packages. The first hosted matrix run remains required.
+- Implemented: Linux native-host lifecycle E2E for cold-start PDF open-with
+  arguments, single-instance EPUB forwarding, actual format rendering, and
+  arrow/button navigation. The feature-gated test endpoint is excluded from
+  production builds and runs under isolated XDG directories.
 - Complete lifecycle integration and protected signing/publishing.
 - Validate desktop installers and Android APK/AAB artifacts.
 - Add multi-gigabyte and constrained-device archive memory profiling.

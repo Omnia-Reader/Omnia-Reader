@@ -87,6 +87,7 @@ npx nx build omnia-reader --configuration production
 npx nx run omnia-reader-e2e:e2e -- --project=chromium
 npm run performance:e2e
 PWA_E2E=1 npx nx run omnia-reader-e2e:e2e -- --project=chromium src/offline.spec.ts
+npm run native:e2e
 npm run release:test
 npm run release:verify
 ```
@@ -135,18 +136,25 @@ operating system, then run:
 # Debian and Ubuntu
 sudo apt update
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  dbus-x11 xvfb
 ```
 
 ```sh
 npm run native:dev
 npm run native:build
+npm run native:e2e
 ```
 
 The similarly named runtime packages are not sufficient for compiling: the
 `-dev` packages provide the GLib, GTK, JavaScriptCoreGTK, and WebKitGTK
-`pkg-config` metadata consumed by Cargo build scripts. The native host
-deliberately exposes no general filesystem or shell command to the webview.
+`pkg-config` metadata consumed by Cargo build scripts. The native E2E command
+builds a debug-only, feature-gated WebDriver endpoint and drives it directly
+through the W3C protocol; Ubuntu does not need a separate
+`webkit2gtk-driver` package. When no desktop session bus is available, run it
+as `dbus-run-session -- xvfb-run -a npm run native:e2e`. The native host
+deliberately exposes no general filesystem or shell command to the webview,
+and production builds do not include the test endpoint.
 
 ## Android
 

@@ -166,8 +166,10 @@ describe('PdfReaderEngine', () => {
     );
     await engine.open(source());
     const viewport = globalThis.document.createElement('div');
+    viewport.style.position = 'relative';
     globalThis.document.body.append(viewport);
     await engine.mount(viewport);
+    expect(viewport.style.position).toBe('absolute');
 
     const selections: Array<PublicationSelection | null> = [];
     engine.onSelection((selection) => selections.push(selection));
@@ -221,6 +223,7 @@ describe('PdfReaderEngine', () => {
       viewport.querySelectorAll('[data-omnia-annotation-layer] > div'),
     ).toHaveLength(1);
     await engine.close();
+    expect(viewport.style.position).toBe('relative');
     viewport.remove();
   });
 

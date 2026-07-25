@@ -77,6 +77,7 @@ export class PdfReaderEngine implements ReaderEngine {
   private eventBus: EventBus | null = null;
   private viewerElement: HTMLDivElement | null = null;
   private viewport: HTMLElement | null = null;
+  private previousViewportPosition: string | null = null;
   private pageNumber = 1;
   private toc: readonly TocEntry[] = [];
   private preferences: PdfReaderPreferences = {
@@ -197,8 +198,13 @@ export class PdfReaderEngine implements ReaderEngine {
     await this.stylesheetLoader();
 
     this.viewport = viewport;
+    this.previousViewportPosition = viewport.style.position;
     viewport.replaceChildren();
     viewport.classList.add('omnia-pdf-viewer-container');
+    // PDF.js requires its scroll container to be absolutely positioned and
+    // validates that invariant synchronously. Set it inline so native webviews
+    // cannot race the asynchronously loaded application stylesheet.
+    viewport.style.position = 'absolute';
     viewport.setAttribute('role', 'document');
     viewport.setAttribute('aria-label', 'PDF document');
     if (!viewport.hasAttribute('tabindex')) {
@@ -873,6 +879,9 @@ export class PdfReaderEngine implements ReaderEngine {
     }
     this.linkService?.setDocument(null);
     this.viewport?.classList.remove('omnia-pdf-viewer-container');
+    if (this.viewport && this.previousViewportPosition !== null) {
+      this.viewport.style.position = this.previousViewportPosition;
+    }
     this.viewport?.removeAttribute('role');
     this.viewport?.removeAttribute('aria-label');
     this.viewport?.replaceChildren();
@@ -881,6 +890,7 @@ export class PdfReaderEngine implements ReaderEngine {
     this.linkService = null;
     this.eventBus = null;
     this.viewport = null;
+    this.previousViewportPosition = null;
     await this.loadingTask?.destroy();
     this.loadingTask = null;
     this.document = null;

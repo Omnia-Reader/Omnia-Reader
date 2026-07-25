@@ -121,7 +121,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            xdg-utils
+            xdg-utils \
+            dbus-x11 \
+            xvfb
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -137,6 +139,10 @@ jobs:
 
       - name: Build unsigned desktop bundles
         run: npm run native:build
+
+      - name: Run native desktop lifecycle journey
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a npm run native:e2e
 
       - name: Upload unsigned verification bundles
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -27,6 +27,17 @@
       "options": {
         "command": "PERFORMANCE_E2E=1 playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 performance.spec.ts"
       }
+    },
+    "native": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "options": {
+        "commands": [
+          "npm run tauri -- build --debug --no-bundle --features native-e2e",
+          "node apps/omnia-reader-e2e/src/native/run-native-e2e.mjs"
+        ],
+        "parallel": false
+      }
     }
   }
 }

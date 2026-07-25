@@ -6,7 +6,7 @@ import {
   provideAppInitializer,
   provideBrowserGlobalErrorListeners,
 } from '@angular/core';
-import { provideRouter, Router } from '@angular/router';
+import { provideRouter, Router, RouteReuseStrategy } from '@angular/router';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 import { provideServiceWorker } from '@angular/service-worker';
 import {
@@ -56,6 +56,7 @@ import {
 import { appRoutes } from './app.routes';
 import { BackNavigationService } from './back-navigation.service';
 import { PublicationImportService } from './features/library/publication-import.service';
+import { ReaderRouteReuseStrategy } from './reader-route-reuse-strategy';
 
 function createReaderEngineRegistry(): ReaderEngineRegistry {
   const registry = new ReaderEngineRegistry();
@@ -158,6 +159,10 @@ export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideRouter(appRoutes),
+    {
+      provide: RouteReuseStrategy,
+      useClass: ReaderRouteReuseStrategy,
+    },
     provideAnimationsAsync(),
     providePlatform(),
     provideServiceWorker('ngsw-worker.js', {
