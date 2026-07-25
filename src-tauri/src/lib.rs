@@ -10,6 +10,7 @@ use tauri::{
     ipc::{InvokeBody, Request, Response},
     AppHandle, Emitter, Manager, State,
 };
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_fs::{FsExt, OpenOptions};
 use uuid::Uuid;
@@ -28,6 +29,11 @@ struct BackupExports {
     pending: Mutex<HashMap<String, PendingBackupExport>>,
 }
 
+#[derive(Default)]
+struct BookDeepLinks {
+    opened: Mutex<Vec<String>>,
+}
+
 struct PendingBackupExport {
     target: FilePath,
     temp_path: PathBuf,
@@ -36,6 +42,7 @@ struct PendingBackupExport {
 
 const BACKUP_EXPORT_ID_HEADER: &str = "x-omnia-export-id";
 const MAX_BACKUP_CHUNK_SIZE: usize = 1024 * 1024;
+const MAX_PENDING_BOOK_DEEP_LINKS: usize = 32;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +124,15 @@ fn take_opened_publications(
         publications.len()
     );
     Ok(publications)
+}
+
+#[tauri::command]
+fn take_opened_book_deep_links(links: State<'_, BookDeepLinks>) -> Result<Vec<String>, String> {
+    let mut opened = links
+        .opened
+        .lock()
+        .map_err(|_| "The native book-link queue is unavailable".to_owned())?;
+    Ok(std::mem::take(&mut *opened))
 }
 
 #[tauri::command]
@@ -350,6 +366,56 @@ fn emit_opened_publications(app: &AppHandle, paths: impl IntoIterator<Item = Fil
     }
 }
 
+fn deep_link_book_id(url: &tauri::Url) -> Option<String> {
+    if url.scheme() != "omnia-reader"
+        || url.host_str() != Some("reader")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    let mut segments = url.path_segments()?;
+    let book_id = segments.next()?;
+    if segments.next().is_some()
+        || book_id.len() != 64
+        || !book_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(format!("sha256:{}", book_id.to_ascii_lowercase()))
+}
+
+fn register_book_deep_links(
+    app: &AppHandle,
+    urls: impl IntoIterator<Item = tauri::Url>,
+) -> Result<usize, String> {
+    let links = app.state::<BookDeepLinks>();
+    let mut opened = links
+        .opened
+        .lock()
+        .map_err(|_| "The native book-link queue is unavailable".to_owned())?;
+    let mut added = 0;
+    for book_id in urls.into_iter().filter_map(|url| deep_link_book_id(&url)) {
+        if opened.len() >= MAX_PENDING_BOOK_DEEP_LINKS {
+            break;
+        }
+        if !opened.contains(&book_id) {
+            opened.push(book_id);
+            added += 1;
+        }
+    }
+    Ok(added)
+}
+
+fn emit_opened_book_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = tauri::Url>) {
+    if matches!(register_book_deep_links(app, urls), Ok(count) if count > 0) {
+        let _ = app.emit("book-deep-link-opened", ());
+    }
+}
+
 #[cfg(desktop)]
 fn desktop_argument_paths(
     arguments: impl IntoIterator<Item = PathBuf>,
@@ -375,6 +441,14 @@ fn startup_publication_paths() -> Vec<FilePath> {
         std::env::args_os().skip(1).map(PathBuf::from),
         &current_directory,
     )
+}
+
+#[cfg(desktop)]
+fn startup_book_deep_links() -> Vec<tauri::Url> {
+    std::env::args()
+        .skip(1)
+        .filter_map(|argument| tauri::Url::parse(&argument).ok())
+        .collect()
 }
 
 fn inspect_publication(app: &AppHandle, path: &FilePath) -> Result<(PublicationKind, u64), String> {
@@ -436,29 +510,48 @@ pub fn run() {
     // publication arguments to the existing application.
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-        let paths =
-            desktop_argument_paths(args.into_iter().skip(1).map(PathBuf::from), Path::new(&cwd));
+        let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
+        let paths = desktop_argument_paths(arguments.iter().map(PathBuf::from), Path::new(&cwd));
         emit_opened_publications(app, paths);
+        emit_opened_book_deep_links(
+            app,
+            arguments
+                .iter()
+                .filter_map(|argument| tauri::Url::parse(argument).ok()),
+        );
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
             let _ = window.set_focus();
         }
     }));
     let builder = builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .manage(PublicationSources::default())
+        .manage(BookDeepLinks::default())
         .manage(BackupExports::default());
     #[cfg(all(desktop, feature = "native-e2e"))]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     let builder = builder
-        .setup(|_app| {
+        .setup(|app| {
             #[cfg(desktop)]
             {
                 let paths = startup_publication_paths();
-                let _ = register_opened_publications(_app.handle(), paths);
+                let _ = register_opened_publications(app.handle(), paths);
+                let urls = startup_book_deep_links();
+                let _ = register_book_deep_links(app.handle(), urls);
             }
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            app.deep_link().register_all()?;
+            if let Some(urls) = app.deep_link().get_current()? {
+                let _ = register_book_deep_links(app.handle(), urls);
+            }
+            let deep_link_app = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                emit_opened_book_deep_links(&deep_link_app, event.urls().iter().cloned());
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -475,6 +568,7 @@ pub fn run() {
             commit_backup_export,
             pick_publications,
             read_publication,
+            take_opened_book_deep_links,
             take_opened_publications,
             write_backup_chunk
         ])
@@ -484,6 +578,7 @@ pub fn run() {
     builder.run(|_app, _event| {
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
         if let tauri::RunEvent::Opened { urls } = _event {
+            emit_opened_book_deep_links(_app, urls.iter().cloned());
             emit_opened_publications(_app, urls.into_iter().map(FilePath::Url));
         }
     });
@@ -491,7 +586,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_backup_file_name;
+    use super::{deep_link_book_id, safe_backup_file_name};
 
     #[test]
     fn backup_file_names_are_confined_and_normalized() {
@@ -506,5 +601,29 @@ mod tests {
         assert!(safe_backup_file_name("../library").is_err());
         assert!(safe_backup_file_name("folder\\library").is_err());
         assert!(safe_backup_file_name("\n").is_err());
+    }
+
+    #[test]
+    fn book_deep_links_accept_only_exact_local_edition_routes() {
+        let uppercase_id = "A".repeat(64);
+        let valid = tauri::Url::parse(&format!("omnia-reader://reader/{uppercase_id}")).unwrap();
+        assert_eq!(
+            deep_link_book_id(&valid),
+            Some(format!("sha256:{}", "a".repeat(64)))
+        );
+
+        for invalid in [
+            "https://reader/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "omnia-reader://settings/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "omnia-reader://reader/not-a-sha256",
+            "omnia-reader://reader/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extra",
+            "omnia-reader://reader/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?locator=1",
+            "omnia-reader://reader/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#fragment",
+        ] {
+            assert_eq!(
+                deep_link_book_id(&tauri::Url::parse(invalid).unwrap()),
+                None
+            );
+        }
     }
 }

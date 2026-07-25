@@ -530,6 +530,56 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     )
     .toBeNull();
 
+  await page.getByRole('button', { name: 'Toggle table of contents' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Preface', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', {
+      name: 'Expand sections for 1 Chapter One',
+    }),
+  ).toHaveAttribute('aria-expanded', 'false');
+  await expect(
+    page.getByRole('button', { name: '1.1 Introduction', exact: true }),
+  ).toBeHidden();
+  await page
+    .getByRole('button', { name: 'Expand sections for 1 Chapter One' })
+    .click();
+  await expect(
+    page.getByRole('button', { name: '1.1 Introduction', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Collapse sections for 1 Chapter One' })
+    .click();
+  await expect(
+    page.getByRole('button', { name: '1.1 Introduction', exact: true }),
+  ).toBeHidden();
+  await page
+    .getByRole('button', { name: 'Expand sections for 1 Chapter One' })
+    .click();
+  await expect(
+    page.getByRole('button', { name: '1.1 Introduction', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: '2 Chapter Two', exact: true })
+    .click();
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByRole('heading', { name: 'Chapter Two', exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Toggle table of contents' }).click();
+  await page
+    .getByRole('button', { name: '1 Chapter One', exact: true })
+    .click();
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByRole('heading', { name: 'Chapter One', exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+
   await page.getByRole('button', { name: 'Open reader settings' }).click();
   await page.getByLabel('Theme').selectOption('sepia');
   await expect

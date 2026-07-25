@@ -1,4 +1,4 @@
-import type { Book, Contents, Rendition } from '@likecoin/epub-ts';
+import type { Book, Contents, Rendition, Section } from '@likecoin/epub-ts';
 import {
   BookSource,
   PublicationAnnotation,
@@ -292,6 +292,11 @@ describe('EpubReaderEngine publication compatibility', () => {
       },
       ready: Promise.resolve(),
       spine: {
+        get: vi.fn((target?: string | number) =>
+          target === 'page-2.xhtml'
+            ? ({ href: 'page-2.xhtml' } as Section)
+            : null,
+        ),
         hooks: {
           content: {
             register: vi.fn(),
@@ -407,6 +412,160 @@ describe('EpubReaderEngine publication compatibility', () => {
     expect(blockedClick.defaultPrevented).toBe(true);
     expect(externalLinks).toHaveLength(1);
 
+    await engine.close();
+    viewport.remove();
+  });
+});
+
+describe('EpubReaderEngine table of contents navigation', () => {
+  it('resolves NAV-relative and fragment-only targets to canonical spine hrefs', async () => {
+    const display = vi.fn().mockResolvedValue(undefined);
+    const rendition = {
+      on: vi.fn(),
+      off: vi.fn(),
+      display,
+      currentLocation: vi.fn(() => undefined),
+      annotations: { highlight: vi.fn(), remove: vi.fn() },
+      getContents: vi.fn(() => []),
+      hooks: { content: { register: vi.fn() } },
+      themes: { registerRules: vi.fn(), select: vi.fn() },
+      direction: vi.fn(),
+      reportLocation: vi.fn().mockResolvedValue(undefined),
+      _disconnectContainerObserver: vi.fn(),
+      destroy: vi.fn(),
+    } as unknown as Rendition;
+    const sections = [
+      { href: 'Text/chapter-1.xhtml' },
+      { href: 'Text/chapter-2.xhtml' },
+      { href: 'OPS/Text/chapter-3.xhtml' },
+    ] as Section[];
+    const spine = {
+      get: vi.fn((target?: string | number) => {
+        if (target === undefined) {
+          return sections[0];
+        }
+        const href = String(target).split('#', 1)[0];
+        return sections.find((section) => section.href === href) ?? null;
+      }),
+      each: vi.fn(
+        (
+          callback: (
+            section: Section,
+            index: number,
+            sections: Section[],
+          ) => void,
+        ) => sections.forEach(callback),
+      ),
+      hooks: { content: { register: vi.fn() } },
+    };
+    const book = {
+      loaded: {
+        metadata: Promise.resolve({
+          title: 'Nested navigation fixture',
+          creator: 'Reader',
+          direction: 'ltr',
+        }),
+        navigation: Promise.resolve({
+          toc: [
+            {
+              id: 'preface',
+              href: '../Text/chapter-1.xhtml#preface',
+              label: 'Preface',
+              subitems: [],
+            },
+            {
+              id: 'chapter-one',
+              href: '../Text/chapter-1.xhtml#intro',
+              label: 'Chapter One',
+              subitems: [
+                {
+                  id: 'chapter-one-details',
+                  href: '#details',
+                  label: 'Details',
+                  subitems: [],
+                },
+              ],
+            },
+            {
+              id: 'chapter-two',
+              href: '/OEBPS/Text/chapter-2.xhtml#part-two',
+              label: 'Chapter Two',
+              subitems: [],
+            },
+            {
+              id: 'chapter-three',
+              href: '../Text/chapter-3.xhtml#appendix',
+              label: 'Chapter Three',
+              subitems: [],
+            },
+          ],
+          landmarks: [
+            {
+              href: '../Text/chapter-1.xhtml#preface',
+              label: 'Preface',
+              type: 'frontmatter preface',
+            },
+          ],
+        }),
+      },
+      ready: Promise.resolve(),
+      packaging: {
+        navPath: 'Navigation/toc.xhtml',
+        ncxPath: '',
+      },
+      spine,
+      renderTo: vi.fn(() => rendition),
+      coverUrl: vi.fn().mockResolvedValue(null),
+      destroy: vi.fn(),
+    } as unknown as Book;
+    const engine = new EpubReaderEngine(
+      async () =>
+        ({
+          default: () => book,
+        }) as unknown as typeof import('@likecoin/epub-ts'),
+    );
+
+    await engine.open(source());
+    const [preface, chapterOne, chapterTwo, chapterThree] =
+      engine.tableOfContents();
+    expect(preface).toMatchObject({
+      numbering: 'unnumbered',
+      locator: {
+        href: 'Text/chapter-1.xhtml',
+        locations: { fragments: ['preface'] },
+      },
+    });
+    expect(chapterOne.numbering).toBeUndefined();
+    expect(chapterOne.locator).toMatchObject({
+      href: 'Text/chapter-1.xhtml',
+      locations: { fragments: ['intro'] },
+    });
+    expect(chapterOne.children?.[0].locator).toMatchObject({
+      href: 'Text/chapter-1.xhtml',
+      locations: { fragments: ['details'] },
+    });
+    expect(chapterTwo.locator).toMatchObject({
+      href: 'Text/chapter-2.xhtml',
+      locations: { fragments: ['part-two'] },
+    });
+    expect(chapterThree.locator).toMatchObject({
+      href: 'OPS/Text/chapter-3.xhtml',
+      locations: { fragments: ['appendix'] },
+    });
+
+    const viewport = globalThis.document.createElement('div');
+    globalThis.document.body.append(viewport);
+    await engine.mount(viewport);
+    await engine.goTo(chapterOne.children?.[0].locator ?? chapterOne.locator);
+    await engine.goTo(chapterTwo.locator);
+    await engine.goTo(chapterThree.locator);
+
+    expect(display).toHaveBeenNthCalledWith(2, 'Text/chapter-1.xhtml#details');
+    expect(display).toHaveBeenNthCalledWith(3, 'Text/chapter-2.xhtml#part-two');
+    expect(display).toHaveBeenNthCalledWith(
+      4,
+      'OPS/Text/chapter-3.xhtml#appendix',
+    );
     await engine.close();
     viewport.remove();
   });

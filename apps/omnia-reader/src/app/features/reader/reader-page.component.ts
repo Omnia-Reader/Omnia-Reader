@@ -80,6 +80,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   metadata: PublicationMetadata | null = null;
   tableOfContents: readonly TocEntry[] = [];
   tocItems: readonly FlattenedTocEntry[] = [];
+  visibleTocItems: readonly FlattenedTocEntry[] = [];
   searchResults: readonly SearchResult[] = [];
   searchQuery = '';
   searching = false;
@@ -123,6 +124,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private progress: ReadingProgress | null = null;
   private currentLocator: PublicationLocator | null = null;
   private lastPersistedLocator = '';
+  private readonly collapsedTocItemKeys = new Set<string>();
   private removeBackgroundListener: (() => void) | null = null;
   private removeRelocationListener: (() => void) | null = null;
   private removeSelectionListener: (() => void) | null = null;
@@ -251,6 +253,13 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.currentPageNumber = this.currentLocator?.locations?.position ?? 1;
       this.tableOfContents = this.engine.tableOfContents();
       this.tocItems = flattenToc(this.tableOfContents);
+      this.collapsedTocItemKeys.clear();
+      for (const item of this.tocItems) {
+        if (item.hasChildren) {
+          this.collapsedTocItemKeys.add(item.key);
+        }
+      }
+      this.updateVisibleTocItems();
     } catch (error) {
       this.errorMessage =
         error instanceof Error ? error.message : 'Unable to open this book';
@@ -289,8 +298,24 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   async goTo(entry: TocEntry): Promise<void> {
-    await this.engine?.goTo(entry.locator);
-    this.tocOpen = false;
+    if (!this.engine || this.loading || this.navigationBusy) {
+      return;
+    }
+    this.navigationBusy = true;
+    this.navigationError = null;
+    this.changeDetector.markForCheck();
+    try {
+      await this.engine.goTo(entry.locator);
+      this.tocOpen = false;
+    } catch (error) {
+      this.navigationError =
+        error instanceof Error
+          ? error.message
+          : 'Unable to navigate this publication';
+    } finally {
+      this.navigationBusy = false;
+      this.changeDetector.markForCheck();
+    }
   }
 
   toggleToc(): void {
@@ -300,6 +325,23 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.thumbnailsOpen = false;
     this.bookmarksOpen = false;
     this.annotationsOpen = false;
+  }
+
+  toggleTocItem(item: FlattenedTocEntry): void {
+    if (!item.hasChildren) {
+      return;
+    }
+    if (this.collapsedTocItemKeys.has(item.key)) {
+      this.collapsedTocItemKeys.delete(item.key);
+    } else {
+      this.collapsedTocItemKeys.add(item.key);
+    }
+    this.updateVisibleTocItems();
+    this.changeDetector.markForCheck();
+  }
+
+  isTocItemExpanded(item: FlattenedTocEntry): boolean {
+    return !this.collapsedTocItemKeys.has(item.key);
   }
 
   toggleSearch(): void {
@@ -729,6 +771,14 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  private updateVisibleTocItems(): void {
+    this.visibleTocItems = this.tocItems.filter((item) =>
+      item.parentKeys.every(
+        (parentKey) => !this.collapsedTocItemKeys.has(parentKey),
+      ),
+    );
+  }
+
   private queueProgressSave(locator?: PublicationLocator): Promise<void> {
     this.progressWrite = this.progressWrite
       .catch(() => undefined)
@@ -869,17 +919,103 @@ function createBookmarkLabel(
 interface FlattenedTocEntry {
   entry: TocEntry;
   depth: number;
+  number: string | null;
+  displayLabel: string;
+  key: string;
+  parentKeys: readonly string[];
+  hasChildren: boolean;
 }
 
 function flattenToc(
   entries: readonly TocEntry[],
   depth = 0,
+  parentNumber: string | null = null,
+  parentCanNumber = true,
+  parentKeys: readonly string[] = [],
+  parentPath: readonly number[] = [],
 ): readonly FlattenedTocEntry[] {
-  return entries.flatMap((entry) => [
-    { entry, depth },
-    ...flattenToc(entry.children ?? [], depth + 1),
-  ]);
+  let numberedIndex = 0;
+  return entries.flatMap((entry, index) => {
+    const path = [...parentPath, index + 1];
+    const numbered = parentCanNumber && shouldNumberTocEntry(entry, depth);
+    if (numbered) {
+      numberedIndex += 1;
+    }
+    const number = numbered
+      ? parentNumber
+        ? `${parentNumber}.${numberedIndex}`
+        : String(numberedIndex)
+      : null;
+    const children = entry.children ?? [];
+    const key = path.join('.');
+    return [
+      {
+        entry,
+        depth,
+        number,
+        displayLabel: number ? `${number} ${entry.title}` : entry.title,
+        key,
+        parentKeys,
+        hasChildren: children.length > 0,
+      },
+      ...flattenToc(
+        children,
+        depth + 1,
+        number,
+        numbered,
+        [...parentKeys, key],
+        path,
+      ),
+    ];
+  });
 }
+
+function shouldNumberTocEntry(entry: TocEntry, depth: number): boolean {
+  if (entry.numbering) {
+    return entry.numbering === 'numbered';
+  }
+  return (
+    depth > 0 ||
+    !UNNUMBERED_TOP_LEVEL_TOC_TITLES.has(normalizeTocTitle(entry.title))
+  );
+}
+
+function normalizeTocTitle(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+const UNNUMBERED_TOP_LEVEL_TOC_TITLES = new Set([
+  'about the author',
+  'about the authors',
+  'acknowledgements',
+  'acknowledgments',
+  'afterword',
+  'bibliography',
+  'colophon',
+  'contents',
+  'contributors',
+  'copyright',
+  'copyright page',
+  'dedication',
+  'endnotes',
+  'epigraph',
+  'epilogue',
+  'foreword',
+  'glossary',
+  'half title',
+  'index',
+  'introduction',
+  'notes',
+  'preface',
+  'prologue',
+  'references',
+  'table of contents',
+  'title page',
+]);
 
 function getDeviceId(): string {
   const storageKey = 'omnia-reader-device-id';

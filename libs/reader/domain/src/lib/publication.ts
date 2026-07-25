@@ -50,6 +50,7 @@ export interface PublicationLocator {
 export interface TocEntry {
   title: string;
   locator: PublicationLocator;
+  numbering?: 'numbered' | 'unnumbered';
   children?: readonly TocEntry[];
 }
 
@@ -239,6 +240,9 @@ export interface PlatformPort {
   createFileSave(request: FileSaveRequest): Promise<PlatformFileSave | null>;
   onPublicationsOpened(
     callback: (sources: readonly BookSource[]) => void | Promise<void>,
+  ): Promise<() => void>;
+  onBookDeepLink(
+    callback: (bookId: string) => void | Promise<void>,
   ): Promise<() => void>;
   onBackRequested(callback: () => void | Promise<void>): Promise<() => void>;
   openExternalUrl(url: string): Promise<void>;

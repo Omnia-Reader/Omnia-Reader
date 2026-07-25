@@ -55,6 +55,7 @@ import {
 } from '@omnia-reader/sync/mega';
 import { appRoutes } from './app.routes';
 import { BackNavigationService } from './back-navigation.service';
+import { BookDeepLinkService } from './book-deep-link.service';
 import { PublicationImportService } from './features/library/publication-import.service';
 import { ReaderRouteReuseStrategy } from './reader-route-reuse-strategy';
 
@@ -155,6 +156,13 @@ async function initializeBackNavigation(): Promise<void> {
   destroyRef.onDestroy(stopBackNavigation);
 }
 
+async function initializeBookDeepLinks(): Promise<void> {
+  const deepLinks = inject(BookDeepLinkService);
+  const destroyRef = inject(DestroyRef);
+  const stopDeepLinks = await deepLinks.start();
+  destroyRef.onDestroy(stopDeepLinks);
+}
+
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
@@ -224,6 +232,7 @@ export const appConfig: ApplicationConfig = {
     },
     provideAppInitializer(initializeAutomaticSync),
     provideAppInitializer(initializePublicationIngress),
+    provideAppInitializer(initializeBookDeepLinks),
     provideAppInitializer(initializeBackNavigation),
   ],
 };

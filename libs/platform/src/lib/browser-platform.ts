@@ -125,6 +125,13 @@ export class BrowserPlatform implements PlatformPort {
     };
   }
 
+  async onBookDeepLink(
+    callback: (bookId: string) => void | Promise<void>,
+  ): Promise<() => void> {
+    void callback;
+    return () => undefined;
+  }
+
   async onBackRequested(
     callback: () => void | Promise<void>,
   ): Promise<() => void> {

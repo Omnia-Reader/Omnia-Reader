@@ -60,6 +60,7 @@
       mat-icon-button
       type="button"
       aria-label="Toggle table of contents"
+      [attr.aria-expanded]="tocOpen"
       [disabled]="tableOfContents.length === 0"
       (click)="toggleToc()"
     >
@@ -225,21 +226,51 @@
       aria-label="Table of contents"
     >
       <h2>Contents</h2>
-      <nav class="grid">
-        @for (
-          item of tocItems;
-          track item.entry.locator.href +
-            (item.entry.locator.locations?.fragments?.[0] ?? '') +
-            item.entry.title
-        ) {
-          <button
-            class="cursor-pointer border-0 bg-transparent py-3 text-left text-inherit"
+      <nav class="grid" aria-label="Publication table of contents">
+        @for (item of visibleTocItems; track item.key) {
+          <div
+            class="flex min-w-0 items-center"
             [style.padding-left.px]="item.depth * 16"
-            type="button"
-            (click)="goTo(item.entry)"
           >
-            {{ item.entry.title }}
-          </button>
+            @if (item.hasChildren) {
+              <button
+                mat-icon-button
+                class="shrink-0"
+                type="button"
+                [attr.aria-label]="
+                  (isTocItemExpanded(item) ? 'Collapse' : 'Expand') +
+                  ' sections for ' +
+                  item.displayLabel
+                "
+                [attr.aria-expanded]="isTocItemExpanded(item)"
+                (click)="toggleTocItem(item)"
+              >
+                <mat-icon>
+                  {{
+                    isTocItemExpanded(item)
+                      ? 'keyboard_arrow_down'
+                      : 'keyboard_arrow_right'
+                  }}
+                </mat-icon>
+              </button>
+            } @else {
+              <span class="block w-12 shrink-0" aria-hidden="true"></span>
+            }
+            <button
+              class="min-w-0 flex-1 cursor-pointer border-0 bg-transparent py-3 text-left text-inherit"
+              type="button"
+              (click)="goTo(item.entry)"
+            >
+              @if (item.number) {
+                <span
+                  class="mr-2 inline-block min-w-8 text-right text-sm text-stone-500 tabular-nums"
+                >
+                  {{ item.number }}
+                </span>
+              }
+              <span>{{ item.entry.title }}</span>
+            </button>
+          </div>
         }
       </nav>
     </aside>

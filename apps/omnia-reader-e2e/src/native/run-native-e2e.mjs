@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -33,9 +35,10 @@ async function main() {
 
     await verifyStartupPdfJourney(driver);
     await verifySingleInstanceEpubJourney(driver);
+    await verifyBookDeepLinkJourney(driver);
 
     console.log(
-      'Native E2E passed: startup open-with, single-instance forwarding, PDF/EPUB rendering, and keyboard/button navigation.',
+      'Native E2E passed: startup open-with, single-instance forwarding, PDF/EPUB rendering, deep-link reopening, and keyboard/button navigation.',
     );
   } catch (error) {
     const screenshotPath = join(
@@ -56,9 +59,29 @@ async function main() {
                   loaded: link.sheet !== null
                 })
               ),
-              viewportPosition: getComputedStyle(
-                document.querySelector('[data-testid="publication-viewport"]')
-              ).position
+              viewportPosition: document.querySelector(
+                '[data-testid="publication-viewport"]'
+              )
+                ? getComputedStyle(
+                    document.querySelector(
+                      '[data-testid="publication-viewport"]'
+                    )
+                  ).position
+                : null,
+              epubFrames: Array.from(
+                document.querySelectorAll(
+                  '[data-testid="publication-viewport"] iframe'
+                ),
+                (frame) => ({
+                  src: frame.getAttribute('src'),
+                  srcdocLength: frame.getAttribute('srcdoc')?.length ?? 0,
+                  sandbox: frame.getAttribute('sandbox'),
+                  readyState: frame.contentDocument?.readyState ?? null,
+                  bodyText: frame.contentDocument?.body?.innerText?.slice(0, 500)
+                    ?? null
+                })
+              ),
+              bodyText: document.body?.innerText?.slice(0, 2_000)
             };
           `,
           )
@@ -103,7 +126,7 @@ async function verifyStartupPdfJourney(driver) {
 }
 
 async function verifySingleInstanceEpubJourney(driver) {
-  await forwardPublicationToRunningInstance(NATIVE_EPUB_FIXTURE);
+  await forwardArgumentToRunningInstance(NATIVE_EPUB_FIXTURE);
   await driver.waitForExactText('Omnia Native EPUB Fixture', 30_000);
   await verifyEpubChapter(driver, 'Native Chapter One');
 
@@ -115,6 +138,20 @@ async function verifySingleInstanceEpubJourney(driver) {
   );
   await verifyEpubChapter(driver, 'Native Chapter One');
   console.log('✓ single-instance EPUB forwarding, rendering, and navigation');
+}
+
+async function verifyBookDeepLinkJourney(driver) {
+  const pdfBookId = createHash('sha256')
+    .update(await readFile(NATIVE_PDF_FIXTURE))
+    .digest('hex');
+  await forwardArgumentToRunningInstance(`omnia-reader://reader/${pdfBookId}`);
+  await driver.waitForExactText('Omnia Native PDF Fixture', 30_000);
+  await driver.waitForElement(
+    '.pdfViewer .page[data-page-number="1"] canvas',
+    30_000,
+  );
+  await driver.waitForExactText('1 / 2');
+  console.log('✓ exact-edition deep link reopened the existing PDF');
 }
 
 async function verifyEpubChapter(driver, expectedHeading) {
@@ -191,9 +228,9 @@ async function waitForServer(app, timeout) {
   );
 }
 
-async function forwardPublicationToRunningInstance(publicationPath) {
+async function forwardArgumentToRunningInstance(argument) {
   await new Promise((resolvePromise, reject) => {
-    const child = spawn(nativeBinary, [publicationPath], {
+    const child = spawn(nativeBinary, [argument], {
       cwd: resolve('.'),
       env: {
         ...process.env,

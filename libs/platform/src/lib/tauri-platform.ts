@@ -33,6 +33,7 @@ export type NativeOpenExternal = (url: string) => Promise<void>;
 type TauriPlatformKind = 'tauri-desktop' | 'tauri-android';
 const BACKUP_EXPORT_ID_HEADER = 'X-Omnia-Export-Id';
 const NATIVE_BACKUP_CHUNK_SIZE = 512 * 1024;
+const BOOK_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 export class TauriPlatform implements PlatformPort {
   readonly supportsStreamingFileSave = true;
@@ -122,6 +123,30 @@ export class TauriPlatform implements PlatformPort {
       return delivery;
     };
     const unlisten = await this.listenNative('publications-opened', () => {
+      void drain();
+    });
+    await drain();
+    return unlisten;
+  }
+
+  async onBookDeepLink(
+    callback: (bookId: string) => void | Promise<void>,
+  ): Promise<() => void> {
+    let delivery = Promise.resolve();
+    const drain = (): Promise<void> => {
+      delivery = delivery
+        .catch(() => undefined)
+        .then(async () => {
+          const value = await this.invokeNative<unknown>(
+            'take_opened_book_deep_links',
+          );
+          for (const bookId of normalizeBookIds(value)) {
+            await callback(bookId);
+          }
+        });
+      return delivery;
+    };
+    const unlisten = await this.listenNative('book-deep-link-opened', () => {
       void drain();
     });
     await drain();
@@ -263,4 +288,14 @@ function normalizeNativeBytes(nativeBytes: NativeBytes): ArrayBuffer {
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,
   ) as ArrayBuffer;
+}
+
+function normalizeBookIds(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(
+    (bookId): bookId is string =>
+      typeof bookId === 'string' && BOOK_ID_PATTERN.test(bookId),
+  );
 }

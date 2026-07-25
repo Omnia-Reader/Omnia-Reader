@@ -72,10 +72,19 @@ implemented:
 - The exact-pinned `@likecoin/epub-ts` runtime renders EPUB content in its own
   iframe with scripts disabled. It retains the EPUB.js API while replacing the
   obsolete `unload` lifecycle listener with `pagehide`. Recursive contents,
-  headless incremental full-text search, finite paginated layout, button and
+  NAV/NCX-relative and fragment-only table-of-contents targets, headless
+  incremental full-text search, finite paginated layout, button and
   left/right-arrow navigation in both the application and publication iframe,
   relocation events, CFI resume, themes, typography, flow, and spread
-  preferences use the common reader contract. Publication scripts, active
+  preferences use the common reader contract. Invalid table-of-contents
+  targets produce a controlled reader error instead of an unhandled renderer
+  rejection. The reader presents every ToC level with stable hierarchical
+  numbering and accessible per-section expand/collapse controls, collapsed by
+  default. EPUB landmark semantics deterministically exempt front/back matter
+  such as prefaces and contributors from generated chapter numbers; a
+  conservative normalized-title fallback covers legacy EPUB/NCX and PDF
+  outlines without semantic roles. Unnumbered entries do not consume the
+  chapter sequence. Publication scripts, active
   embeds, inline handlers, form submission targets, unsafe URLs, remote
   resource attributes, and remote CSS imports/URLs are removed before
   rendering. The web and Tauri CSPs deny unlisted origins, objects, and form
@@ -170,6 +179,10 @@ implemented:
   warm desktop launches through Tauri's single-instance plugin, and desktop or
   browser file drops are queued, signature-validated, imported, journaled, and
   opened without exposing native paths to Angular.
+- Exact-edition `omnia-reader://reader/<sha256>` links use the same cold-start
+  and single-instance queues. The native boundary converts the URL digest to
+  the canonical `sha256:<digest>` book identity; Angular opens that precise
+  local edition and falls back to the library when it is unavailable.
 - A platform-neutral back-navigation coordinator gives transient UI
   last-opened-first priority. Escape closes reader or mobile-navigation panels
   without leaving the current book; Android hardware back uses the same
@@ -186,16 +199,16 @@ implemented:
 Verified in the current implementation:
 
 ```text
-npx nx run-many -t test --all --skip-nx-cache            PASS (248 JS + 1 native; 1 JS skipped)
-npx nx run-many -t lint --all --skip-nx-cache            PASS (13 projects)
+npx nx run-many -t test --all --skip-nx-cache            PASS (256 JS + 1 native; 1 JS skipped)
+npx nx run-many -t lint --all --skip-nx-cache            PASS (12 projects)
 npx nx build omnia-reader --configuration production     PASS
 npx nx build sync-gateway --configuration production     PASS
 npm audit --omit=dev                                     PASS (0 vulnerabilities)
 npm run release:test                                    PASS (8/8)
-npm run release:verify                                  PASS (122 files; 33 npm + 473 Rust + 4 bridge inputs + 4 CI actions)
-cargo test --manifest-path src-tauri/Cargo.toml           PASS (1/1)
+npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)
+cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
 npm run native:build                                     PASS (deb + rpm + AppImage)
-Initial production bundle                                459.88 kB (114.67 kB estimated transfer)
+Initial production bundle                                461.94 kB (115.04 kB estimated transfer)
 Schema-v8 migration and corrupt-record recovery tests     PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
@@ -203,6 +216,7 @@ Chromium layered PDF/EPUB reader and resume E2E          PASS
 Chromium PDF/EPUB button and arrow navigation E2E         PASS
 Chromium finite PDF/EPUB viewport and pagination E2E      PASS
 Chromium reader console and EPUB script-sandbox E2E       PASS
+Chromium/Firefox/WebKit nested EPUB ToC navigation E2E     PASS (3/3)
 Chromium durable PDF bookmark create/resume/delete E2E   PASS
 Chromium durable PDF/EPUB highlight and note E2E          PASS
 Chromium drag-and-drop import and automatic open E2E      PASS
@@ -232,7 +246,7 @@ WebKit production PDF and EPUB reader journeys            PASS
 WebKit fixed-layout/RTL/link-policy EPUB E2E              PASS
 WebKit WCAG A/AA library/settings/PDF/EPUB E2E             PASS (4/4)
 Tauri Linux amd64 deb/rpm/AppImage release bundles        PASS
-Tauri native PDF startup/EPUB forwarding/navigation E2E   PASS
+Tauri native PDF startup/EPUB forwarding/deep-link E2E    PASS
 Tauri Android aarch64 debug APK and AAB                  PASS
 Tauri Android aarch64 Rust type check                    PASS
 Tauri Android back-listener and root-exit adapter tests   PASS
@@ -248,7 +262,8 @@ The following release requirements remain open:
   verifies a cold-start PDF argument, rendered PDF canvas, button and arrow
   navigation, a second-process EPUB argument forwarded through Tauri's
   single-instance plugin, rendered EPUB iframe content, and EPUB button and
-  arrow navigation. Operating-system association activation from installed
+  arrow navigation, then an exact-edition link that reopens the PDF. Operating-
+  system association and protocol activation from installed
   bundles and Android intents still need packaged-app/emulator end-to-end
   gates. Mobile back-button behavior is implemented and covered by
   adapter/unit tests plus the shared Chromium Escape journey, but still needs
@@ -861,9 +876,10 @@ Current native implementation notes:
   Debian, RPM, and AppImage artifacts. A debug-only, feature-gated native
   WebDriver endpoint verifies cold-start PDF ingestion and second-process EPUB
   forwarding through the real single-instance plugin, then exercises rendered
-  content and both arrow/button navigation paths. The runner uses deterministic
-  generated fixtures, isolated XDG storage, and the W3C protocol directly, so
-  Ubuntu needs no separate `webkit2gtk-driver` package. Installed-association,
+  content, both arrow/button navigation paths, and exact-edition deep-link
+  routing. The runner uses deterministic generated fixtures, isolated XDG
+  storage, and the W3C protocol directly, so Ubuntu needs no separate
+  `webkit2gtk-driver` package. Installed-association and protocol activation,
   native drag/drop, and background/termination lifecycle journeys remain.
 - Android initialization and aarch64 debug APK assembly are verified. Runtime
   picker/open-with and hardware-back behavior still need an emulator and
@@ -889,8 +905,10 @@ web, desktop, and Android development targets.
   `EpubReaderEngine`.
 - Implemented: replace unsafe Angular HTML injection with sanitized,
   script-disabled iframe rendering.
-- Implemented: lazy section rendering, recursive TOC, headless search, themes,
-  finite pagination, scrolling, button/arrow navigation, and exact CFI resume.
+- Implemented: lazy section rendering, recursive numbered and initially
+  collapsed TOC, semantic unnumbered front/back matter, headless search,
+  themes, finite pagination, scrolling, button/arrow navigation, and exact CFI
+  resume.
 - Implemented: remove the custom parser after fixture parity is demonstrated.
 
 Exit gate: the EPUB corpus passes on Chromium, Firefox, WebKit, Tauri desktop,
@@ -987,8 +1005,9 @@ conformance remains a release gate.
   packages. The first hosted matrix run remains required.
 - Implemented: Linux native-host lifecycle E2E for cold-start PDF open-with
   arguments, single-instance EPUB forwarding, actual format rendering, and
-  arrow/button navigation. The feature-gated test endpoint is excluded from
-  production builds and runs under isolated XDG directories.
+  arrow/button navigation plus exact-edition deep-link routing. The
+  feature-gated test endpoint is excluded from production builds and runs under
+  isolated XDG directories.
 - Complete lifecycle integration and protected signing/publishing.
 - Validate desktop installers and Android APK/AAB artifacts.
 - Add multi-gigabyte and constrained-device archive memory profiling.

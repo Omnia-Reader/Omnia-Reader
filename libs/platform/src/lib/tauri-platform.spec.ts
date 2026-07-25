@@ -105,8 +105,10 @@ describe('BrowserPlatform', () => {
   it('leaves browser history and tab lifecycle to the browser', async () => {
     const platform = new BrowserPlatform();
     const stop = await platform.onBackRequested(vi.fn());
+    const stopDeepLinks = await platform.onBookDeepLink(vi.fn());
 
     stop();
+    stopDeepLinks();
     await expect(platform.requestApplicationExit()).resolves.toBeUndefined();
   });
 
@@ -314,6 +316,55 @@ describe('TauriPlatform', () => {
     openedListener({ payload: null });
     await vi.waitFor(() => expect(received).toHaveLength(2));
     expect(received[1]).toEqual(['warm.epub']);
+
+    stop();
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it('drains only validated cold-start and warm exact-edition deep links', async () => {
+    const coldBookId = `sha256:${'a'.repeat(64)}`;
+    const warmBookId = `sha256:${'b'.repeat(64)}`;
+    let opened: unknown = [coldBookId, '../not-a-book'];
+    let openedListener: ((event: { payload: unknown }) => void) | null = null;
+    const unlisten = vi.fn();
+    const listen = vi.fn(
+      async (
+        event: string,
+        callback: (event: { payload: unknown }) => void,
+      ) => {
+        expect(event).toBe('book-deep-link-opened');
+        openedListener = callback;
+        return unlisten;
+      },
+    );
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'take_opened_book_deep_links') {
+        const result = opened;
+        opened = [];
+        return result;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const received: string[] = [];
+    const platform = new TauriPlatform(
+      invoke as NativeInvoke,
+      listen as NativeListen,
+    );
+
+    const stop = await platform.onBookDeepLink((bookId) => {
+      received.push(bookId);
+    });
+    expect(received).toEqual([coldBookId]);
+
+    opened = [warmBookId, 'sha256:not-a-digest', null];
+    if (!openedListener) {
+      throw new Error(
+        'Expected the native deep-link listener to be registered',
+      );
+    }
+    openedListener({ payload: null });
+    await vi.waitFor(() => expect(received).toHaveLength(2));
+    expect(received).toEqual([coldBookId, warmBookId]);
 
     stop();
     expect(unlisten).toHaveBeenCalledOnce();

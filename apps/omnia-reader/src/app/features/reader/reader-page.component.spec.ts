@@ -42,7 +42,51 @@ describe('ReaderPageComponent annotations', () => {
       open: vi.fn().mockResolvedValue({ title: BOOK.title, authors: [] }),
       mount: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
-      tableOfContents: () => [],
+      tableOfContents: () => [
+        {
+          title: 'Preface',
+          numbering: 'unnumbered',
+          locator: {
+            href: 'preface',
+            type: 'application/pdf',
+            locations: { position: 1 },
+          },
+        },
+        {
+          title: 'Contributors',
+          locator: {
+            href: 'contributors',
+            type: 'application/pdf',
+            locations: { position: 1 },
+          },
+        },
+        {
+          title: 'Chapter One',
+          locator: {
+            href: 'chapter-1',
+            type: 'application/pdf',
+            locations: { position: 1 },
+          },
+          children: [
+            {
+              title: 'Introduction',
+              locator: {
+                href: 'chapter-1',
+                type: 'application/pdf',
+                locations: { position: 1, fragments: ['introduction'] },
+              },
+            },
+          ],
+        },
+        {
+          title: 'Chapter Two',
+          locator: {
+            href: 'chapter-2',
+            type: 'application/pdf',
+            locations: { position: 2 },
+          },
+        },
+      ],
       currentLocator: () => ({
         href: '',
         type: 'application/pdf',
@@ -149,6 +193,25 @@ describe('ReaderPageComponent annotations', () => {
     await fixture.whenStable();
     await vi.waitFor(() => expect(callbacks.selection).toBeTypeOf('function'));
     fixture.detectChanges();
+
+    expect(
+      fixture.componentInstance.tocItems.map((item) => item.number),
+    ).toEqual([null, null, '1', '1.1', '2']);
+    expect(
+      fixture.componentInstance.visibleTocItems.map((item) => item.number),
+    ).toEqual([null, null, '1', '2']);
+    const chapterOne = fixture.componentInstance.tocItems[2];
+    expect(fixture.componentInstance.isTocItemExpanded(chapterOne)).toBe(false);
+    fixture.componentInstance.toggleTocItem(chapterOne);
+    expect(
+      fixture.componentInstance.visibleTocItems.map((item) => item.number),
+    ).toEqual([null, null, '1', '1.1', '2']);
+    expect(fixture.componentInstance.isTocItemExpanded(chapterOne)).toBe(true);
+    fixture.componentInstance.toggleTocItem(chapterOne);
+    expect(
+      fixture.componentInstance.visibleTocItems.map((item) => item.number),
+    ).toEqual([null, null, '1', '2']);
+    expect(fixture.componentInstance.isTocItemExpanded(chapterOne)).toBe(false);
 
     document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),

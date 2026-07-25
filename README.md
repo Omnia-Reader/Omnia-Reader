@@ -7,10 +7,12 @@ The current implementation includes an OPFS-first local library with a
 byte-backed IndexedDB fallback, incremental worker hashing, durable EPUB/PDF covers,
 the maintained `@likecoin/epub-ts` EPUB.js-compatible runtime and PDF.js reader
 engines, keyboard and button page navigation, exact resume locations, format
-preferences, fixed-layout and RTL EPUB support, safe internal links,
-consent-gated HTTP(S) links, durable bookmarks, highlights and notes, full-text
-search, versioned full-library backup archives, a local-first sync journal,
-PWA offline support, and narrow native import and external-link bridges.
+preferences, fixed-layout and RTL EPUB support, NAV/NCX-relative table-of-contents
+navigation with numbered, initially collapsed sections and unnumbered
+front/back matter, safe internal links, consent-gated HTTP(S) links, durable
+bookmarks, highlights and notes, full-text search, versioned full-library backup
+archives, a local-first sync journal, PWA offline support, and narrow native
+import, exact-edition deep-link, and external-link bridges.
 Backups stream directly to File System Access and native save destinations
 where supported, with cancellation and a compatible browser download fallback.
 Reader panels, desktop Escape, and Android hardware back share deterministic

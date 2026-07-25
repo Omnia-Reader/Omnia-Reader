@@ -1,6 +1,7 @@
 import type {
   Book,
   Contents,
+  LandmarkItem,
   NavItem,
   Rendition,
   Section,
@@ -253,7 +254,12 @@ export class EpubReaderEngine implements ReaderEngine {
     this.publicationLayout =
       metadata.layout === 'pre-paginated' ? 'pre-paginated' : 'reflowable';
     this.publicationSpread = metadata.spread === 'none' ? 'none' : 'auto';
-    this.toc = navigation.toc.map((item) => this.mapTocEntry(item));
+    const unnumberedTargets = this.unnumberedNavigationTargets(
+      navigation.landmarks ?? [],
+    );
+    this.toc = navigation.toc.map((item) =>
+      this.mapTocEntry(item, '', unnumberedTargets),
+    );
     const cover = await this.loadCover();
 
     return {
@@ -453,11 +459,18 @@ export class EpubReaderEngine implements ReaderEngine {
   async goTo(locator: PublicationLocator): Promise<void> {
     const rendition = this.requireRendition();
     const fragment = locator.locations?.fragments?.[0];
-    const target = fragment?.startsWith('epubcfi(')
-      ? fragment
-      : fragment
-        ? `${locator.href}#${fragment}`
-        : locator.href;
+    let target: string;
+    if (fragment?.startsWith('epubcfi(')) {
+      target = fragment;
+    } else {
+      const section = this.book?.spine.get(locator.href);
+      if (!section?.href) {
+        throw new Error(
+          'This publication section is not available. Its table of contents may be invalid.',
+        );
+      }
+      target = fragment ? `${section.href}#${fragment}` : section.href;
+    }
     await rendition.display(target);
     this.attachRenditionContentHandlers();
     await this.refreshRenditionLocation(rendition);
@@ -520,8 +533,17 @@ export class EpubReaderEngine implements ReaderEngine {
     }
   }
 
-  private mapTocEntry(item: NavItem): TocEntry {
-    const [href, fragment] = item.href.split('#', 2);
+  private mapTocEntry(
+    item: NavItem,
+    parentHref = '',
+    unnumberedTargets: ReadonlySet<string> = new Set(),
+  ): TocEntry {
+    const hashIndex = item.href.indexOf('#');
+    const rawHref =
+      hashIndex === -1 ? item.href : item.href.slice(0, hashIndex);
+    const fragment =
+      hashIndex === -1 ? undefined : item.href.slice(hashIndex + 1);
+    const href = this.resolveTocHref(rawHref, parentHref);
     return {
       title: item.label,
       locator: {
@@ -529,8 +551,86 @@ export class EpubReaderEngine implements ReaderEngine {
         type: 'application/xhtml+xml',
         locations: fragment ? { fragments: [fragment] } : undefined,
       },
-      children: item.subitems?.map((child) => this.mapTocEntry(child)),
+      numbering: unnumberedTargets.has(tocTargetKey(href, fragment))
+        ? 'unnumbered'
+        : undefined,
+      children: item.subitems?.map((child) =>
+        this.mapTocEntry(child, href, unnumberedTargets),
+      ),
     };
+  }
+
+  private unnumberedNavigationTargets(
+    landmarks: readonly LandmarkItem[],
+  ): ReadonlySet<string> {
+    const targets = new Set<string>();
+    for (const landmark of landmarks) {
+      const types = landmark.type?.toLowerCase().split(/\s+/) ?? [];
+      if (
+        !landmark.href ||
+        !types.some((type) => UNNUMBERED_EPUB_LANDMARK_TYPES.has(type))
+      ) {
+        continue;
+      }
+      const hashIndex = landmark.href.indexOf('#');
+      const rawHref =
+        hashIndex === -1 ? landmark.href : landmark.href.slice(0, hashIndex);
+      const fragment =
+        hashIndex === -1 ? undefined : landmark.href.slice(hashIndex + 1);
+      const href = this.resolveTocHref(rawHref, '');
+      targets.add(tocTargetKey(href, fragment));
+    }
+    return targets;
+  }
+
+  private resolveTocHref(rawHref: string, parentHref: string): string {
+    const book = this.book;
+    const inheritedHref = rawHref || parentHref;
+    if (!book || !inheritedHref) {
+      return inheritedHref;
+    }
+
+    const navigationPath =
+      book.packaging?.navPath || book.packaging?.ncxPath || '';
+    const candidates = new Set<string>([inheritedHref]);
+    if (rawHref && navigationPath) {
+      const resolved = resolveEpubRelativePath(navigationPath, rawHref);
+      if (resolved) {
+        candidates.add(resolved);
+      }
+    }
+
+    for (const candidate of candidates) {
+      const section = book.spine.get(candidate);
+      if (section?.href) {
+        return section.href;
+      }
+    }
+
+    const normalizedCandidates = new Set(
+      [...candidates].map(normalizeEpubPath).filter(Boolean),
+    );
+    const suffixMatches: Section[] = [];
+    book.spine.each((section) => {
+      if (!section.href) {
+        return;
+      }
+      const sectionPath = normalizeEpubPath(section.href);
+      if (
+        sectionPath &&
+        [...normalizedCandidates].some(
+          (candidate) =>
+            candidate === sectionPath ||
+            candidate.endsWith(`/${sectionPath}`) ||
+            sectionPath.endsWith(`/${candidate}`),
+        )
+      ) {
+        suffixMatches.push(section);
+      }
+    });
+    return suffixMatches.length === 1 && suffixMatches[0].href
+      ? suffixMatches[0].href
+      : inheritedHref;
   }
 
   private async loadCover(): Promise<Blob | undefined> {
@@ -900,6 +1000,66 @@ export class EpubReaderEngine implements ReaderEngine {
     }
   }
 }
+
+function resolveEpubRelativePath(
+  navigationPath: string,
+  target: string,
+): string {
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target)) {
+    return '';
+  }
+  try {
+    const root = new URL('https://omnia-reader.invalid/');
+    const base = new URL(navigationPath, root);
+    const resolved = new URL(target, base);
+    return resolved.origin === root.origin
+      ? normalizeEpubPath(resolved.pathname)
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+function normalizeEpubPath(value: string): string {
+  try {
+    const path = new URL(value, 'https://omnia-reader.invalid/').pathname;
+    return decodeURIComponent(path).replace(/^\/+/, '');
+  } catch {
+    return value.replace(/^\/+/, '');
+  }
+}
+
+function tocTargetKey(href: string, fragment?: string): string {
+  return `${href}#${fragment ?? ''}`;
+}
+
+const UNNUMBERED_EPUB_LANDMARK_TYPES = new Set([
+  'acknowledgments',
+  'afterword',
+  'appendix',
+  'backmatter',
+  'bibliography',
+  'colophon',
+  'contributors',
+  'copyright-page',
+  'dedication',
+  'epigraph',
+  'errata',
+  'foreword',
+  'frontmatter',
+  'glossary',
+  'halftitlepage',
+  'imprimatur',
+  'index',
+  'introduction',
+  'notes',
+  'other-credits',
+  'preface',
+  'prologue',
+  'references',
+  'revision-history',
+  'titlepage',
+]);
 
 const EPUB_THEME_PALETTES = {
   light: { background: '#fffdf9', foreground: '#292524' },

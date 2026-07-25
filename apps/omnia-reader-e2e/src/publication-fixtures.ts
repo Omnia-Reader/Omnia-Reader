@@ -33,7 +33,7 @@ export async function createEpubFixture(): Promise<Buffer> {
     <meta property="dcterms:modified">2026-07-24T00:00:00Z</meta>
   </metadata>
   <manifest>
-    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="nav" href="navigation/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/>
     <item id="chapter-1" href="chapter-1.xhtml" media-type="application/xhtml+xml"/>
     <item id="chapter-2" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>
@@ -52,15 +52,28 @@ export async function createEpubFixture(): Promise<Buffer> {
     ),
   );
   archive.file(
-    'OEBPS/nav.xhtml',
+    'OEBPS/navigation/nav.xhtml',
     `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head><title>Contents</title></head>
   <body>
     <nav epub:type="toc" xmlns:epub="http://www.idpf.org/2007/ops">
       <ol>
-        <li><a href="chapter-1.xhtml">Chapter One</a></li>
-        <li><a href="chapter-2.xhtml">Chapter Two</a></li>
+        <li><a href="../chapter-1.xhtml#preface">Preface</a></li>
+        <li>
+          <a href="../chapter-1.xhtml">Chapter One</a>
+          <ol>
+            <li><a href="#introduction">Introduction</a></li>
+          </ol>
+        </li>
+        <li><a href="../chapter-2.xhtml">Chapter Two</a></li>
+      </ol>
+    </nav>
+    <nav epub:type="landmarks" xmlns:epub="http://www.idpf.org/2007/ops">
+      <ol>
+        <li>
+          <a epub:type="preface" href="../chapter-1.xhtml#preface">Preface</a>
+        </li>
       </ol>
     </nav>
   </body>
@@ -77,7 +90,9 @@ export async function createEpubFixture(): Promise<Buffer> {
     <style>@import "https://tracking.invalid/imported.css";</style>
   </head>
   <body>
+    <h1 id="preface">Preface</h1>
     <h1>Chapter One</h1>
+    <h2 id="introduction">Introduction</h2>
     <p>This is the first EPUB fixture chapter.</p>
     <button type="button" onclick="window.parent.postMessage('epub-script-executed', '*')">Unsafe publication action</button>
     <a href="javascript:window.parent.postMessage('epub-script-executed', '*')">Unsafe publication link</a>

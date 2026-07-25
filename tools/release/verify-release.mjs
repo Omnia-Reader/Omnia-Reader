@@ -19,6 +19,7 @@ export const REVIEWED_LICENSE_EXPRESSIONS = new Set([
   'BSD-3-Clause AND MIT',
   'BSD-3-Clause OR MIT OR Apache-2.0',
   'BSD-3-Clause/MIT',
+  'CC0-1.0',
   'CC0-1.0 OR MIT-0 OR Apache-2.0',
   'ISC',
   'MIT',

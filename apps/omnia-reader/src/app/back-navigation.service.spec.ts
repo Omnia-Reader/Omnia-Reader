@@ -27,6 +27,7 @@ describe('BackNavigationService', () => {
       pickPublications: vi.fn().mockResolvedValue([]),
       createFileSave: vi.fn().mockResolvedValue(null),
       onPublicationsOpened: vi.fn().mockResolvedValue(vi.fn()),
+      onBookDeepLink: vi.fn().mockResolvedValue(vi.fn()),
       onBackRequested: vi.fn(async (callback) => {
         backRequested = callback;
         return () => stopPlatformListener();
