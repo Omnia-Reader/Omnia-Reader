@@ -84,7 +84,6 @@ export class PdfReaderEngine implements ReaderEngine {
     ...DEFAULT_PDF_READER_PREFERENCES,
   };
   private annotations: readonly PublicationAnnotation[] = [];
-  private selectionCaptureQueued = false;
   private passwordRequiredWithoutListener = false;
   private readonly relocationListeners = new Set<
     (locator: PublicationLocator) => void
@@ -125,15 +124,16 @@ export class PdfReaderEngine implements ReaderEngine {
       this.ensureFormAccessibility(event.pageNumber);
     }
   };
-  private readonly handleSelectionChange = (): void => {
-    if (this.selectionCaptureQueued) {
+  private readonly handleSelectionAction = (event: MouseEvent): void => {
+    if (event.type === 'mousedown' && event.button !== 2) {
       return;
     }
-    this.selectionCaptureQueued = true;
-    queueMicrotask(() => {
-      this.selectionCaptureQueued = false;
-      this.captureSelection();
-    });
+    const selection = this.captureSelection();
+    if (!selection) {
+      return;
+    }
+    event.preventDefault();
+    this.notifySelection(selection);
   };
 
   constructor(
@@ -255,8 +255,14 @@ export class PdfReaderEngine implements ReaderEngine {
     eventBus.on('textlayerrendered', this.handleTextLayerRendered);
     eventBus.on('annotationlayerrendered', this.handleAnnotationLayerRendered);
     viewport.ownerDocument.addEventListener(
-      'selectionchange',
-      this.handleSelectionChange,
+      'mousedown',
+      this.handleSelectionAction,
+      true,
+    );
+    viewport.ownerDocument.addEventListener(
+      'contextmenu',
+      this.handleSelectionAction,
+      true,
     );
     linkService.setViewer(pdfViewer);
     linkService.setDocument(document);
@@ -610,7 +616,7 @@ export class PdfReaderEngine implements ReaderEngine {
     });
   }
 
-  private captureSelection(): void {
+  private captureSelection(): PublicationSelection | null {
     const viewer = this.pdfViewer;
     const viewport = this.viewport;
     const document = this.document;
@@ -623,16 +629,14 @@ export class PdfReaderEngine implements ReaderEngine {
       selection.rangeCount === 0 ||
       selection.isCollapsed
     ) {
-      this.notifySelection(null);
-      return;
+      return null;
     }
 
     const range = selection.getRangeAt(0);
     const startPage = closestPage(range.startContainer, this.viewerElement);
     const endPage = closestPage(range.endContainer, this.viewerElement);
     if (!startPage || startPage !== endPage) {
-      this.notifySelection(null);
-      return;
+      return null;
     }
     const pageNumber = Number(startPage.dataset['pageNumber']);
     const textLayer = startPage.querySelector<HTMLElement>('.textLayer');
@@ -644,8 +648,7 @@ export class PdfReaderEngine implements ReaderEngine {
       !textLayer ||
       !pageView
     ) {
-      this.notifySelection(null);
-      return;
+      return null;
     }
 
     const start = textOffsetWithin(
@@ -666,8 +669,7 @@ export class PdfReaderEngine implements ReaderEngine {
       !highlight.trim() ||
       highlight.length > 4096
     ) {
-      this.notifySelection(null);
-      return;
+      return null;
     }
 
     const pageRect = pageView.div.getBoundingClientRect();
@@ -686,7 +688,7 @@ export class PdfReaderEngine implements ReaderEngine {
         return `pdf-rect=${round(first[0])},${round(first[1])},${round(second[0])},${round(second[1])}`;
       });
     const pageText = textLayer.textContent ?? '';
-    this.notifySelection({
+    return {
       locator: {
         ...pageLocator(pageNumber, document.numPages),
         locations: {
@@ -699,7 +701,7 @@ export class PdfReaderEngine implements ReaderEngine {
           after: pageText.slice(end, end + 256),
         },
       },
-    });
+    };
   }
 
   private renderVisibleAnnotations(): void {
@@ -870,8 +872,14 @@ export class PdfReaderEngine implements ReaderEngine {
       );
     }
     this.viewport?.ownerDocument.removeEventListener(
-      'selectionchange',
-      this.handleSelectionChange,
+      'mousedown',
+      this.handleSelectionAction,
+      true,
+    );
+    this.viewport?.ownerDocument.removeEventListener(
+      'contextmenu',
+      this.handleSelectionAction,
+      true,
     );
     this.pdfViewer?.cleanup();
     if (this.pdfViewer) {
@@ -898,7 +906,6 @@ export class PdfReaderEngine implements ReaderEngine {
     this.pageNumber = 1;
     this.toc = [];
     this.annotations = [];
-    this.selectionCaptureQueued = false;
     this.passwordRequiredWithoutListener = false;
   }
 }

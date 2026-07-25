@@ -10,7 +10,7 @@ export async function createPdfHighlight(
     `.pdfViewer .page[data-page-number="${pageNumber}"] .textLayer`,
   );
   await expect(textLayer).toContainText(selectedText);
-  await textLayer.evaluate((layer, text) => {
+  const selectionPosition = await textLayer.evaluate((layer, text) => {
     const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
     while (node && !node.textContent?.includes(text)) {
@@ -27,8 +27,16 @@ export async function createPdfHighlight(
     selection?.removeAllRanges();
     selection?.addRange(range);
     document.dispatchEvent(new Event('selectionchange'));
+    const selectionRect = range.getBoundingClientRect();
+    const layerRect = layer.getBoundingClientRect();
+    return {
+      x: selectionRect.left - layerRect.left + selectionRect.width / 2,
+      y: selectionRect.top - layerRect.top + selectionRect.height / 2,
+    };
   }, selectedText);
   const editor = page.getByRole('dialog', { name: 'New highlight' });
+  await expect(editor).toBeHidden();
+  await textLayer.click({ button: 'right', position: selectionPosition });
   await expect(editor).toBeVisible();
   await editor.getByRole('button', { name: 'Pink' }).click();
   await editor.getByRole('textbox', { name: 'Note (optional)' }).fill(note);
@@ -48,7 +56,7 @@ export async function createEpubHighlight(
     .filter({ hasText: selectedText })
     .first();
   await expect(paragraph).toContainText(selectedText);
-  await paragraph.evaluate((element, text) => {
+  const selectionPosition = await paragraph.evaluate((element, text) => {
     const node = element.firstChild;
     if (!node?.textContent) {
       throw new Error(`Unable to select "${text}"`);
@@ -61,6 +69,12 @@ export async function createEpubHighlight(
     selection?.removeAllRanges();
     selection?.addRange(range);
     element.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    const selectionRect = range.getBoundingClientRect();
+    const paragraphRect = element.getBoundingClientRect();
+    return {
+      x: selectionRect.left - paragraphRect.left + selectionRect.width / 2,
+      y: selectionRect.top - paragraphRect.top + selectionRect.height / 2,
+    };
   }, selectedText);
   await expect
     .poll(() =>
@@ -70,8 +84,26 @@ export async function createEpubHighlight(
       }),
     )
     .toContain(selectedText);
-  await paragraph.dispatchEvent('mouseup');
   const editor = page.getByRole('dialog', { name: 'New highlight' });
+  await expect(editor).toBeHidden();
+  if (page.context().browser()?.browserType().name() === 'webkit') {
+    const contextMenuAllowed = await page
+      .getByTestId('publication-viewport')
+      .locator('iframe')
+      .evaluate((frame) =>
+        frame.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            button: 2,
+            view: window,
+          }),
+        ),
+      );
+    expect(contextMenuAllowed).toBe(false);
+  } else {
+    await paragraph.click({ button: 'right', position: selectionPosition });
+  }
   await expect(editor).toBeVisible();
   await editor.getByRole('button', { name: 'Green' }).click();
   await editor.getByRole('textbox', { name: 'Note (optional)' }).fill(note);

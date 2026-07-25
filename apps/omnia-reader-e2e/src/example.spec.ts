@@ -309,7 +309,31 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   await expect(page.getByText('Review this second page.')).toBeVisible();
+  await page.getByRole('button', { name: 'Edit annotation' }).click();
+  const pdfAnnotationEditor = page.getByRole('dialog', {
+    name: 'Edit highlight',
+  });
+  await expect(
+    pdfAnnotationEditor.getByRole('textbox', { name: 'Note (optional)' }),
+  ).toHaveValue('Review this second page.');
+  await pdfAnnotationEditor
+    .getByRole('textbox', { name: 'Note (optional)' })
+    .fill('Updated PDF note.');
+  await pdfAnnotationEditor.getByRole('button', { name: 'Blue' }).click();
+  await pdfAnnotationEditor
+    .getByRole('button', { name: 'Save', exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
+  await expect(page.getByText('Updated PDF note.')).toBeVisible();
   await page.getByRole('button', { name: 'Delete annotation' }).click();
+  await expect(page.getByText('No highlights yet.')).toBeVisible();
+  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.getByText('Omnia PDF Fixture', { exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
   await expect(page.getByText('No highlights yet.')).toBeVisible();
 });
 
@@ -673,6 +697,32 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   await expect(page.getByText('Portable EPUB note.')).toBeVisible();
+  await page.getByRole('button', { name: 'Edit annotation' }).click();
+  const epubAnnotationEditor = page.getByRole('dialog', {
+    name: 'Edit highlight',
+  });
+  await expect(
+    epubAnnotationEditor.getByRole('textbox', { name: 'Note (optional)' }),
+  ).toHaveValue('Portable EPUB note.');
+  await epubAnnotationEditor
+    .getByRole('textbox', { name: 'Note (optional)' })
+    .fill('Updated EPUB note.');
+  await epubAnnotationEditor.getByRole('button', { name: 'Pink' }).click();
+  await epubAnnotationEditor
+    .getByRole('button', { name: 'Save', exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
+  await expect(page.getByText('Updated EPUB note.')).toBeVisible();
+  await page.getByRole('button', { name: 'Delete annotation' }).click();
+  await expect(page.getByText('No highlights yet.')).toBeVisible();
+  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
+  await expect(page.getByText('No highlights yet.')).toBeVisible();
   expect(publicationRequests).toEqual([]);
 });
 

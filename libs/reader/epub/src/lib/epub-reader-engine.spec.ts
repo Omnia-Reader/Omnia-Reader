@@ -160,6 +160,13 @@ describe('EpubReaderEngine annotations', () => {
     globalThis.document.dispatchEvent(
       new MouseEvent('mouseup', { bubbles: true }),
     );
+    expect(selections).toEqual([]);
+    const contextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+    });
+    paragraph.dispatchEvent(contextMenu);
+    expect(contextMenu.defaultPrevented).toBe(true);
 
     const captured = selections[selections.length - 1];
     expect(captured?.locator).toMatchObject({
@@ -195,13 +202,17 @@ describe('EpubReaderEngine annotations', () => {
 
     (
       renderedContents.cfiFromRange as ReturnType<typeof vi.fn>
-    ).mockImplementationOnce(() => {
+    ).mockImplementation(() => {
       throw new Error('CFI conversion is unavailable');
     });
     engine.clearSelection();
     browserSelection?.addRange(range);
     globalThis.document.dispatchEvent(
       new MouseEvent('mouseup', { bubbles: true }),
+    );
+    expect(selections[selections.length - 1]).toBeNull();
+    paragraph.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
     );
     expect(selections[selections.length - 1]?.locator).toMatchObject({
       href: 'chapter.xhtml',
@@ -225,6 +236,12 @@ describe('EpubReaderEngine annotations', () => {
     const frameSelection = frameDocument.defaultView?.getSelection();
     frameSelection?.removeAllRanges();
     frameSelection?.addRange(frameRange);
+    const selectionCountBeforeContextMenu = selections.length;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(selections).toHaveLength(selectionCountBeforeContextMenu);
+    frameParagraph.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     await vi.waitFor(
       () => {
         expect(selections[selections.length - 1]?.locator.text).toMatchObject({

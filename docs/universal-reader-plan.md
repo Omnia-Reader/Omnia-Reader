@@ -90,11 +90,13 @@ implemented:
   rendering. The web and Tauri CSPs deny unlisted origins, objects, and form
   actions. Their narrowly required `unsafe-inline` script allowance supports
   EPUB.ts's trusted iframe bootstrap; authored publication scripts remain
-  blocked by the script-disabled sandbox and pre-render sanitizer. Selections
-  produce quote-backed CFI annotations and persisted highlights are reapplied
-  through EPUB decorations. Event-driven selection capture has a deduplicated
-  stable-selection fallback for WebKit hosts that drop iframe `mouseup` and
-  `selectionchange` delivery.
+  blocked by the script-disabled sandbox and pre-render sanitizer. Text
+  selection remains passive until the reader explicitly requests the context
+  menu with a secondary click; only then does Omnia offer highlighting and note
+  actions. Selected ranges produce quote-backed CFI annotations and persisted
+  highlights are reapplied through EPUB decorations. Event-driven selection
+  capture has a deduplicated stable-selection fallback plus a sandbox-frame
+  bridge for WebKit hosts that drop iframe pointer-event delivery.
 - PDF.js runs in a lazy engine with a separately deployed worker and the
   official virtualized `PDFViewer`. It provides multi-page canvas rendering,
   selectable text and annotation layers, interactive AcroForm fields with
@@ -105,8 +107,9 @@ implemented:
   Valid encrypted PDFs remain importable without retaining a password and
   support incorrect-password retry in the reader. Malformed imports are
   rejected through the actual lazy engine and atomically remove only newly
-  created records. Selections persist page-relative text offsets and PDF-space
-  rectangles so highlights survive zoom and rotation.
+  created records. PDF text selection is likewise passive until an explicit
+  secondary click. Accepted selections persist page-relative text offsets and
+  PDF-space rectangles so highlights survive zoom and rotation.
 - Progress is saved from renderer relocation events, not only button actions.
   Local writes remain authoritative and append to an offline sync operation
   journal.
@@ -218,7 +221,7 @@ Chromium finite PDF/EPUB viewport and pagination E2E      PASS
 Chromium reader console and EPUB script-sandbox E2E       PASS
 Chromium/Firefox/WebKit nested EPUB ToC navigation E2E     PASS (3/3)
 Chromium durable PDF bookmark create/resume/delete E2E   PASS
-Chromium durable PDF/EPUB highlight and note E2E          PASS
+Chromium/Firefox/WebKit PDF/EPUB annotation lifecycle E2E PASS (6/6)
 Chromium drag-and-drop import and automatic open E2E      PASS
 Chromium installed-PWA fully-offline reopen E2E          PASS
 Chromium durable EPUB/PDF cover extraction E2E           PASS

@@ -195,6 +195,14 @@ describe('PdfReaderEngine', () => {
     browserSelection?.addRange(range);
     globalThis.document.dispatchEvent(new Event('selectionchange'));
     await Promise.resolve();
+    expect(selections).toEqual([]);
+
+    const contextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+    });
+    globalThis.document.dispatchEvent(contextMenu);
+    expect(contextMenu.defaultPrevented).toBe(true);
 
     const captured = selections[selections.length - 1];
     expect(captured?.locator).toMatchObject({

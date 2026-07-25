@@ -66,6 +66,10 @@ export class EpubReaderEngine implements ReaderEngine {
   private readonly contentDocuments = new Set<Document>();
   private readonly contentsByDocument = new Map<Document, Contents>();
   private readonly contentFrames = new Map<HTMLIFrameElement, EventListener>();
+  private readonly contentFrameSelectionActionHandlers = new Map<
+    HTMLIFrameElement,
+    EventListener
+  >();
   private readonly contentSelectionHandlers = new Map<
     Document,
     EventListener
@@ -77,6 +81,10 @@ export class EpubReaderEngine implements ReaderEngine {
   private readonly contentSelectionTimeouts = new Map<
     Document,
     ReturnType<typeof setTimeout>
+  >();
+  private readonly contentContextMenuHandlers = new Map<
+    Document,
+    EventListener
   >();
   private readonly contentLinkHandlers = new Map<Document, EventListener>();
   private readonly allowedPublicationLinks = new Set<string>();
@@ -163,6 +171,24 @@ export class EpubReaderEngine implements ReaderEngine {
     };
     document.addEventListener('selectionchange', selectionChangeHandler);
     this.contentSelectionChangeHandlers.set(document, selectionChangeHandler);
+    const contextMenuHandler = (event: Event): void => {
+      if (handledSelectionActionEvents.has(event)) {
+        return;
+      }
+      handledSelectionActionEvents.add(event);
+      if (event.type === 'mousedown' && (event as MouseEvent).button !== 2) {
+        return;
+      }
+      const selection = this.captureDocumentSelection(document, true);
+      if (!selection) {
+        return;
+      }
+      event.preventDefault();
+      this.notifySelection(selection);
+    };
+    const handledSelectionActionEvents = new WeakSet<Event>();
+    this.installSelectionActionHandler(document, contextMenuHandler);
+    this.contentContextMenuHandlers.set(document, contextMenuHandler);
     this.contentDocuments.add(document);
   };
   private readonly handleContentKeydown = (event: KeyboardEvent): void => {
@@ -188,7 +214,6 @@ export class EpubReaderEngine implements ReaderEngine {
       !selection ||
       selection.rangeCount === 0
     ) {
-      this.notifySelection(null);
       return;
     }
     this.captureSelectedRange(
@@ -204,16 +229,15 @@ export class EpubReaderEngine implements ReaderEngine {
     document: Document,
     contents?: Contents,
     cfiRange?: string,
-  ): void {
+  ): PublicationSelection | null {
     const quote = quoteFromRange(range, document);
     if (!quote) {
-      this.notifySelection(null);
-      return;
+      return null;
     }
 
     this.selectedDocument = document;
     const current = this.currentLocator();
-    this.notifySelection({
+    return {
       locator: {
         href: current?.href ?? '',
         type: 'application/xhtml+xml',
@@ -228,7 +252,7 @@ export class EpubReaderEngine implements ReaderEngine {
             : undefined,
         text: quote,
       },
-    });
+    };
   }
 
   constructor(
@@ -341,8 +365,15 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentObserver = null;
     for (const [frame, loadHandler] of this.contentFrames) {
       frame.removeEventListener('load', loadHandler);
+      const selectionActionHandler =
+        this.contentFrameSelectionActionHandlers.get(frame);
+      if (selectionActionHandler) {
+        frame.removeEventListener('mousedown', selectionActionHandler, true);
+        frame.removeEventListener('contextmenu', selectionActionHandler, true);
+      }
     }
     this.contentFrames.clear();
+    this.contentFrameSelectionActionHandlers.clear();
     for (const document of [...this.contentDocuments]) {
       this.detachContentDocument(document);
     }
@@ -351,6 +382,7 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentSelectionHandlers.clear();
     this.contentSelectionChangeHandlers.clear();
     this.contentSelectionTimeouts.clear();
+    this.contentContextMenuHandlers.clear();
     this.contentLinkHandlers.clear();
     this.allowedPublicationLinks.clear();
     this.rendition?.off('relocated', this.handleRelocated);
@@ -670,6 +702,10 @@ export class EpubReaderEngine implements ReaderEngine {
     if (selectionTimeout) {
       clearTimeout(selectionTimeout);
     }
+    const contextMenuHandler = this.contentContextMenuHandlers.get(document);
+    if (contextMenuHandler) {
+      this.removeSelectionActionHandler(document, contextMenuHandler);
+    }
     const linkHandler = this.contentLinkHandlers.get(document);
     if (linkHandler) {
       document.removeEventListener('click', linkHandler, true);
@@ -682,6 +718,7 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentSelectionHandlers.delete(document);
     this.contentSelectionChangeHandlers.delete(document);
     this.contentSelectionTimeouts.delete(document);
+    this.contentContextMenuHandlers.delete(document);
     this.contentLinkHandlers.delete(document);
   }
 
@@ -912,36 +949,39 @@ export class EpubReaderEngine implements ReaderEngine {
     }
   }
 
-  private captureDocumentSelection(document: Document): void {
+  private captureDocumentSelection(
+    document: Document,
+    force = false,
+  ): PublicationSelection | null {
     const contents = this.contentsByDocument.get(document);
     const selection = document.defaultView?.getSelection();
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-      return;
+      return null;
     }
     const range = selection.getRangeAt(0);
     const selectionKey = `${range.startOffset}:${range.endOffset}:${range.toString()}`;
     if (
       this.capturedSelectionDocument === document &&
-      this.capturedSelectionKey === selectionKey
+      this.capturedSelectionKey === selectionKey &&
+      !force
     ) {
-      return;
+      return null;
     }
     this.capturedSelectionDocument = document;
     this.capturedSelectionKey = selectionKey;
     if (contents) {
       try {
-        this.captureSelectedRange(
+        return this.captureSelectedRange(
           range,
           document,
           contents,
           contents.cfiFromRange(range),
         );
-        return;
       } catch {
         // A quote remains portable even when a renderer cannot create a CFI.
       }
     }
-    this.captureSelectedRange(range, document, contents);
+    return this.captureSelectedRange(range, document, contents);
   }
 
   private monitorDocumentSelection(document: Document): void {
@@ -970,6 +1010,41 @@ export class EpubReaderEngine implements ReaderEngine {
     }
   }
 
+  private refreshSelectionActionHandler(document: Document): void {
+    const handler = this.contentContextMenuHandlers.get(document);
+    if (!handler) {
+      return;
+    }
+    this.removeSelectionActionHandler(document, handler);
+    this.installSelectionActionHandler(document, handler);
+  }
+
+  private installSelectionActionHandler(
+    document: Document,
+    handler: EventListener,
+  ): void {
+    for (const target of this.selectionActionTargets(document)) {
+      target.addEventListener('mousedown', handler, true);
+      target.addEventListener('contextmenu', handler, true);
+    }
+  }
+
+  private removeSelectionActionHandler(
+    document: Document,
+    handler: EventListener,
+  ): void {
+    for (const target of this.selectionActionTargets(document)) {
+      target.removeEventListener('mousedown', handler, true);
+      target.removeEventListener('contextmenu', handler, true);
+    }
+  }
+
+  private selectionActionTargets(document: Document): readonly EventTarget[] {
+    return [document, document.documentElement, document.body].filter(
+      (target): target is Document | HTMLElement => Boolean(target),
+    );
+  }
+
   private attachRenditionContentHandlers(): void {
     for (const contents of this.rendition?.getContents() ?? []) {
       this.handleRenderedContent(contents);
@@ -985,8 +1060,32 @@ export class EpubReaderEngine implements ReaderEngine {
             this.attachContentDocument(frame.contentDocument, undefined, true);
           }
         };
+        const selectionActionHandler = (event: Event): void => {
+          if (
+            event.type === 'mousedown' &&
+            (event as MouseEvent).button !== 2
+          ) {
+            return;
+          }
+          const document = frame.contentDocument;
+          if (!document) {
+            return;
+          }
+          const selection = this.captureDocumentSelection(document, true);
+          if (!selection) {
+            return;
+          }
+          event.preventDefault();
+          this.notifySelection(selection);
+        };
         frame.addEventListener('load', loadHandler);
+        frame.addEventListener('mousedown', selectionActionHandler, true);
+        frame.addEventListener('contextmenu', selectionActionHandler, true);
         this.contentFrames.set(frame, loadHandler);
+        this.contentFrameSelectionActionHandlers.set(
+          frame,
+          selectionActionHandler,
+        );
       }
       if (this.handleFrameLinkTarget(frame)) {
         continue;
@@ -994,6 +1093,7 @@ export class EpubReaderEngine implements ReaderEngine {
       if (frame.contentDocument) {
         this.attachContentDocument(frame.contentDocument);
         if (captureSelection) {
+          this.refreshSelectionActionHandler(frame.contentDocument);
           this.monitorDocumentSelection(frame.contentDocument);
         }
       }
