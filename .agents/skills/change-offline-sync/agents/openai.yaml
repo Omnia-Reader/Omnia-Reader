@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Change Offline Sync'
+  short_description: 'Change offline storage and sync safely'
+  default_prompt: 'Use $change-offline-sync to change storage, backup, synchronization, or gateway behavior without weakening integrity or offline-first guarantees.'

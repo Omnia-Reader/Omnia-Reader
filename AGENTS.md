@@ -1,5 +1,9 @@
 # Repository Guidelines
 
+## Agents
+
+Always use the OpenAI developer documentation MCP server if you need to work with the OpenAI API, plugins, ChatGPT, Codex,… without me having to explicitly ask.
+
 ## Project Structure & Module Organization
 
 This is an Nx workspace containing an Angular EPUB reader. Application code lives in `apps/omnia-reader/src`; routes and the application shell are under `app/`, while feature UI belongs in focused folders such as `app/components/viewer/` and `app/navigation/`. Keep unit tests beside their subjects as `*.spec.ts`. Static files that should be copied unchanged belong in `apps/omnia-reader/public/`, and global styles live in `src/styles.scss`. Playwright tests and configuration are in `apps/omnia-reader-e2e/`. Generated build, coverage, and Nx cache output must remain untracked.

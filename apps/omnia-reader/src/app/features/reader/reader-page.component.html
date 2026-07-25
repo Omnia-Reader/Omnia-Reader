@@ -1,0 +1,771 @@
+<main
+  class="relative grid h-full grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden bg-stone-200"
+>
+  <header
+    class="z-2 flex items-center bg-white/95 px-4 py-2 shadow-[0_1px_10px_rgb(15_23_42/10%)]"
+  >
+    <a mat-icon-button routerLink="/library" aria-label="Back to library">
+      <mat-icon>arrow_back</mat-icon>
+    </a>
+    <div class="grid min-w-0 flex-1 px-3">
+      <strong class="overflow-hidden text-ellipsis whitespace-nowrap">
+        {{ metadata?.title || book?.title || 'Reader' }}
+      </strong>
+      @if (metadata?.authors?.length) {
+        <span
+          class="overflow-hidden text-xs text-ellipsis whitespace-nowrap text-slate-500"
+        >
+          {{ metadata.authors.join(', ') }}
+        </span>
+      }
+    </div>
+    <button
+      mat-icon-button
+      type="button"
+      aria-label="Open publication search"
+      (click)="toggleSearch()"
+    >
+      <mat-icon>search</mat-icon>
+    </button>
+    <button
+      mat-icon-button
+      type="button"
+      aria-label="Toggle bookmarks"
+      [attr.aria-expanded]="bookmarksOpen"
+      (click)="toggleBookmarks()"
+    >
+      <mat-icon>{{ currentBookmark ? 'bookmark' : 'bookmarks' }}</mat-icon>
+    </button>
+    <button
+      mat-icon-button
+      type="button"
+      aria-label="Toggle highlights and notes"
+      [attr.aria-expanded]="annotationsOpen"
+      (click)="toggleAnnotations()"
+    >
+      <mat-icon>ink_highlighter</mat-icon>
+    </button>
+    @if (pageNavigation) {
+      <button
+        mat-icon-button
+        type="button"
+        aria-label="Toggle PDF page thumbnails"
+        [attr.aria-expanded]="thumbnailsOpen"
+        (click)="toggleThumbnails()"
+      >
+        <mat-icon>view_sidebar</mat-icon>
+      </button>
+    }
+    <button
+      mat-icon-button
+      type="button"
+      aria-label="Toggle table of contents"
+      [disabled]="tableOfContents.length === 0"
+      (click)="toggleToc()"
+    >
+      <mat-icon>toc</mat-icon>
+    </button>
+    <button
+      mat-icon-button
+      type="button"
+      aria-label="Open reader settings"
+      (click)="toggleSettings()"
+    >
+      <mat-icon>text_fields</mat-icon>
+    </button>
+  </header>
+
+  @if (thumbnailsOpen && pageNavigation) {
+    <aside
+      class="absolute top-14 bottom-16 left-0 z-4 grid w-[min(220px,75vw)] grid-rows-[auto_minmax(0,1fr)] bg-stone-100 shadow-[8px_0_24px_rgb(15_23_42/16%)]"
+      aria-label="PDF page thumbnails"
+    >
+      <h2 class="m-0 px-4 py-3 text-lg">Pages</h2>
+      <cdk-virtual-scroll-viewport class="h-full" itemSize="190">
+        <omnia-pdf-thumbnail
+          *cdkVirtualFor="let pageNumber of pageNumbers"
+          [navigation]="pageNavigation"
+          [pageNumber]="pageNumber"
+          [selected]="pageNumber === currentPageNumber"
+          (selectedPage)="goToPdfPage($event)"
+        />
+      </cdk-virtual-scroll-viewport>
+    </aside>
+  }
+
+  @if (bookmarksOpen) {
+    <aside
+      class="absolute top-14 bottom-16 left-0 z-4 w-[min(360px,85vw)] overflow-auto bg-white p-6 shadow-[8px_0_24px_rgb(15_23_42/16%)]"
+      aria-label="Bookmarks"
+    >
+      <h2 class="mt-0">Bookmarks</h2>
+      <button
+        class="mb-4 w-full"
+        mat-stroked-button
+        type="button"
+        [disabled]="loading || !!errorMessage || bookmarkBusy"
+        (click)="toggleCurrentBookmark()"
+      >
+        <mat-icon>
+          {{ currentBookmark ? 'bookmark_remove' : 'bookmark_add' }}
+        </mat-icon>
+        {{
+          currentBookmark
+            ? 'Remove bookmark at current location'
+            : 'Add bookmark at current location'
+        }}
+      </button>
+      @if (bookmarkError) {
+        <p class="text-red-700" role="alert">{{ bookmarkError }}</p>
+      }
+      @if (bookmarks.length === 0) {
+        <p class="text-stone-600">
+          Add a bookmark to return to this location later.
+        </p>
+      } @else {
+        <div class="grid">
+          @for (bookmark of bookmarks; track bookmark.id) {
+            <div class="flex items-center gap-2 border-b border-stone-200 py-2">
+              <button
+                class="min-w-0 flex-1 cursor-pointer border-0 bg-transparent py-2 text-left text-inherit"
+                type="button"
+                [attr.aria-current]="
+                  currentBookmark?.id === bookmark.id ? 'location' : null
+                "
+                (click)="goToBookmark(bookmark)"
+              >
+                <strong class="block overflow-hidden text-ellipsis">
+                  {{ bookmark.label }}
+                </strong>
+              </button>
+              <button
+                mat-icon-button
+                type="button"
+                [attr.aria-label]="'Delete bookmark ' + bookmark.label"
+                [disabled]="bookmarkBusy"
+                (click)="removeBookmark(bookmark)"
+              >
+                <mat-icon>delete</mat-icon>
+              </button>
+            </div>
+          }
+        </div>
+      }
+    </aside>
+  }
+
+  @if (annotationsOpen) {
+    <aside
+      class="absolute top-14 bottom-16 left-0 z-4 w-[min(400px,90vw)] overflow-auto bg-white p-6 shadow-[8px_0_24px_rgb(15_23_42/16%)]"
+      aria-label="Highlights and notes"
+    >
+      <h2 class="mt-0">Highlights &amp; notes</h2>
+      <p class="text-sm text-stone-600">
+        Select text in the publication to create a highlight or attach a note.
+      </p>
+      @if (annotationError) {
+        <p class="text-red-700" role="alert">{{ annotationError }}</p>
+      }
+      @if (annotations.length === 0) {
+        <p class="text-stone-600">No highlights yet.</p>
+      } @else {
+        <div class="grid">
+          @for (annotation of annotations; track annotation.id) {
+            <article class="border-b border-stone-200 py-3">
+              <div class="flex items-start gap-2">
+                <span
+                  class="mt-1 h-4 w-1 shrink-0 rounded-full"
+                  [class.bg-yellow-400]="annotation.color === 'yellow'"
+                  [class.bg-green-400]="annotation.color === 'green'"
+                  [class.bg-blue-400]="annotation.color === 'blue'"
+                  [class.bg-pink-400]="annotation.color === 'pink'"
+                  aria-hidden="true"
+                ></span>
+                <button
+                  class="min-w-0 flex-1 cursor-pointer border-0 bg-transparent text-left text-inherit"
+                  type="button"
+                  (click)="goToAnnotation(annotation)"
+                >
+                  <q class="block">{{ annotation.locator.text?.highlight }}</q>
+                  @if (annotation.note) {
+                    <span class="mt-2 block text-sm text-stone-600">
+                      {{ annotation.note }}
+                    </span>
+                  }
+                </button>
+                <button
+                  mat-icon-button
+                  type="button"
+                  aria-label="Edit annotation"
+                  [disabled]="annotationBusy"
+                  (click)="beginEditAnnotation(annotation)"
+                >
+                  <mat-icon>edit_note</mat-icon>
+                </button>
+                <button
+                  mat-icon-button
+                  type="button"
+                  aria-label="Delete annotation"
+                  [disabled]="annotationBusy"
+                  (click)="removeAnnotation(annotation)"
+                >
+                  <mat-icon>delete</mat-icon>
+                </button>
+              </div>
+            </article>
+          }
+        </div>
+      }
+    </aside>
+  }
+
+  @if (tocOpen) {
+    <aside
+      class="absolute top-14 bottom-16 left-0 z-4 w-[min(360px,85vw)] overflow-auto bg-white p-6 shadow-[8px_0_24px_rgb(15_23_42/16%)]"
+      aria-label="Table of contents"
+    >
+      <h2>Contents</h2>
+      <nav class="grid">
+        @for (
+          item of tocItems;
+          track item.entry.locator.href +
+            (item.entry.locator.locations?.fragments?.[0] ?? '') +
+            item.entry.title
+        ) {
+          <button
+            class="cursor-pointer border-0 bg-transparent py-3 text-left text-inherit"
+            [style.padding-left.px]="item.depth * 16"
+            type="button"
+            (click)="goTo(item.entry)"
+          >
+            {{ item.entry.title }}
+          </button>
+        }
+      </nav>
+    </aside>
+  }
+
+  @if (searchOpen) {
+    <aside
+      class="absolute top-14 right-0 bottom-16 z-4 w-[min(420px,90vw)] overflow-auto bg-white p-6 shadow-[-8px_0_24px_rgb(15_23_42/16%)]"
+      aria-label="Publication search"
+    >
+      <h2 class="mt-0">Search</h2>
+      <form class="flex gap-2" (submit)="runSearch($event)">
+        <label class="sr-only" for="reader-search">Search publication</label>
+        <input
+          id="reader-search"
+          class="min-w-0 flex-1 rounded-lg border border-stone-400 px-3 py-2"
+          name="query"
+          type="search"
+          autocomplete="off"
+          [(ngModel)]="searchQuery"
+        />
+        <button mat-flat-button type="submit" [disabled]="searching">
+          {{ searching ? 'Searching…' : 'Search' }}
+        </button>
+      </form>
+      @if (searchError) {
+        <p class="text-red-700" role="alert">{{ searchError }}</p>
+      } @else if (!searching && searchQuery && searchResults.length === 0) {
+        <p class="text-stone-600">No matches found.</p>
+      }
+      <div class="mt-4 grid">
+        @for (
+          result of searchResults;
+          track result.locator.href +
+            (result.locator.locations?.fragments?.[0] ?? '')
+        ) {
+          <button
+            class="cursor-pointer border-0 border-b border-stone-200 bg-transparent py-3 text-left"
+            type="button"
+            (click)="goToSearchResult(result)"
+          >
+            @if (result.locator.title) {
+              <strong class="block">{{ result.locator.title }}</strong>
+            }
+            <span>{{ result.excerpt }}</span>
+          </button>
+        }
+      </div>
+    </aside>
+  }
+
+  @if (settingsOpen) {
+    <aside
+      class="absolute top-14 right-0 bottom-16 z-4 w-[min(380px,90vw)] overflow-auto bg-white p-6 shadow-[-8px_0_24px_rgb(15_23_42/16%)]"
+      aria-label="Reader settings"
+    >
+      <h2 class="mt-0">Reader settings</h2>
+
+      @if (book?.format === 'epub') {
+        <div class="grid gap-5">
+          @if (metadata?.layout === 'pre-paginated') {
+            <p class="m-0 rounded-lg bg-stone-100 p-3 text-sm text-stone-700">
+              This is a fixed-layout publication. Its typography, colors, and
+              page geometry are preserved as designed by the publisher.
+            </p>
+          }
+          @if (metadata?.layout !== 'pre-paginated') {
+            <label class="grid gap-2">
+              <span class="font-medium">Theme</span>
+              <select
+                class="rounded-lg border border-stone-400 bg-white px-3 py-2"
+                [ngModel]="epubPreferences.theme"
+                (ngModelChange)="updateEpubPreferences({ theme: $event })"
+              >
+                <option value="light">Light</option>
+                <option value="sepia">Sepia</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+
+            <label class="grid gap-2">
+              <span class="font-medium">Font family</span>
+              <select
+                class="rounded-lg border border-stone-400 bg-white px-3 py-2"
+                [ngModel]="epubPreferences.fontFamily"
+                (ngModelChange)="updateEpubPreferences({ fontFamily: $event })"
+              >
+                <option value="serif">Serif</option>
+                <option value="sans-serif">Sans serif</option>
+              </select>
+            </label>
+
+            <div class="grid gap-2">
+              <span class="flex justify-between gap-4 font-medium">
+                <label for="epub-font-size">Font size</label>
+                <output for="epub-font-size">
+                  {{ epubPreferences.fontSizePercent }}%
+                </output>
+              </span>
+              <input
+                id="epub-font-size"
+                type="range"
+                min="75"
+                max="200"
+                step="5"
+                [ngModel]="epubPreferences.fontSizePercent"
+                (ngModelChange)="
+                  updateEpubPreferences({ fontSizePercent: $event })
+                "
+              />
+            </div>
+
+            <div class="grid gap-2">
+              <span class="flex justify-between gap-4 font-medium">
+                <label for="epub-line-height">Line height</label>
+                <output for="epub-line-height">
+                  {{ epubPreferences.lineHeight }}
+                </output>
+              </span>
+              <input
+                id="epub-line-height"
+                type="range"
+                min="1.1"
+                max="2.2"
+                step="0.05"
+                [ngModel]="epubPreferences.lineHeight"
+                (ngModelChange)="updateEpubPreferences({ lineHeight: $event })"
+              />
+            </div>
+
+            <div class="grid gap-2">
+              <span class="flex justify-between gap-4 font-medium">
+                <label for="epub-paragraph-spacing">Paragraph spacing</label>
+                <output for="epub-paragraph-spacing">
+                  {{ epubPreferences.paragraphSpacingRem }} rem
+                </output>
+              </span>
+              <input
+                id="epub-paragraph-spacing"
+                type="range"
+                min="0"
+                max="2"
+                step="0.125"
+                [ngModel]="epubPreferences.paragraphSpacingRem"
+                (ngModelChange)="
+                  updateEpubPreferences({ paragraphSpacingRem: $event })
+                "
+              />
+            </div>
+
+            <div class="grid gap-2">
+              <span class="flex justify-between gap-4 font-medium">
+                <label for="epub-side-margins">Side margins</label>
+                <output for="epub-side-margins">
+                  {{ epubPreferences.marginPercent }}%
+                </output>
+              </span>
+              <input
+                id="epub-side-margins"
+                type="range"
+                min="0"
+                max="20"
+                step="1"
+                [ngModel]="epubPreferences.marginPercent"
+                (ngModelChange)="
+                  updateEpubPreferences({ marginPercent: $event })
+                "
+              />
+            </div>
+
+            <div class="grid gap-2">
+              <span class="flex justify-between gap-4 font-medium">
+                <label for="epub-max-line-width">Maximum line width</label>
+                <output for="epub-max-line-width">
+                  {{ epubPreferences.maxLineWidthRem }} rem
+                </output>
+              </span>
+              <input
+                id="epub-max-line-width"
+                type="range"
+                min="28"
+                max="72"
+                step="2"
+                [ngModel]="epubPreferences.maxLineWidthRem"
+                (ngModelChange)="
+                  updateEpubPreferences({ maxLineWidthRem: $event })
+                "
+              />
+            </div>
+
+            <label class="grid gap-2">
+              <span class="font-medium">Reading mode</span>
+              <select
+                class="rounded-lg border border-stone-400 bg-white px-3 py-2"
+                [ngModel]="epubPreferences.flow"
+                (ngModelChange)="updateEpubPreferences({ flow: $event })"
+              >
+                <option value="paginated">Paginated</option>
+                <option value="scrolled">Scrolling</option>
+              </select>
+            </label>
+          }
+
+          <label class="grid gap-2">
+            <span class="font-medium">Page presentation</span>
+            <select
+              class="rounded-lg border border-stone-400 bg-white px-3 py-2"
+              [ngModel]="epubPreferences.spread"
+              (ngModelChange)="updateEpubPreferences({ spread: $event })"
+            >
+              <option value="auto">Automatic spread</option>
+              <option value="none">Single page</option>
+            </select>
+          </label>
+        </div>
+      } @else if (book?.format === 'pdf') {
+        <div class="grid gap-5">
+          <fieldset class="grid gap-2 border-0 p-0">
+            <legend class="mb-2 font-medium">Zoom mode</legend>
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                mat-stroked-button
+                type="button"
+                [attr.aria-pressed]="pdfPreferences.zoomMode === 'fit-width'"
+                (click)="updatePdfPreferences({ zoomMode: 'fit-width' })"
+              >
+                Fit width
+              </button>
+              <button
+                mat-stroked-button
+                type="button"
+                [attr.aria-pressed]="pdfPreferences.zoomMode === 'fit-page'"
+                (click)="updatePdfPreferences({ zoomMode: 'fit-page' })"
+              >
+                Fit page
+              </button>
+              <button
+                mat-stroked-button
+                type="button"
+                [attr.aria-pressed]="pdfPreferences.zoomMode === 'custom'"
+                (click)="updatePdfPreferences({ zoomMode: 'custom' })"
+              >
+                Custom
+              </button>
+            </div>
+          </fieldset>
+
+          <div class="grid gap-2">
+            <span class="flex justify-between gap-4 font-medium">
+              <label for="pdf-custom-zoom">Custom zoom</label>
+              <output for="pdf-custom-zoom">
+                {{ pdfPreferences.zoomPercent }}%
+              </output>
+            </span>
+            <input
+              id="pdf-custom-zoom"
+              type="range"
+              min="25"
+              max="400"
+              step="5"
+              [disabled]="pdfPreferences.zoomMode !== 'custom'"
+              [ngModel]="pdfPreferences.zoomPercent"
+              (ngModelChange)="updatePdfPreferences({ zoomPercent: $event })"
+            />
+          </div>
+
+          <fieldset class="grid gap-2 border-0 p-0">
+            <legend class="mb-2 font-medium">Rotation</legend>
+            <div class="grid grid-cols-2 gap-2">
+              <button mat-stroked-button type="button" (click)="rotatePdf(-90)">
+                <mat-icon>rotate_left</mat-icon>
+                Rotate left
+              </button>
+              <button mat-stroked-button type="button" (click)="rotatePdf(90)">
+                <mat-icon>rotate_right</mat-icon>
+                Rotate right
+              </button>
+            </div>
+            <p class="m-0 text-sm text-stone-600">
+              Current rotation: {{ pdfPreferences.rotation }}°
+            </p>
+          </fieldset>
+        </div>
+      }
+    </aside>
+  }
+
+  <section class="relative min-h-0 min-w-0 overflow-hidden">
+    @if (loading && !passwordChallenge) {
+      <div
+        class="absolute inset-0 grid place-content-center justify-items-center gap-4 text-center"
+        aria-live="polite"
+      >
+        <mat-spinner diameter="40"></mat-spinner>
+        <span>Opening publication…</span>
+      </div>
+    }
+    @if (errorMessage) {
+      <div
+        class="absolute inset-0 grid place-content-center justify-items-center gap-4 text-center text-red-700"
+        role="alert"
+      >
+        <mat-icon>error_outline</mat-icon>
+        <p>{{ errorMessage }}</p>
+        <a mat-stroked-button routerLink="/library">Return to library</a>
+      </div>
+    }
+    <div
+      #viewport
+      data-testid="publication-viewport"
+      class="box-border h-full min-w-0 w-full max-w-full"
+      [class.bg-stone-300]="book?.format === 'pdf'"
+      [class.invisible]="loading || errorMessage"
+    ></div>
+  </section>
+
+  @if (pendingSelection) {
+    <section
+      class="absolute right-4 bottom-20 left-4 z-8 mx-auto grid max-w-xl gap-4 rounded-2xl bg-white p-5 shadow-2xl"
+      role="dialog"
+      aria-labelledby="annotation-editor-title"
+    >
+      <div>
+        <h2 id="annotation-editor-title" class="mt-0 mb-2 text-lg">
+          {{ editingAnnotation ? 'Edit highlight' : 'New highlight' }}
+        </h2>
+        <q class="block max-h-24 overflow-auto text-stone-700">
+          {{ pendingSelection.locator.text?.highlight }}
+        </q>
+      </div>
+
+      <fieldset class="border-0 p-0">
+        <legend class="mb-2 font-medium">Highlight color</legend>
+        <div class="grid grid-cols-4 gap-2">
+          <button
+            class="rounded-lg border border-stone-300 p-2"
+            type="button"
+            [attr.aria-pressed]="annotationColor === 'yellow'"
+            (click)="annotationColor = 'yellow'"
+          >
+            <span class="block h-4 rounded bg-yellow-400"></span>
+            <span class="sr-only">Yellow</span>
+          </button>
+          <button
+            class="rounded-lg border border-stone-300 p-2"
+            type="button"
+            [attr.aria-pressed]="annotationColor === 'green'"
+            (click)="annotationColor = 'green'"
+          >
+            <span class="block h-4 rounded bg-green-400"></span>
+            <span class="sr-only">Green</span>
+          </button>
+          <button
+            class="rounded-lg border border-stone-300 p-2"
+            type="button"
+            [attr.aria-pressed]="annotationColor === 'blue'"
+            (click)="annotationColor = 'blue'"
+          >
+            <span class="block h-4 rounded bg-blue-400"></span>
+            <span class="sr-only">Blue</span>
+          </button>
+          <button
+            class="rounded-lg border border-stone-300 p-2"
+            type="button"
+            [attr.aria-pressed]="annotationColor === 'pink'"
+            (click)="annotationColor = 'pink'"
+          >
+            <span class="block h-4 rounded bg-pink-400"></span>
+            <span class="sr-only">Pink</span>
+          </button>
+        </div>
+      </fieldset>
+
+      <label class="grid gap-2" for="annotation-note">
+        <span class="font-medium">Note (optional)</span>
+        <textarea
+          id="annotation-note"
+          class="min-h-20 resize-y rounded-lg border border-stone-400 px-3 py-2"
+          name="annotationNote"
+          maxlength="16384"
+          [(ngModel)]="annotationNote"
+        ></textarea>
+      </label>
+      @if (annotationError) {
+        <p class="m-0 text-red-700" role="alert">{{ annotationError }}</p>
+      }
+      <div class="flex justify-end gap-2">
+        <button
+          mat-button
+          type="button"
+          [disabled]="annotationBusy"
+          (click)="cancelAnnotationEditor()"
+        >
+          Cancel
+        </button>
+        <button
+          mat-flat-button
+          type="button"
+          [disabled]="annotationBusy"
+          (click)="saveAnnotation()"
+        >
+          {{ annotationBusy ? 'Saving…' : 'Save' }}
+        </button>
+      </div>
+    </section>
+  }
+
+  @if (passwordChallenge) {
+    <div
+      class="absolute inset-0 z-10 grid place-content-center bg-slate-950/55 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pdf-password-title"
+    >
+      <form
+        class="grid w-[min(420px,calc(100vw-2rem))] gap-4 rounded-xl bg-white p-6 shadow-2xl"
+        (submit)="submitPdfPassword($event)"
+      >
+        <div>
+          <h2 id="pdf-password-title" class="mt-0 mb-2">Protected PDF</h2>
+          <p class="m-0 text-stone-600">
+            Enter the document password to open this publication.
+          </p>
+        </div>
+        <label class="grid gap-2" for="pdf-password">
+          <span class="font-medium">Password</span>
+          <input
+            id="pdf-password"
+            class="rounded-lg border border-stone-400 px-3 py-2"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            [(ngModel)]="pdfPassword"
+          />
+        </label>
+        @if (passwordError) {
+          <p class="m-0 text-red-700" role="alert">{{ passwordError }}</p>
+        }
+        <div class="flex justify-end gap-2">
+          <button mat-button type="button" (click)="cancelPdfPassword()">
+            Cancel
+          </button>
+          <button mat-flat-button type="submit" [disabled]="!pdfPassword">
+            Unlock
+          </button>
+        </div>
+      </form>
+    </div>
+  }
+
+  @if (pendingExternalUrl) {
+    <div
+      class="absolute inset-0 z-10 grid place-content-center bg-slate-950/55 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="external-link-title"
+    >
+      <section
+        class="grid w-[min(480px,calc(100vw-2rem))] gap-4 rounded-xl bg-white p-6 shadow-2xl"
+      >
+        <div>
+          <h2 id="external-link-title" class="mt-0 mb-2">
+            Open external link?
+          </h2>
+          <p class="m-0 text-stone-600">
+            This link leaves the publication and opens in your system browser.
+          </p>
+        </div>
+        <p class="m-0 break-all rounded-lg bg-stone-100 p-3 text-sm">
+          {{ pendingExternalUrl }}
+        </p>
+        <div class="flex justify-end gap-2">
+          <button mat-button type="button" (click)="cancelExternalLink()">
+            Cancel
+          </button>
+          <button mat-flat-button type="button" (click)="openExternalLink()">
+            Open link
+          </button>
+        </div>
+      </section>
+    </div>
+  }
+
+  @if (!errorMessage) {
+    <footer
+      class="z-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 bg-white/95 px-4 py-2 shadow-[0_1px_10px_rgb(15_23_42/10%)]"
+    >
+      @if (navigationError) {
+        <span class="w-full text-center text-sm text-red-700" role="alert">
+          {{ navigationError }}
+        </span>
+      }
+      @if (externalLinkError) {
+        <span class="w-full text-center text-sm text-red-700" role="alert">
+          {{ externalLinkError }}
+        </span>
+      }
+      <button
+        mat-stroked-button
+        type="button"
+        aria-keyshortcuts="ArrowLeft"
+        [disabled]="loading || navigationBusy"
+        (click)="previous()"
+      >
+        <mat-icon>chevron_left</mat-icon>
+        Previous
+      </button>
+      @if (pageNavigation) {
+        <span
+          class="min-w-20 text-center text-sm text-stone-600"
+          aria-live="polite"
+        >
+          {{ currentPageNumber }} / {{ pageNavigation.pageCount }}
+        </span>
+      }
+      <button
+        mat-flat-button
+        type="button"
+        aria-keyshortcuts="ArrowRight"
+        [disabled]="loading || navigationBusy"
+        (click)="next()"
+      >
+        Next
+        <mat-icon>chevron_right</mat-icon>
+      </button>
+    </footer>
+  }
+</main>

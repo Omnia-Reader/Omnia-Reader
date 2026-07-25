@@ -1,25 +1,78 @@
-<mat-sidenav-container class="sidenav-container">
-  <mat-sidenav #drawer class="sidenav" fixedInViewport
-      [attr.role]="(isHandset$ | async) ? 'dialog' : 'navigation'"
-      [mode]="(isHandset$ | async) ? 'over' : 'side'"
-      [opened]="(isHandset$ | async) === false">
-    <mat-toolbar class="cursor-pointer" [routerLink]="'/'">Omnia Reader</mat-toolbar>
-    <mat-divider></mat-divider>
-    <mat-nav-list>
-      <a mat-list-item [routerLink]="'viewer'">Viewer</a>
-    </mat-nav-list>
-  </mat-sidenav>
-  <mat-sidenav-content>
-    <mat-toolbar color="primary">
+<div class="min-h-screen bg-stone-50">
+  @if (menuOpen) {
+    <button
+      class="fixed inset-0 z-20 border-0 bg-slate-950/45 md:hidden"
+      type="button"
+      aria-label="Close navigation"
+      (click)="closeMenu()"
+    ></button>
+  }
+
+  <aside
+    id="primary-navigation"
+    class="fixed inset-y-0 left-0 z-30 flex w-60 flex-col bg-white shadow-xl transition-transform md:translate-x-0 md:shadow-[1px_0_10px_rgb(15_23_42/8%)]"
+    [class.-translate-x-full]="!menuOpen"
+    aria-label="Primary navigation"
+  >
+    <a
+      class="flex h-16 items-center gap-3 border-b border-stone-200 px-5 text-lg font-semibold text-slate-900 no-underline"
+      routerLink="/library"
+      (click)="closeMenu()"
+    >
+      <span
+        class="material-icons text-violet-700"
+        aria-hidden="true"
+        translate="no"
+      >
+        auto_stories
+      </span>
+      Omnia Reader
+    </a>
+
+    <nav class="flex min-h-0 flex-1 flex-col gap-1 p-3">
+      <a
+        class="flex min-h-12 items-center gap-3 rounded-lg px-3 text-slate-700 no-underline hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700"
+        routerLink="/library"
+        routerLinkActive="bg-violet-100 text-violet-950"
+        (click)="closeMenu()"
+      >
+        <span class="material-icons" aria-hidden="true" translate="no">
+          library_books
+        </span>
+        <span>Library</span>
+      </a>
+      <a
+        class="mt-auto flex min-h-12 items-center gap-3 rounded-lg px-3 text-slate-700 no-underline hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700"
+        routerLink="/settings"
+        routerLinkActive="bg-violet-100 text-violet-950"
+        (click)="closeMenu()"
+      >
+        <span class="material-icons" aria-hidden="true" translate="no">
+          settings
+        </span>
+        <span>Settings</span>
+      </a>
+    </nav>
+  </aside>
+
+  <div class="min-h-screen md:pl-60">
+    <header
+      class="sticky top-0 z-10 flex h-16 items-center bg-violet-700 px-3 text-white shadow-sm"
+    >
       <button
+        class="grid size-12 cursor-pointer place-content-center rounded-full border-0 bg-transparent text-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white md:hidden"
         type="button"
-        aria-label="Toggle sidenav"
-        matIconButton
-        (click)="drawer.toggle()">
-        <mat-icon aria-label="Side nav toggle icon">menu</mat-icon>
+        aria-label="Open navigation"
+        aria-controls="primary-navigation"
+        [attr.aria-expanded]="menuOpen"
+        (click)="toggleMenu()"
+      >
+        <span class="material-icons" aria-hidden="true" translate="no">
+          menu
+        </span>
       </button>
-    </mat-toolbar>
-    <!-- Add Content Here -->
+      <span class="ml-2 font-medium md:sr-only">Omnia Reader</span>
+    </header>
     <router-outlet></router-outlet>
-  </mat-sidenav-content>
-</mat-sidenav-container>
+  </div>
+</div>

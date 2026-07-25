@@ -1,0 +1,58 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Omnia Reader",
+  "version": "0.1.0",
+  "identifier": "io.github.omniareader.reader",
+  "build": {
+    "frontendDist": "../dist/apps/omnia-reader/browser",
+    "devUrl": "http://localhost:4300",
+    "beforeDevCommand": "npm start",
+    "beforeBuildCommand": "npx nx build omnia-reader --configuration production"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Omnia Reader",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 540,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' blob: data: ipc: http://ipc.localhost; font-src 'self' data:; frame-src 'self' blob:; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; base-uri 'self'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "A private, offline-first EPUB and PDF reader",
+    "fileAssociations": [
+      {
+        "ext": ["epub"],
+        "mimeType": "application/epub+zip",
+        "name": "EPUB publication",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["pdf"],
+        "mimeType": "application/pdf",
+        "name": "PDF document",
+        "role": "Viewer"
+      }
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  }
+}

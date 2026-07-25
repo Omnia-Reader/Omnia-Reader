@@ -14,7 +14,19 @@
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
-    "paths": {},
+    "paths": {
+      "@omnia-reader/library/data-access": [
+        "libs/library/data-access/src/index.ts"
+      ],
+      "@omnia-reader/platform": ["libs/platform/src/index.ts"],
+      "@omnia-reader/reader/core": ["libs/reader/core/src/index.ts"],
+      "@omnia-reader/reader/domain": ["libs/reader/domain/src/index.ts"],
+      "@omnia-reader/reader/epub": ["libs/reader/epub/src/index.ts"],
+      "@omnia-reader/reader/pdf": ["libs/reader/pdf/src/index.ts"],
+      "@omnia-reader/sync/core": ["libs/sync/core/src/index.ts"],
+      "@omnia-reader/sync/git": ["libs/sync/git/src/index.ts"],
+      "@omnia-reader/sync/mega": ["libs/sync/mega/src/index.ts"]
+    },
     "strict": false,
     "noUncheckedSideEffectImports": false,
     "types": ["*"],

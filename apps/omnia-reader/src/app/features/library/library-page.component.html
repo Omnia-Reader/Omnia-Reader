@@ -1,0 +1,302 @@
+<main
+  class="mx-auto box-border min-h-[calc(100vh-64px)] max-w-7xl p-6 sm:p-10 lg:p-16"
+>
+  <header
+    class="mb-9 flex flex-col items-start justify-between gap-6 sm:flex-row"
+  >
+    <div>
+      <p
+        class="m-0 text-xs font-bold tracking-[0.12em] text-violet-700 uppercase"
+      >
+        Your books
+      </p>
+      <h1 class="my-1 text-4xl leading-none font-semibold sm:text-6xl">
+        Library
+      </h1>
+      <p class="m-0 text-stone-600">
+        EPUB and PDF publications stay on this device.
+      </p>
+    </div>
+    <button
+      class="w-full sm:w-auto"
+      mat-flat-button
+      type="button"
+      [disabled]="importing"
+      (click)="importBooks()"
+    >
+      <mat-icon>add</mat-icon>
+      {{ importing ? 'Importing…' : 'Import books' }}
+    </button>
+  </header>
+
+  @if (errorMessage) {
+    <p class="mx-auto my-18 max-w-xl text-center text-red-700" role="alert">
+      {{ errorMessage }}
+    </p>
+  }
+
+  @if (loading) {
+    <p class="mx-auto my-18 max-w-xl text-center" aria-live="polite">
+      Loading your library…
+    </p>
+  } @else if (books.length === 0) {
+    <section
+      class="mx-auto my-18 max-w-xl rounded-3xl border border-dashed border-stone-400 bg-white p-12 text-center"
+    >
+      <mat-icon class="!h-16 !w-16 !text-[64px]">auto_stories</mat-icon>
+      <h2 class="mt-4 text-2xl font-semibold">Your library is empty</h2>
+      <p class="text-stone-600">
+        Import an EPUB or PDF to start reading offline.
+      </p>
+      <button mat-stroked-button type="button" (click)="importBooks()">
+        Choose publications
+      </button>
+    </section>
+  } @else {
+    <section
+      class="mb-7 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5"
+      aria-label="Library controls"
+    >
+      <div
+        class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_14rem_auto] lg:items-end"
+      >
+        <div>
+          <label
+            class="mb-1.5 block text-sm font-semibold text-stone-800"
+            for="library-search"
+          >
+            Search library
+          </label>
+          <div class="relative">
+            <mat-icon
+              class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-stone-500"
+              aria-hidden="true"
+            >
+              search
+            </mat-icon>
+            <input
+              #searchInput
+              id="library-search"
+              class="min-h-12 w-full rounded-xl border border-stone-300 bg-white py-2 pr-12 pl-11 text-base text-stone-950 outline-none placeholder:text-stone-500 focus:border-violet-600 focus:ring-3 focus:ring-violet-200"
+              type="search"
+              autocomplete="off"
+              placeholder="Title, author, publisher, or format"
+              [value]="searchQuery"
+              (input)="updateSearchQuery($event)"
+            />
+            @if (searchQuery) {
+              <button
+                class="absolute top-1/2 right-1 -translate-y-1/2"
+                mat-icon-button
+                type="button"
+                aria-label="Clear library search"
+                (click)="clearSearch(); searchInput.focus()"
+              >
+                <mat-icon>close</mat-icon>
+              </button>
+            }
+          </div>
+        </div>
+
+        <div>
+          <label
+            class="mb-1.5 block text-sm font-semibold text-stone-800"
+            for="library-sort"
+          >
+            Sort books
+          </label>
+          <select
+            id="library-sort"
+            class="min-h-12 w-full rounded-xl border border-stone-300 bg-white px-3 text-base text-stone-950 outline-none focus:border-violet-600 focus:ring-3 focus:ring-violet-200"
+            [value]="sortMode"
+            (change)="updateSortMode($event)"
+          >
+            <option value="recent">Recently opened</option>
+            <option value="title">Title</option>
+            <option value="author">Author</option>
+            <option value="added">Recently added</option>
+          </select>
+        </div>
+
+        <div>
+          <span class="mb-1.5 block text-sm font-semibold text-stone-800">
+            View
+          </span>
+          <div
+            class="inline-flex min-h-12 rounded-xl border border-stone-300 bg-stone-50 p-1"
+            role="group"
+            aria-label="Library view"
+          >
+            <button
+              class="inline-flex min-w-12 items-center justify-center gap-2 rounded-lg px-3 text-stone-700 transition-colors hover:bg-stone-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-600 aria-pressed:bg-violet-700 aria-pressed:text-white"
+              type="button"
+              [attr.aria-pressed]="viewMode === 'grid'"
+              (click)="setViewMode('grid')"
+            >
+              <mat-icon>grid_view</mat-icon>
+              <span class="sr-only sm:not-sr-only">Grid</span>
+              <span class="sr-only">view</span>
+            </button>
+            <button
+              class="inline-flex min-w-12 items-center justify-center gap-2 rounded-lg px-3 text-stone-700 transition-colors hover:bg-stone-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-600 aria-pressed:bg-violet-700 aria-pressed:text-white"
+              type="button"
+              [attr.aria-pressed]="viewMode === 'list'"
+              (click)="setViewMode('list')"
+            >
+              <mat-icon>view_list</mat-icon>
+              <span class="sr-only sm:not-sr-only">List</span>
+              <span class="sr-only">view</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <p
+        id="library-result-summary"
+        class="mt-3 mb-0 text-sm text-stone-600"
+        aria-live="polite"
+      >
+        {{ resultSummary }}
+      </p>
+    </section>
+
+    @if (displayedBooks.length === 0) {
+      <section
+        class="mx-auto my-14 max-w-xl rounded-3xl border border-dashed border-stone-400 bg-white p-10 text-center"
+        aria-labelledby="no-library-results"
+      >
+        <mat-icon class="!h-14 !w-14 !text-[56px] text-stone-500">
+          search_off
+        </mat-icon>
+        <h2 id="no-library-results" class="mt-4 text-2xl font-semibold">
+          No books found
+        </h2>
+        <p class="text-stone-600">
+          Try another title, author, publisher, file name, or format.
+        </p>
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="clearSearch(); searchInput.focus()"
+        >
+          Clear search
+        </button>
+      </section>
+    } @else {
+      <section
+        data-testid="library-books"
+        [attr.data-view]="viewMode"
+        [attr.aria-describedby]="'library-result-summary'"
+        [class]="
+          viewMode === 'grid'
+            ? 'grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6'
+            : 'flex flex-col gap-4'
+        "
+        aria-label="Books"
+      >
+        @for (book of displayedBooks; track book.id) {
+          <article
+            data-testid="library-book"
+            [class]="
+              viewMode === 'grid'
+                ? 'flex h-full flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm transition-shadow hover:shadow-md'
+                : 'flex flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm transition-shadow hover:shadow-md sm:flex-row'
+            "
+          >
+            <a
+              class="min-w-0 flex-1 text-left text-inherit no-underline focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-violet-600"
+              [class.flex]="viewMode === 'list'"
+              [routerLink]="['/reader', book.id]"
+              [attr.aria-label]="'Open ' + book.title"
+            >
+              @if (bookCoverUrl(book.id); as coverUrl) {
+                <img
+                  [class]="
+                    viewMode === 'grid'
+                      ? 'aspect-2/3 w-full bg-stone-200 object-cover'
+                      : 'h-36 w-24 shrink-0 bg-stone-200 object-cover sm:h-44 sm:w-30'
+                  "
+                  [src]="coverUrl"
+                  [alt]="'Cover of ' + book.title"
+                />
+              } @else {
+                <div
+                  [class]="
+                    viewMode === 'grid'
+                      ? 'grid aspect-2/3 w-full place-content-center gap-2.5 bg-linear-to-br from-slate-700 to-slate-950 text-center text-white data-[format=epub]:from-violet-600 data-[format=epub]:to-indigo-900'
+                      : 'grid h-36 w-24 shrink-0 place-content-center gap-1 bg-linear-to-br from-slate-700 to-slate-950 text-center text-white data-[format=epub]:from-violet-600 data-[format=epub]:to-indigo-900 sm:h-44 sm:w-30'
+                  "
+                  [attr.data-format]="book.format"
+                  role="img"
+                  [attr.aria-label]="'No cover available for ' + book.title"
+                >
+                  <mat-icon
+                    [class]="
+                      viewMode === 'grid'
+                        ? 'mx-auto !h-14 !w-14 !text-[56px]'
+                        : 'mx-auto !h-9 !w-9 !text-4xl'
+                    "
+                  >
+                    menu_book
+                  </mat-icon>
+                  <span class="text-sm font-semibold">
+                    {{ book.format.toUpperCase() }}
+                  </span>
+                </div>
+              }
+              <div
+                [class]="
+                  viewMode === 'grid' ? 'p-4' : 'min-w-0 flex-1 p-4 sm:p-5'
+                "
+              >
+                <span
+                  class="inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-xs font-bold tracking-wide text-violet-800 uppercase"
+                >
+                  {{ book.format }}
+                </span>
+                <h2
+                  class="mt-3 mb-1 line-clamp-2 text-lg leading-tight font-semibold"
+                >
+                  {{ book.title }}
+                </h2>
+                <p class="m-0 line-clamp-2 text-sm text-stone-600">
+                  {{ book.authors.join(', ') || 'Unknown author' }}
+                </p>
+                @if (book.publisher) {
+                  <p class="mt-2 mb-0 line-clamp-1 text-sm text-stone-500">
+                    {{ book.publisher }}
+                  </p>
+                }
+              </div>
+            </a>
+            <footer
+              [class]="
+                viewMode === 'grid'
+                  ? 'mt-auto flex items-center justify-between border-t border-stone-200 px-3 py-2 text-sm text-stone-600'
+                  : 'flex items-center justify-between gap-3 border-t border-stone-200 px-3 py-2 text-sm text-stone-600 sm:w-52 sm:flex-col sm:items-end sm:justify-center sm:border-t-0 sm:border-l sm:px-4'
+              "
+            >
+              <div [class.text-right]="viewMode === 'list'">
+                <div>{{ formatFileSize(book.size) }}</div>
+                <time
+                  class="block text-xs text-stone-500"
+                  [attr.datetime]="bookActivityTimestamp(book)"
+                >
+                  {{ bookActivityLabel(book) }}
+                  {{ bookActivityTimestamp(book) | date: 'mediumDate' }}
+                </time>
+              </div>
+              <button
+                mat-icon-button
+                type="button"
+                [attr.aria-label]="'Remove ' + book.title"
+                (click)="removeBook(book)"
+              >
+                <mat-icon>delete_outline</mat-icon>
+              </button>
+            </footer>
+          </article>
+        }
+      </section>
+    }
+  }
+</main>

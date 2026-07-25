@@ -1,0 +1,264 @@
+<main class="mx-auto max-w-3xl p-6 sm:p-10 lg:p-16">
+  <a mat-button routerLink="/settings">
+    <mat-icon>arrow_back</mat-icon>
+    Settings
+  </a>
+  <p class="mb-0 text-xs font-bold tracking-[0.12em] text-violet-700 uppercase">
+    Cross-device library
+  </p>
+  <h1 class="mt-1 text-4xl font-semibold">Library sync</h1>
+  <p class="max-w-2xl text-stone-600">
+    Restore both publication files and exact reading positions on every device.
+    Provider credentials stay in the server gateway; this app uses only a secure
+    session cookie.
+  </p>
+  <p class="my-6 rounded-xl bg-violet-50 p-4 text-violet-950">
+    <strong>{{ pendingChanges }}</strong>
+    {{ pendingChanges === 1 ? 'local change is' : 'local changes are' }}
+    waiting to sync.
+  </p>
+  <div
+    class="mb-6 rounded-xl border border-stone-200 bg-white p-4 text-sm"
+    aria-live="polite"
+    data-testid="automatic-sync-status"
+  >
+    <p class="m-0 font-semibold">Automatic synchronization</p>
+    @switch (automaticSyncStatus.phase) {
+      @case ('scheduled') {
+        <p class="mb-0 text-stone-600">
+          A local change is queued and will sync after reading settles.
+        </p>
+      }
+      @case ('syncing') {
+        <p class="mb-0 text-violet-800" role="status">
+          Synchronizing books and reading progress…
+        </p>
+      }
+      @case ('offline') {
+        <p class="mb-0 text-amber-800">
+          Offline. Local changes are safe and will retry when connectivity
+          returns.
+        </p>
+      }
+      @case ('error') {
+        <p class="mb-0 text-red-800">
+          Automatic sync needs attention:
+          {{ automaticSyncStatus.errorMessage }}
+        </p>
+      }
+      @default {
+        @if (automaticSyncStatus.lastSuccessAt) {
+          <p class="mb-0 text-stone-600">
+            Last automatic sync completed
+            {{ automaticSyncStatus.lastSuccessAt | date: 'medium' }}.
+          </p>
+        } @else {
+          <p class="mb-0 text-stone-600">
+            Enabled after a provider destination is selected.
+          </p>
+        }
+      }
+    }
+  </div>
+
+  <fieldset class="mb-6">
+    <legend class="mb-3 text-sm font-semibold">Sync provider</legend>
+    <div class="grid gap-3 sm:grid-cols-2">
+      <button
+        class="rounded-xl border p-4 text-left transition"
+        [class.border-violet-600]="selectedProvider === 'git'"
+        [class.bg-violet-50]="selectedProvider === 'git'"
+        [class.border-stone-300]="selectedProvider !== 'git'"
+        type="button"
+        [disabled]="busy || loading"
+        (click)="chooseProvider('git')"
+      >
+        <span class="block font-semibold">Git + LFS</span>
+        <span class="mt-1 block text-sm text-stone-600">
+          JSON history in Git; EPUB and PDF files in Git LFS.
+        </span>
+      </button>
+      <button
+        class="rounded-xl border p-4 text-left transition"
+        [class.border-violet-600]="selectedProvider === 'mega'"
+        [class.bg-violet-50]="selectedProvider === 'mega'"
+        [class.border-stone-300]="selectedProvider !== 'mega'"
+        type="button"
+        [disabled]="busy || loading"
+        (click)="chooseProvider('mega')"
+      >
+        <span class="block font-semibold">MEGA</span>
+        <span class="mt-1 block text-sm text-stone-600">
+          Encrypted publication and progress files in a MEGA folder.
+        </span>
+      </button>
+    </div>
+  </fieldset>
+
+  @if (loading) {
+    <p class="text-stone-600" role="status">Checking sync connection…</p>
+  } @else {
+    @if (errorMessage) {
+      <p
+        class="my-4 rounded-xl bg-red-50 p-4 text-red-900"
+        role="alert"
+        data-testid="sync-error"
+      >
+        {{ errorMessage }}
+      </p>
+    }
+    @if (statusMessage) {
+      <p
+        class="my-4 rounded-xl bg-emerald-50 p-4 text-emerald-900"
+        role="status"
+      >
+        {{ statusMessage }}
+      </p>
+    }
+
+    @if (selectedProvider === 'git') {
+      @if (!gitSession.authenticated) {
+        <button
+          mat-flat-button
+          type="button"
+          [disabled]="busy || !gatewayAvailable.git"
+          (click)="connect()"
+        >
+          Connect GitHub
+        </button>
+      } @else {
+        <section
+          class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
+        >
+          <div class="flex items-center gap-3">
+            @if (gitSession.user.avatarUrl) {
+              <img
+                class="size-10 rounded-full"
+                [src]="gitSession.user.avatarUrl"
+                alt=""
+                referrerpolicy="no-referrer"
+              />
+            }
+            <div>
+              <p class="m-0 text-sm text-stone-500">Connected to GitHub as</p>
+              <p class="m-0 font-semibold">{{ gitSession.user.login }}</p>
+            </div>
+          </div>
+
+          <label class="block">
+            <span class="mb-2 block text-sm font-semibold">
+              Git/LFS repository
+            </span>
+            <select
+              class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+              [disabled]="busy"
+              (change)="selectRepository($event)"
+            >
+              <option value="" [selected]="!gitSession.repository">
+                Choose a repository
+              </option>
+              @for (repository of repositories; track repository.id) {
+                <option
+                  [value]="repository.id"
+                  [selected]="gitSession.repository?.id === repository.id"
+                  [disabled]="!repository.canPush"
+                >
+                  {{ repository.fullName
+                  }}{{ repository.canPush ? '' : ' (read-only)' }}
+                </option>
+              }
+            </select>
+          </label>
+
+          <div class="flex flex-wrap gap-3">
+            <button
+              mat-flat-button
+              type="button"
+              [disabled]="busy || !gitSession.repository"
+              (click)="syncNow()"
+            >
+              {{ busy ? 'Working…' : 'Sync books and progress' }}
+            </button>
+            <button
+              mat-button
+              type="button"
+              [disabled]="busy"
+              (click)="disconnect()"
+            >
+              Disconnect
+            </button>
+          </div>
+        </section>
+      }
+    } @else if (selectedProvider === 'mega') {
+      @if (!megaSession.authenticated) {
+        <button
+          mat-flat-button
+          type="button"
+          [disabled]="busy || !gatewayAvailable.mega"
+          (click)="connect()"
+        >
+          Connect MEGA
+        </button>
+      } @else {
+        <section
+          class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
+        >
+          <div>
+            <p class="m-0 text-sm text-stone-500">Connected to MEGA as</p>
+            <p class="m-0 font-semibold">{{ megaSession.account }}</p>
+          </div>
+
+          <label class="block">
+            <span class="mb-2 block text-sm font-semibold">
+              MEGA application folder
+            </span>
+            <select
+              class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+              [disabled]="busy"
+              (change)="selectFolder($event)"
+            >
+              <option value="" [selected]="!megaSession.folder">
+                Choose a folder
+              </option>
+              @for (folder of folders; track folder.handle) {
+                <option
+                  [value]="folder.handle"
+                  [selected]="megaSession.folder?.handle === folder.handle"
+                  [disabled]="!folder.canWrite"
+                >
+                  {{ folder.path }}{{ folder.canWrite ? '' : ' (read-only)' }}
+                </option>
+              }
+            </select>
+          </label>
+
+          <div class="flex flex-wrap gap-3">
+            <button
+              mat-flat-button
+              type="button"
+              [disabled]="busy || !megaSession.folder"
+              (click)="syncNow()"
+            >
+              {{ busy ? 'Working…' : 'Sync books and progress' }}
+            </button>
+            <button
+              mat-button
+              type="button"
+              [disabled]="busy"
+              (click)="disconnect()"
+            >
+              Disconnect
+            </button>
+          </div>
+        </section>
+      }
+    } @else {
+      <p
+        class="rounded-xl border border-dashed border-stone-300 p-5 text-stone-600"
+      >
+        Choose Git + LFS or MEGA to configure library synchronization.
+      </p>
+    }
+  }
+</main>

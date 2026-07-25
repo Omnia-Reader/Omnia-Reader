@@ -1,0 +1,58 @@
+{
+  "name": "sync-gateway",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/sync-gateway/src",
+  "tags": ["scope:sync-gateway", "type:application"],
+  "targets": {
+    "build": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "platform": "node",
+        "outputPath": "dist/apps/sync-gateway",
+        "format": ["esm"],
+        "bundle": true,
+        "main": "apps/sync-gateway/src/main.ts",
+        "tsConfig": "apps/sync-gateway/tsconfig.app.json",
+        "generatePackageJson": true,
+        "thirdParty": false
+      },
+      "configurations": {
+        "development": {
+          "minify": false,
+          "sourcemap": true
+        },
+        "production": {
+          "minify": true,
+          "sourcemap": false
+        }
+      }
+    },
+    "serve": {
+      "continuous": true,
+      "executor": "@nx/js:node",
+      "defaultConfiguration": "development",
+      "dependsOn": ["build"],
+      "options": {
+        "buildTarget": "sync-gateway:build",
+        "runBuildTargetDependencies": false
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "sync-gateway:build:development"
+        },
+        "production": {
+          "buildTarget": "sync-gateway:build:production"
+        }
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run --config apps/sync-gateway/vitest.config.ts"
+      }
+    }
+  }
+}

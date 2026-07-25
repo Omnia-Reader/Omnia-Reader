@@ -1,0 +1,27 @@
+[package]
+name = "omnia-reader"
+version = "0.1.0"
+description = "A private, offline-first EPUB and PDF reader"
+authors = ["Omnia Reader contributors"]
+license = "MIT"
+repository = "https://github.com/omnia-reader/omnia-reader"
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "omnia_reader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-dialog = "2.7.2"
+tauri-plugin-fs = "2.5.1"
+tauri-plugin-opener = "2.5.4"
+tauri-plugin-single-instance = "2"
+uuid = { version = "1.18.1", features = ["v4"] }

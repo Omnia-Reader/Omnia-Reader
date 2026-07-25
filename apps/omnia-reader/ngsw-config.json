@@ -1,0 +1,50 @@
+{
+  "$schema": "../../node_modules/@angular/service-worker/config/schema.json",
+  "index": "/index.html",
+  "assetGroups": [
+    {
+      "name": "app-shell",
+      "installMode": "prefetch",
+      "resources": {
+        "files": [
+          "/favicon.ico",
+          "/index.html",
+          "/manifest.webmanifest",
+          "/main-*.js",
+          "/*.css"
+        ]
+      }
+    },
+    {
+      "name": "lazy-code",
+      "installMode": "lazy",
+      "updateMode": "prefetch",
+      "resources": {
+        "files": ["/*.js"]
+      }
+    },
+    {
+      "name": "lazy-workers",
+      "installMode": "lazy",
+      "updateMode": "prefetch",
+      "resources": {
+        "files": ["/assets/pdfjs/**"]
+      }
+    },
+    {
+      "name": "lazy-fonts",
+      "installMode": "lazy",
+      "updateMode": "prefetch",
+      "resources": {
+        "files": ["/media/**"]
+      }
+    },
+    {
+      "name": "static-assets",
+      "installMode": "prefetch",
+      "resources": {
+        "files": ["/assets/**", "!/assets/pdfjs/**"]
+      }
+    }
+  ]
+}

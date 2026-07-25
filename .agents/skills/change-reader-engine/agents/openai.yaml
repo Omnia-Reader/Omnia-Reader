@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Change Reader Engine'
+  short_description: 'Evolve EPUB and PDF reader behavior safely'
+  default_prompt: 'Use $change-reader-engine to implement and validate an EPUB or PDF reader-engine change.'

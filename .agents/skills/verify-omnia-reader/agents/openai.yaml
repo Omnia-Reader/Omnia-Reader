@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Verify Omnia Reader'
+  short_description: 'Run change-aware project validation'
+  default_prompt: 'Use $verify-omnia-reader to choose and run the smallest truthful validation suite for my current changes.'

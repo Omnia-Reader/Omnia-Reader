@@ -1,0 +1,24 @@
+{
+  "name": "Omnia Reader",
+  "short_name": "Omnia",
+  "description": "A private, offline-first EPUB and PDF reader.",
+  "theme_color": "#6d28d9",
+  "background_color": "#fafaf9",
+  "display": "standalone",
+  "scope": "/",
+  "start_url": "/library",
+  "icons": [
+    {
+      "src": "assets/icons/omnia-reader.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/omnia-reader-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

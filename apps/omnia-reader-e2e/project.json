@@ -5,5 +5,28 @@
   "sourceRoot": "apps/omnia-reader-e2e/src",
   "implicitDependencies": ["omnia-reader"],
   "// targets": "to see all targets run: nx show project omnia-reader-e2e --web",
-  "targets": {}
+  "targets": {
+    "e2e": {
+      "parallelism": true,
+      "dependsOn": [
+        {
+          "projects": ["omnia-reader"],
+          "target": "build"
+        }
+      ]
+    },
+    "performance": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "dependsOn": [
+        {
+          "projects": ["omnia-reader"],
+          "target": "build"
+        }
+      ],
+      "options": {
+        "command": "PERFORMANCE_E2E=1 playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 performance.spec.ts"
+      }
+    }
+  }
 }

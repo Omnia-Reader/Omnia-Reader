@@ -4,7 +4,7 @@
   "projectType": "application",
   "prefix": "omnia",
   "sourceRoot": "apps/omnia-reader/src",
-  "tags": [],
+  "tags": ["scope:app", "type:app"],
   "targets": {
     "build": {
       "executor": "@angular/build:application",
@@ -14,16 +14,36 @@
         "browser": "apps/omnia-reader/src/main.ts",
         "tsConfig": "apps/omnia-reader/tsconfig.app.json",
         "inlineStyleLanguage": "scss",
+        "allowedCommonJsDependencies": ["jszip"],
         "assets": [
           {
             "glob": "**/*",
             "input": "apps/omnia-reader/public"
+          },
+          {
+            "glob": "pdf.worker.min.mjs",
+            "input": "node_modules/pdfjs-dist/build",
+            "output": "assets/pdfjs"
+          },
+          {
+            "glob": "pdf_viewer.css",
+            "input": "node_modules/pdfjs-dist/web",
+            "output": "assets/pdfjs"
+          },
+          {
+            "glob": "**/*",
+            "input": "node_modules/pdfjs-dist/web/images",
+            "output": "assets/pdfjs/images"
           }
         ],
-        "styles": ["apps/omnia-reader/src/styles.scss"]
+        "styles": [
+          "apps/omnia-reader/src/material-theme.scss",
+          "apps/omnia-reader/src/styles.css"
+        ]
       },
       "configurations": {
         "production": {
+          "serviceWorker": "apps/omnia-reader/ngsw-config.json",
           "budgets": [
             {
               "type": "initial",
@@ -49,6 +69,10 @@
     "serve": {
       "continuous": true,
       "executor": "@angular/build:dev-server",
+      "options": {
+        "port": 4300,
+        "proxyConfig": "apps/omnia-reader/proxy.conf.json"
+      },
       "configurations": {
         "production": {
           "buildTarget": "omnia-reader:build:production"
@@ -58,9 +82,6 @@
         }
       },
       "defaultConfiguration": "development"
-    },
-    "lint": {
-      "executor": "@nx/eslint:lint"
     },
     "test": {
       "executor": "@angular/build:unit-test",

@@ -1,1 +1,16 @@
+@if (publicationImports.error()) {
+<div
+  class="fixed top-3 right-3 left-3 z-50 flex items-center justify-between gap-4 rounded-lg bg-red-800 px-4 py-3 text-white shadow-xl"
+  role="alert"
+>
+  <span>{{ publicationImports.error() }}</span>
+  <button
+    class="cursor-pointer rounded border border-white/70 bg-transparent px-3 py-1 text-white"
+    type="button"
+    (click)="publicationImports.clearError()"
+  >
+    Dismiss
+  </button>
+</div>
+}
 <omnia-navigation></omnia-navigation>

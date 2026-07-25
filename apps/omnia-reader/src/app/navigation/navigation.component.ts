@@ -1,38 +1,55 @@
-import { Component, inject, ChangeDetectionStrategy } from '@angular/core';
-import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
-import { AsyncPipe } from '@angular/common';
-import { MatToolbarModule } from '@angular/material/toolbar';
-import { MatButtonModule } from '@angular/material/button';
-import { MatSidenavModule } from '@angular/material/sidenav';
-import { MatListModule } from '@angular/material/list';
-import { MatIconModule } from '@angular/material/icon';
-import { Observable } from 'rxjs';
-import { map, shareReplay } from 'rxjs/operators';
-import { RouterLink, RouterOutlet } from '@angular/router';
+import {
+  ChangeDetectorRef,
+  ChangeDetectionStrategy,
+  Component,
+  OnDestroy,
+  inject,
+} from '@angular/core';
+import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { BackNavigationService } from '../back-navigation.service';
 
 @Component({
   selector: 'omnia-navigation',
   templateUrl: './navigation.component.html',
-  styleUrl: './navigation.component.scss',
-  changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [
-    MatToolbarModule,
-    MatButtonModule,
-    MatSidenavModule,
-    MatListModule,
-    MatIconModule,
-    AsyncPipe,
-    RouterOutlet,
-    RouterLink,
-  ],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [RouterOutlet, RouterLink, RouterLinkActive],
 })
-export class NavigationComponent {
-  private breakpointObserver = inject(BreakpointObserver);
+export class NavigationComponent implements OnDestroy {
+  private readonly backNavigation = inject(BackNavigationService);
+  private readonly changeDetector = inject(ChangeDetectorRef);
+  private removeMenuBackHandler: (() => void) | null = null;
 
-  isHandset$: Observable<boolean> = this.breakpointObserver
-    .observe(Breakpoints.Handset)
-    .pipe(
-      map((result) => result.matches),
-      shareReplay(),
+  menuOpen = false;
+
+  toggleMenu(): void {
+    if (this.menuOpen) {
+      this.closeMenu();
+      return;
+    }
+
+    this.menuOpen = true;
+    this.removeMenuBackHandler = this.backNavigation.registerTransientHandler(
+      () => {
+        if (!this.menuOpen) {
+          return false;
+        }
+        this.closeMenu();
+        return true;
+      },
     );
+  }
+
+  closeMenu(): void {
+    if (!this.menuOpen && !this.removeMenuBackHandler) {
+      return;
+    }
+    this.menuOpen = false;
+    this.removeMenuBackHandler?.();
+    this.removeMenuBackHandler = null;
+    this.changeDetector.markForCheck();
+  }
+
+  ngOnDestroy(): void {
+    this.closeMenu();
+  }
 }

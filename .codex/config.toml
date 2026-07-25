@@ -10,6 +10,9 @@ approvals_reviewer = "auto_review"
 [sandbox_workspace_write]
 network_access = true
 
+[mcp_servers.openaiDeveloperDocs]
+url = "https://developers.openai.com/mcp"
+
 [mcp_servers.codegraph]
 command = "codegraph"
 args = ["serve", "--mcp"]

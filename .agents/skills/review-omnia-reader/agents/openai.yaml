@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Review Omnia Reader'
+  short_description: 'Review with repository-specific quality gates'
+  default_prompt: 'Use $review-omnia-reader to review the current diff for correctness, regressions, security, accessibility, and missing tests.'

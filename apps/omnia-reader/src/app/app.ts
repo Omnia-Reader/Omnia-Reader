@@ -1,6 +1,7 @@
-import { Component, ChangeDetectionStrategy } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterModule } from '@angular/router';
 import { NavigationComponent } from './navigation/navigation.component';
+import { PublicationImportService } from './features/library/publication-import.service';
 
 @Component({
   imports: [RouterModule, NavigationComponent],
@@ -10,5 +11,6 @@ import { NavigationComponent } from './navigation/navigation.component';
   styleUrl: './app.scss',
 })
 export class App {
+  protected readonly publicationImports = inject(PublicationImportService);
   protected title = 'omnia-reader';
 }

@@ -1,0 +1,59 @@
+{
+  "name": "mega-sdk-bridge",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "tools/mega-sdk-bridge/src",
+  "tags": ["scope:sync-gateway", "type:native-tool"],
+  "targets": {
+    "configure-core": {
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/dist/tools/mega-sdk-bridge-core"],
+      "options": {
+        "command": "cmake -S tools/mega-sdk-bridge -B dist/tools/mega-sdk-bridge-core -DOMNIA_MEGA_BRIDGE_BUILD_SERVICE=OFF -DOMNIA_MEGA_BRIDGE_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug"
+      }
+    },
+    "build-core": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["configure-core"],
+      "outputs": ["{workspaceRoot}/dist/tools/mega-sdk-bridge-core"],
+      "options": {
+        "command": "cmake --build dist/tools/mega-sdk-bridge-core --parallel 2"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-core"],
+      "options": {
+        "command": "ctest --test-dir dist/tools/mega-sdk-bridge-core --output-on-failure"
+      }
+    },
+    "configure": {
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/dist/tools/mega-sdk-bridge"],
+      "options": {
+        "command": "cmake -S tools/mega-sdk-bridge -B dist/tools/mega-sdk-bridge -DCMAKE_BUILD_TYPE=Release"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["configure"],
+      "outputs": ["{workspaceRoot}/dist/tools/mega-sdk-bridge"],
+      "options": {
+        "command": "cmake --build dist/tools/mega-sdk-bridge --parallel 2"
+      }
+    },
+    "container": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker build --tag omnia-reader/mega-sdk-bridge:local --file tools/mega-sdk-bridge/Dockerfile tools/mega-sdk-bridge"
+      }
+    },
+    "container-smoke": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["container"],
+      "options": {
+        "command": "sh tools/mega-sdk-bridge/scripts/smoke-container.sh"
+      }
+    }
+  }
+}

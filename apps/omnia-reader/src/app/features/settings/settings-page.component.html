@@ -1,0 +1,154 @@
+<main class="mx-auto max-w-3xl p-6 sm:p-10 lg:p-16">
+  <p class="mb-0 text-xs font-bold tracking-[0.12em] text-violet-700 uppercase">
+    Omnia Reader
+  </p>
+  <h1 class="mt-1 text-4xl font-semibold">Settings</h1>
+  <section class="grid gap-5">
+    <a class="text-inherit no-underline" routerLink="/settings/sync">
+      <mat-card
+        class="grid grid-cols-[auto_1fr_auto] items-center gap-5 p-5"
+        appearance="outlined"
+      >
+        <mat-icon>sync</mat-icon>
+        <div>
+          <h2 class="m-0 text-xl font-semibold">Git progress sync</h2>
+          <p class="m-0 text-stone-600">
+            Connect a repository and keep device progress convergent.
+          </p>
+        </div>
+        <mat-icon>chevron_right</mat-icon>
+      </mat-card>
+    </a>
+
+    <mat-card class="grid gap-5 p-5" appearance="outlined">
+      <div class="grid grid-cols-[auto_1fr] items-start gap-5">
+        <mat-icon>inventory_2</mat-icon>
+        <div>
+          <h2 class="m-0 text-xl font-semibold">Portable library backup</h2>
+          <p class="mt-1 mb-0 text-stone-600">
+            Export publication files, metadata, reading progress, and reader
+            preferences in one versioned archive. Restore merges with this
+            device and keeps newer local progress.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-3 pl-11">
+        <button
+          mat-stroked-button
+          type="button"
+          [disabled]="busy"
+          (click)="exportBackup()"
+        >
+          <mat-icon>download</mat-icon>
+          Export backup
+        </button>
+        <button
+          mat-stroked-button
+          type="button"
+          [disabled]="busy"
+          (click)="backupInput.click()"
+        >
+          <mat-icon>upload</mat-icon>
+          Restore backup
+        </button>
+        @if (backupExportActive) {
+          <button
+            mat-stroked-button
+            type="button"
+            (click)="cancelBackupExport()"
+          >
+            <mat-icon>cancel</mat-icon>
+            Cancel export
+          </button>
+        }
+        <label class="sr-only" for="backup-archive-input">
+          Portable library backup archive
+        </label>
+        <input
+          #backupInput
+          id="backup-archive-input"
+          class="sr-only"
+          type="file"
+          accept=".omnia-backup,.zip,application/zip,application/vnd.omnia-reader.backup+zip"
+          (change)="importBackup($event)"
+        />
+      </div>
+
+      @if (busy) {
+        <p class="m-0 pl-11 text-sm text-stone-600" role="status">
+          {{ backupProgressMessage ?? 'Processing library archive…' }}
+        </p>
+      }
+      @if (statusMessage) {
+        <p class="m-0 pl-11 text-sm text-emerald-700" role="status">
+          {{ statusMessage }}
+        </p>
+      }
+      @if (errorMessage) {
+        <p class="m-0 pl-11 text-sm text-red-700" role="alert">
+          {{ errorMessage }}
+        </p>
+      }
+    </mat-card>
+
+    <mat-card class="grid gap-5 p-5" appearance="outlined">
+      <div class="grid grid-cols-[auto_1fr] items-start gap-5">
+        <mat-icon>health_and_safety</mat-icon>
+        <div>
+          <h2 class="m-0 text-xl font-semibold">Recovered local data</h2>
+          <p class="mt-1 mb-0 text-stone-600">
+            Malformed records are removed from the active library without being
+            discarded. Review why they were quarantined and export an exact
+            diagnostic copy before requesting support.
+          </p>
+        </div>
+      </div>
+
+      @if (quarantineLoading) {
+        <p class="m-0 pl-11 text-sm text-stone-600" role="status">
+          Inspecting recovered records…
+        </p>
+      } @else if (quarantineErrorMessage) {
+        <p class="m-0 pl-11 text-sm text-red-700" role="alert">
+          {{ quarantineErrorMessage }}
+        </p>
+      } @else if (quarantinedRecords.length === 0) {
+        <p class="m-0 pl-11 text-sm text-stone-600">
+          No recovered data needs attention.
+        </p>
+      } @else {
+        <ul class="m-0 grid list-none gap-3 p-0 pl-11">
+          @for (record of quarantinedRecords; track record.id) {
+            <li class="rounded-xl border border-amber-300 bg-amber-50 p-4">
+              <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <strong>{{ record.storeName }}</strong>
+                <time
+                  class="text-xs text-stone-600"
+                  [attr.datetime]="record.quarantinedAt"
+                >
+                  {{ record.quarantinedAt }}
+                </time>
+              </div>
+              <p class="my-1 text-sm">{{ record.reason }}</p>
+              <p class="m-0 break-all text-xs text-stone-600">
+                Original key: {{ describeRecordKey(record.recordKey) }}
+              </p>
+            </li>
+          }
+        </ul>
+        <div class="pl-11">
+          <button
+            mat-stroked-button
+            type="button"
+            [disabled]="busy"
+            (click)="exportQuarantinedRecords()"
+          >
+            <mat-icon>download</mat-icon>
+            Export recovered data
+          </button>
+        </div>
+      }
+    </mat-card>
+  </section>
+</main>

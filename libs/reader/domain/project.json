@@ -1,0 +1,16 @@
+{
+  "name": "reader-domain",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "libs/reader/domain/src",
+  "tags": ["scope:reader-domain", "type:domain"],
+  "targets": {
+    "test": {
+      "executor": "@angular/build:unit-test",
+      "options": {
+        "buildTarget": "omnia-reader:build:development",
+        "tsConfig": "libs/reader/domain/tsconfig.spec.json"
+      }
+    }
+  }
+}

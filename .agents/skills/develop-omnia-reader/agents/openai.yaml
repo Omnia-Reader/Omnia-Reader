@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Develop Omnia Reader'
+  short_description: 'Implement scoped Omnia Reader features'
+  default_prompt: 'Use $develop-omnia-reader to implement a scoped Omnia Reader feature and verify the affected projects.'

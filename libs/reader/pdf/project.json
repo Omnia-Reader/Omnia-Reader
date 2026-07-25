@@ -1,0 +1,16 @@
+{
+  "name": "reader-pdf",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "libs/reader/pdf/src",
+  "tags": ["scope:reader-engine", "type:data-access", "format:pdf"],
+  "targets": {
+    "test": {
+      "executor": "@angular/build:unit-test",
+      "options": {
+        "buildTarget": "omnia-reader:build:development",
+        "tsConfig": "libs/reader/pdf/tsconfig.spec.json"
+      }
+    }
+  }
+}

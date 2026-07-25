@@ -1,0 +1,49 @@
+@import 'tailwindcss';
+@import '@fontsource/roboto/latin-400.css';
+@import '@fontsource/roboto/latin-500.css';
+@import 'material-icons/iconfont/filled.css';
+@source './app/**/*.{html,ts}';
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: Roboto, 'Helvetica Neue', sans-serif;
+  }
+}
+
+.omnia-epub-viewer-container {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: clamp(0.5rem, 2vw, 1.5rem);
+}
+
+.omnia-epub-viewer-container > .epub-container {
+  max-width: 100%;
+}
+
+.omnia-pdf-viewer-container {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  --page-bg-color: white;
+  --page-border: 1px solid rgb(120 113 108 / 35%);
+  --page-margin: 0 auto 1rem;
+  --pdfViewer-padding-bottom: 1rem;
+}
+
+.omnia-pdf-viewer-container .pdfViewer {
+  min-width: min-content;
+  padding-top: 1rem;
+}
+
+.omnia-pdf-viewer-container .pdfViewer .page {
+  box-shadow: 0 3px 14px rgb(15 23 42 / 14%);
+}
