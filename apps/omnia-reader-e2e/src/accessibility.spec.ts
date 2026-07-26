@@ -44,6 +44,21 @@ test('library has no automated WCAG A or AA violations', async ({ page }) => {
     await createEpubFixture(),
     'Omnia EPUB Fixture',
   );
+  await page
+    .getByRole('link', { name: 'Start reading Omnia EPUB Fixture' })
+    .click();
+  const progress = page.getByRole('slider', { name: 'Book progress' });
+  await expect(progress).toBeVisible({ timeout: 20_000 });
+  await progress.fill('50');
+  await expect(page.getByTestId('reader-overall-progress')).toHaveText(
+    /[4-6]\d% of book/,
+  );
+  await page.goBack();
+  await expect(
+    page.getByRole('link', {
+      name: /Continue reading Omnia EPUB Fixture, [4-6]\d% read/,
+    }),
+  ).toBeVisible();
   await expectAccessible(page);
 
   await page.getByRole('button', { name: 'List view' }).click();

@@ -1,6 +1,7 @@
 import type { Book, Contents, Rendition, Section } from '@likecoin/epub-ts';
 import {
   BookSource,
+  DEFAULT_EPUB_READER_PREFERENCES,
   PublicationAnnotation,
   PublicationSelection,
 } from '@omnia-reader/reader/domain';
@@ -11,8 +12,25 @@ describe('EpubReaderEngine annotations', () => {
     const listeners = new Map<string, (...args: unknown[]) => void>();
     let sanitizeContent: ((document: Document) => void) | undefined;
     let attachContent: ((contents: Contents) => void) | undefined;
-    const highlight = vi.fn();
+    const annotationElement = globalThis.document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'g',
+    );
+    const renderedAnnotation = {
+      mark: { element: annotationElement },
+      on: vi.fn(),
+    };
+    const highlight = vi.fn((...args: unknown[]) => {
+      void args;
+      return renderedAnnotation;
+    });
     const remove = vi.fn();
+    const locations = {
+      total: 100,
+      generate: vi.fn().mockResolvedValue([]),
+      percentageFromCfi: vi.fn().mockReturnValue(0.42),
+      cfiFromPercentage: vi.fn().mockReturnValue('epubcfi(/6/4!/4/2)'),
+    };
     const rendition = {
       on: vi.fn((name: string, listener: (...args: unknown[]) => void) =>
         listeners.set(name, listener),
@@ -40,6 +58,8 @@ describe('EpubReaderEngine annotations', () => {
         registerRules: vi.fn(),
         select: vi.fn(),
       },
+      flow: vi.fn(),
+      spread: vi.fn(),
       direction: vi.fn(),
       _disconnectContainerObserver: vi.fn(),
       destroy: vi.fn(),
@@ -54,6 +74,7 @@ describe('EpubReaderEngine annotations', () => {
         navigation: Promise.resolve({ toc: [] }),
       },
       ready: Promise.resolve(),
+      locations,
       spine: {
         hooks: {
           content: {
@@ -79,6 +100,22 @@ describe('EpubReaderEngine annotations', () => {
     globalThis.document.body.append(viewport);
     await engine.mount(viewport);
     expect(rendition._disconnectContainerObserver).toHaveBeenCalled();
+    expect(engine.pageStatus()).toEqual({
+      current: 1,
+      total: 10,
+      scope: 'section',
+    });
+    expect(locations.generate).toHaveBeenCalledWith(1_600);
+    expect(engine.currentLocator()?.locations?.totalProgression).toBe(0.42);
+    await engine.goToProgression(0.75);
+    expect(locations.cfiFromPercentage).toHaveBeenCalledWith(0.75);
+    expect(rendition.display).toHaveBeenLastCalledWith('epubcfi(/6/4!/4/2)');
+    await engine.applyPreferences({
+      ...DEFAULT_EPUB_READER_PREFERENCES,
+      flow: 'scrolled',
+    });
+    expect(engine.pageStatus()).toBeNull();
+    await engine.applyPreferences(DEFAULT_EPUB_READER_PREFERENCES);
     const unsafeDocument =
       globalThis.document.implementation.createHTMLDocument('Unsafe chapter');
     unsafeDocument.body.innerHTML =
@@ -143,7 +180,60 @@ describe('EpubReaderEngine annotations', () => {
     globalThis.document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
     );
-    expect(navigation).toEqual(['next']);
+    globalThis.document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }),
+    );
+    globalThis.document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+    );
+    const wheelDown = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 120,
+    });
+    globalThis.document.dispatchEvent(wheelDown);
+    expect(navigation).toEqual(['next', 'previous', 'next', 'next']);
+    expect(wheelDown.defaultPrevented).toBe(true);
+    dispatchTouchPointer(globalThis.document.body, 'pointerdown', {
+      clientX: 180,
+      clientY: 80,
+    });
+    const swipeNext = dispatchTouchPointer(
+      globalThis.document.body,
+      'pointerup',
+      {
+        clientX: 70,
+        clientY: 84,
+      },
+    );
+    expect(navigation).toEqual(['next', 'previous', 'next', 'next', 'next']);
+    expect(swipeNext.defaultPrevented).toBe(true);
+    const publicationControl = globalThis.document.createElement('button');
+    globalThis.document.body.append(publicationControl);
+    dispatchTouchPointer(publicationControl, 'pointerdown', {
+      clientX: 180,
+      clientY: 80,
+    });
+    dispatchTouchPointer(publicationControl, 'pointerup', {
+      clientX: 70,
+      clientY: 84,
+    });
+    expect(navigation).toHaveLength(5);
+    publicationControl.remove();
+    dispatchLegacyTouch(globalThis.document.body, 'touchstart', {
+      clientX: 180,
+      clientY: 80,
+    });
+    const legacySwipeNext = dispatchLegacyTouch(
+      globalThis.document.body,
+      'touchend',
+      {
+        clientX: 70,
+        clientY: 84,
+      },
+    );
+    expect(navigation).toHaveLength(6);
+    expect(legacySwipeNext.defaultPrevented).toBe(true);
 
     const selections: Array<PublicationSelection | null> = [];
     engine.onSelection((selection) => selections.push(selection));
@@ -190,15 +280,34 @@ describe('EpubReaderEngine annotations', () => {
       createdAt: '2026-07-25T08:00:00.000Z',
       updatedAt: '2026-07-25T08:00:00.000Z',
     };
+    const activatedAnnotations: string[] = [];
+    engine.onAnnotationActivated((annotationId) =>
+      activatedAnnotations.push(annotationId),
+    );
     await engine.setAnnotations([annotation]);
 
     expect(highlight).toHaveBeenCalledWith(
       'epubcfi(/6/2!/4/2,/1:7,/1:25)',
       { annotationId: annotation.id },
-      undefined,
+      expect.any(Function),
       'omnia-annotation-green',
       expect.objectContaining({ fill: '#4ade80' }),
     );
+    expect(renderedAnnotation.on).toHaveBeenCalledWith(
+      'attach',
+      expect.any(Function),
+    );
+    expect(annotationElement.getAttribute('role')).toBe('button');
+    expect(annotationElement.getAttribute('tabindex')).toBe('0');
+    const activateHighlight = highlight.mock.calls[0]?.[2] as EventListener;
+    const activateEvent = new Event('click', { cancelable: true });
+    activateHighlight(activateEvent);
+    expect(activateEvent.defaultPrevented).toBe(true);
+    expect(activatedAnnotations).toEqual([annotation.id]);
+    annotationElement.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }),
+    );
+    expect(activatedAnnotations).toEqual([annotation.id, annotation.id]);
 
     (
       renderedContents.cfiFromRange as ReturnType<typeof vi.fn>
@@ -402,6 +511,41 @@ describe('EpubReaderEngine publication compatibility', () => {
       new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }),
     );
     expect(navigation).toEqual(['next']);
+    dispatchTouchPointer(chapter.body, 'pointerdown', {
+      clientX: 180,
+      clientY: 80,
+    });
+    dispatchTouchPointer(chapter.body, 'pointerup', {
+      clientX: 70,
+      clientY: 84,
+    });
+    expect(navigation).toEqual(['next', 'previous']);
+    dispatchLegacyTouch(chapter.body, 'touchstart', {
+      clientX: 70,
+      clientY: 80,
+    });
+    dispatchLegacyTouch(chapter.body, 'touchend', {
+      clientX: 180,
+      clientY: 84,
+    });
+    expect(navigation).toEqual(['next', 'previous', 'next']);
+    dispatchTouchPointer(
+      chapter.querySelector('#internal') as Element,
+      'pointerdown',
+      {
+        clientX: 180,
+        clientY: 80,
+      },
+    );
+    dispatchTouchPointer(
+      chapter.querySelector('#internal') as Element,
+      'pointerup',
+      {
+        clientX: 70,
+        clientY: 84,
+      },
+    );
+    expect(navigation).toEqual(['next', 'previous', 'next']);
 
     const internalClick = new MouseEvent('click', {
       bubbles: true,
@@ -606,4 +750,56 @@ function fallbackLocator() {
     },
     text: { highlight: 'selected quotation' },
   };
+}
+
+function dispatchTouchPointer(
+  target: EventTarget,
+  type: 'pointerdown' | 'pointerup',
+  coordinates: { clientX: number; clientY: number },
+): PointerEvent {
+  const event = new Event(type, {
+    bubbles: true,
+    cancelable: true,
+  }) as PointerEvent;
+  Object.defineProperties(event, {
+    button: { value: 0 },
+    clientX: { value: coordinates.clientX },
+    clientY: { value: coordinates.clientY },
+    isPrimary: { value: true },
+    pointerId: { value: 1 },
+    pointerType: { value: 'touch' },
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function dispatchLegacyTouch(
+  target: EventTarget,
+  type: 'touchstart' | 'touchend',
+  coordinates: { clientX: number; clientY: number },
+): TouchEvent {
+  const event = new Event(type, {
+    bubbles: true,
+    cancelable: true,
+  }) as TouchEvent;
+  const touch = {
+    clientX: coordinates.clientX,
+    clientY: coordinates.clientY,
+    identifier: 1,
+    target,
+  } as Touch;
+  const activeTouches = type === 'touchstart' ? touchList(touch) : touchList();
+  Object.defineProperties(event, {
+    changedTouches: { value: touchList(touch) },
+    targetTouches: { value: activeTouches },
+    touches: { value: activeTouches },
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function touchList(...touches: Touch[]): TouchList {
+  return Object.assign(touches, {
+    item: (index: number) => touches[index] ?? null,
+  }) as unknown as TouchList;
 }

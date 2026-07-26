@@ -19,6 +19,8 @@ describe('SettingsPageComponent', () => {
     kind: 'web',
     supportsStreamingFileSave: false,
     createFileSave: vi.fn(),
+    getStorageStatus: vi.fn(),
+    requestPersistentStorage: vi.fn(),
   };
   const quarantineRepository = {
     listQuarantinedRecords: vi.fn(),
@@ -34,6 +36,13 @@ describe('SettingsPageComponent', () => {
     backups.importArchive.mockReset();
     platform.supportsStreamingFileSave = false;
     platform.createFileSave.mockReset();
+    platform.getStorageStatus.mockReset();
+    platform.getStorageStatus.mockResolvedValue({
+      persistence: 'best-effort',
+      usageBytes: 5 * 1024 * 1024,
+      quotaBytes: 100 * 1024 * 1024,
+    });
+    platform.requestPersistentStorage.mockReset();
     quarantineRepository.listQuarantinedRecords.mockReset();
     quarantineRepository.listQuarantinedRecords.mockResolvedValue([]);
     await TestBed.configureTestingModule({
@@ -64,6 +73,92 @@ describe('SettingsPageComponent', () => {
     expect(input).toBeTruthy();
     expect(label.textContent?.trim()).toBe('Portable library backup archive');
     expect(label.control).toBe(input);
+  });
+
+  it('does not advertise remote providers while authentication is deferred', async () => {
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('a[href="/settings/sync"]'),
+    ).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain(
+      'Git progress sync',
+    );
+  });
+
+  it('shows local storage durability, quota usage, and a protection action', async () => {
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain(
+      'Offline library storage',
+    );
+    expect(fixture.nativeElement.textContent).toContain('Best effort');
+    expect(fixture.nativeElement.textContent).toContain(
+      '5.0 MiB of 100.0 MiB used',
+    );
+    const meter = fixture.nativeElement.querySelector(
+      'meter[aria-label="Offline library storage usage"]',
+    ) as HTMLMeterElement;
+    expect(meter.value).toBe(5);
+    expect(
+      fixture.nativeElement.querySelector(
+        'button[aria-describedby="storage-persistence-description"]',
+      ).textContent,
+    ).toContain('Protect offline library');
+  });
+
+  it('requests persistent browser storage and reports the granted state', async () => {
+    platform.requestPersistentStorage.mockResolvedValue({
+      persistence: 'persistent',
+      usageBytes: 5 * 1024 * 1024,
+      quotaBytes: 100 * 1024 * 1024,
+    });
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+
+    fixture.detectChanges();
+    await fixture.whenStable();
+    await fixture.componentInstance.requestPersistentStorage();
+    fixture.detectChanges();
+
+    expect(platform.requestPersistentStorage).toHaveBeenCalledOnce();
+    expect(fixture.nativeElement.textContent).toContain('Protected');
+    expect(fixture.nativeElement.textContent).toContain(
+      'Offline library storage is now protected',
+    );
+    expect(
+      fixture.nativeElement.querySelector(
+        'button[aria-describedby="storage-persistence-description"]',
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps backup guidance when persistent storage is unavailable', async () => {
+    platform.getStorageStatus.mockResolvedValue({
+      persistence: 'unavailable',
+    });
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Unavailable');
+    expect(fixture.nativeElement.textContent).toContain(
+      'Keep a current portable backup',
+    );
+    expect(
+      fixture.nativeElement.querySelector(
+        'button[aria-describedby="storage-persistence-description"]',
+      ),
+    ).toBeNull();
   });
 
   it('exports the complete library as a downloaded archive', async () => {

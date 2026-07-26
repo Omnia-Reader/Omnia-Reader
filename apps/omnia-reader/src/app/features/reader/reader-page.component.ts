@@ -8,6 +8,7 @@ import {
   ViewChild,
   inject,
 } from '@angular/core';
+import { NgClass } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -35,10 +36,18 @@ import {
   PublicationSelection,
   ReaderEngine,
   ReaderNavigationDirection,
+  ReaderPageStatus,
   ReaderPreferences,
   ReadingProgress,
   SearchResult,
+  selectionHasText,
+  startTouchEventNavigationGesture,
+  startTouchNavigationGesture,
   TocEntry,
+  TouchNavigationGesture,
+  touchEventNavigationDirection,
+  touchNavigationDirection,
+  wheelNavigationDirection,
 } from '@omnia-reader/reader/domain';
 import { createBookSyncManifest } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
@@ -51,12 +60,14 @@ import { PdfThumbnailComponent } from './pdf-thumbnail.component';
   host: {
     class: 'block h-[calc(100vh-64px)]',
     '(document:keydown)': 'onDocumentKeydown($event)',
+    '(document:fullscreenchange)': 'onFullscreenChange()',
   },
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
+    NgClass,
     ScrollingModule,
     FormsModule,
     RouterLink,
@@ -64,6 +75,9 @@ import { PdfThumbnailComponent } from './pdf-thumbnail.component';
   ],
 })
 export class ReaderPageComponent implements AfterViewInit, OnDestroy {
+  @ViewChild('readerRoot', { static: true })
+  private readerRoot!: ElementRef<HTMLElement>;
+
   @ViewChild('viewport', { static: true })
   private viewport!: ElementRef<HTMLElement>;
 
@@ -108,11 +122,15 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   pendingExternalUrl: string | null = null;
   externalLinkError: string | null = null;
   pageNavigation: PageNavigation | null = null;
+  pageStatus: ReaderPageStatus | null = null;
   pageNumbers: readonly number[] = [];
   currentPageNumber = 1;
   passwordChallenge: PublicationPasswordChallenge | null = null;
   pdfPassword = '';
   passwordError: string | null = null;
+  immersiveMode = false;
+  immersiveToolbarRevealed = false;
+  immersiveError: string | null = null;
   epubPreferences: EpubReaderPreferences = {
     ...DEFAULT_EPUB_READER_PREFERENCES,
   };
@@ -129,8 +147,12 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private removeRelocationListener: (() => void) | null = null;
   private removeSelectionListener: (() => void) | null = null;
   private removePasswordListener: (() => void) | null = null;
+  private removeAnnotationActivationListener: (() => void) | null = null;
   private removeNavigationRequestListener: (() => void) | null = null;
   private removeExternalLinkRequestListener: (() => void) | null = null;
+  private lastWheelNavigationAt = Number.NEGATIVE_INFINITY;
+  private touchNavigationGesture: TouchNavigationGesture | null = null;
+  private touchEventNavigationGesture: TouchNavigationGesture | null = null;
   private readonly removeTransientBackHandler =
     this.backNavigation.registerTransientHandler(() =>
       this.closeTransientReaderUi(),
@@ -181,6 +203,17 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         ? serializeLocator(progress.locator)
         : '';
       this.engine = await this.engines.create(book.format);
+      this.removeAnnotationActivationListener =
+        this.engine.onAnnotationActivated?.((annotationId) => {
+          const annotation = this.annotations.find(
+            (candidate) => candidate.id === annotationId,
+          );
+          if (!annotation) {
+            return;
+          }
+          this.beginEditAnnotation(annotation);
+          this.changeDetector.markForCheck();
+        }) ?? null;
       this.removeNavigationRequestListener =
         this.engine.onNavigationRequested?.((direction) => {
           void this.navigate(direction);
@@ -239,6 +272,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.removeRelocationListener = this.engine.onRelocated((locator) => {
         this.currentLocator = locator;
         this.currentPageNumber = locator.locations?.position ?? 1;
+        this.pageStatus = this.engine?.pageStatus?.() ?? null;
         this.changeDetector.markForCheck();
         void this.queueProgressSave(locator).catch(() => undefined);
       });
@@ -250,6 +284,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
           )
         : [];
       this.currentLocator = this.engine.currentLocator();
+      this.pageStatus = this.engine.pageStatus?.() ?? null;
       this.currentPageNumber = this.currentLocator?.locations?.position ?? 1;
       this.tableOfContents = this.engine.tableOfContents();
       this.tocItems = flattenToc(this.tableOfContents);
@@ -267,14 +302,6 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.loading = false;
       this.changeDetector.markForCheck();
     }
-  }
-
-  async previous(): Promise<void> {
-    await this.navigate('previous');
-  }
-
-  async next(): Promise<void> {
-    await this.navigate('next');
   }
 
   onDocumentKeydown(event: KeyboardEvent): void {
@@ -295,6 +322,255 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
     event.preventDefault();
     void this.navigate(direction);
+  }
+
+  async toggleImmersiveMode(): Promise<void> {
+    const readerRoot = this.readerRoot.nativeElement;
+    const document = readerRoot.ownerDocument;
+    this.immersiveError = null;
+    try {
+      if (document.fullscreenElement === readerRoot) {
+        await document.exitFullscreen();
+      } else {
+        if (!readerRoot.requestFullscreen) {
+          throw new Error(
+            'Fullscreen reading is not supported by this browser',
+          );
+        }
+        await readerRoot.requestFullscreen({ navigationUI: 'hide' });
+      }
+      this.onFullscreenChange();
+    } catch (error) {
+      this.immersiveError =
+        error instanceof Error
+          ? error.message
+          : 'Unable to change fullscreen reading mode';
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  onFullscreenChange(): void {
+    const readerRoot = this.readerRoot.nativeElement;
+    this.immersiveMode =
+      readerRoot.ownerDocument.fullscreenElement === readerRoot;
+    this.immersiveToolbarRevealed = false;
+    if (this.immersiveMode) {
+      readerRoot.focus({ preventScroll: true });
+    }
+    this.changeDetector.detectChanges();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() =>
+        readerRoot.ownerDocument.defaultView?.dispatchEvent(
+          new Event('resize'),
+        ),
+      );
+    });
+  }
+
+  showImmersiveToolbar(): void {
+    if (!this.immersiveMode || this.immersiveToolbarRevealed) {
+      return;
+    }
+    this.immersiveToolbarRevealed = true;
+    this.changeDetector.markForCheck();
+  }
+
+  hideImmersiveToolbar(): void {
+    if (!this.immersiveToolbarRevealed) {
+      return;
+    }
+    this.immersiveToolbarRevealed = false;
+    this.changeDetector.markForCheck();
+  }
+
+  onReaderToolbarFocusOut(event: FocusEvent): void {
+    const nextTarget = event.relatedTarget;
+    if (
+      nextTarget instanceof Node &&
+      event.currentTarget instanceof HTMLElement &&
+      event.currentTarget.contains(nextTarget)
+    ) {
+      return;
+    }
+    this.hideImmersiveToolbar();
+  }
+
+  get overallProgressPercent(): number | null {
+    const progression = this.currentLocator?.locations?.totalProgression;
+    if (progression !== undefined && Number.isFinite(progression)) {
+      return Math.round(Math.min(1, Math.max(0, progression)) * 100);
+    }
+    if (this.pageStatus?.scope !== 'publication') {
+      return null;
+    }
+    if (this.pageStatus.total <= 1) {
+      return 100;
+    }
+    return Math.round(
+      ((this.pageStatus.current - 1) / (this.pageStatus.total - 1)) * 100,
+    );
+  }
+
+  get progressSeekingAvailable(): boolean {
+    return (
+      typeof this.engine?.goToProgression === 'function' &&
+      this.overallProgressPercent !== null
+    );
+  }
+
+  async seekToProgress(event: Event): Promise<void> {
+    const input = event.currentTarget;
+    const engine = this.engine;
+    const seek = engine?.goToProgression;
+    if (
+      !(input instanceof HTMLInputElement) ||
+      !seek ||
+      this.loading ||
+      this.navigationBusy
+    ) {
+      return;
+    }
+    const percent = Number(input.value);
+    if (!Number.isFinite(percent)) {
+      return;
+    }
+
+    this.navigationBusy = true;
+    this.navigationError = null;
+    this.changeDetector.markForCheck();
+    try {
+      await seek.call(engine, Math.min(100, Math.max(0, percent)) / 100);
+    } catch (error) {
+      this.navigationError =
+        error instanceof Error
+          ? error.message
+          : 'Unable to move to this book position';
+    } finally {
+      this.navigationBusy = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  onPublicationWheel(event: WheelEvent): void {
+    if (
+      this.book?.format !== 'pdf' ||
+      this.loading ||
+      this.errorMessage ||
+      this.passwordChallenge ||
+      this.pendingSelection
+    ) {
+      return;
+    }
+    const direction = wheelNavigationDirection(event);
+    if (!direction) {
+      return;
+    }
+    event.preventDefault();
+    const now = Date.now();
+    if (
+      this.navigationBusy ||
+      now - this.lastWheelNavigationAt < WHEEL_NAVIGATION_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.lastWheelNavigationAt = now;
+    void this.navigate(direction);
+  }
+
+  onPublicationPointerDown(event: PointerEvent): void {
+    if (
+      this.book?.format !== 'pdf' ||
+      this.loading ||
+      this.errorMessage ||
+      this.passwordChallenge ||
+      this.pendingSelection ||
+      this.navigationBusy
+    ) {
+      this.touchNavigationGesture = null;
+      return;
+    }
+    this.touchNavigationGesture = startTouchNavigationGesture(event);
+  }
+
+  onPublicationPointerUp(event: PointerEvent): void {
+    const gesture = this.touchNavigationGesture;
+    this.touchNavigationGesture = null;
+    if (
+      !gesture ||
+      this.book?.format !== 'pdf' ||
+      this.loading ||
+      this.errorMessage ||
+      this.passwordChallenge ||
+      this.pendingSelection ||
+      this.navigationBusy ||
+      selectionHasText(this.viewport.nativeElement.ownerDocument.getSelection())
+    ) {
+      return;
+    }
+    const direction = touchNavigationDirection(
+      gesture,
+      event,
+      this.metadata?.readingDirection,
+    );
+    if (!direction) {
+      return;
+    }
+    this.touchEventNavigationGesture = null;
+    event.preventDefault();
+    void this.navigate(direction);
+  }
+
+  onPublicationPointerCancel(event: PointerEvent): void {
+    if (this.touchNavigationGesture?.pointerId === event.pointerId) {
+      this.touchNavigationGesture = null;
+    }
+  }
+
+  onPublicationTouchStart(event: TouchEvent): void {
+    if (
+      this.book?.format !== 'pdf' ||
+      this.loading ||
+      this.errorMessage ||
+      this.passwordChallenge ||
+      this.pendingSelection ||
+      this.navigationBusy
+    ) {
+      this.touchEventNavigationGesture = null;
+      return;
+    }
+    this.touchEventNavigationGesture = startTouchEventNavigationGesture(event);
+  }
+
+  onPublicationTouchEnd(event: TouchEvent): void {
+    const gesture = this.touchEventNavigationGesture;
+    this.touchEventNavigationGesture = null;
+    if (
+      !gesture ||
+      this.book?.format !== 'pdf' ||
+      this.loading ||
+      this.errorMessage ||
+      this.passwordChallenge ||
+      this.pendingSelection ||
+      this.navigationBusy ||
+      selectionHasText(this.viewport.nativeElement.ownerDocument.getSelection())
+    ) {
+      return;
+    }
+    const direction = touchEventNavigationDirection(
+      gesture,
+      event,
+      this.metadata?.readingDirection,
+    );
+    if (!direction) {
+      return;
+    }
+    this.touchNavigationGesture = null;
+    event.preventDefault();
+    void this.navigate(direction);
+  }
+
+  onPublicationTouchCancel(): void {
+    this.touchEventNavigationGesture = null;
   }
 
   async goTo(entry: TocEntry): Promise<void> {
@@ -546,12 +822,13 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async removeAnnotation(annotation: PublicationAnnotation): Promise<void> {
+  async removeAnnotation(annotation: PublicationAnnotation): Promise<boolean> {
     if (this.annotationBusy) {
-      return;
+      return false;
     }
     this.annotationBusy = true;
     this.annotationError = null;
+    let removed = false;
     try {
       const timestamp = new Date().toISOString();
       const tombstone: PublicationAnnotation = {
@@ -566,12 +843,24 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       );
       await this.engine?.setAnnotations(this.annotations);
       await this.journalAnnotation(tombstone);
+      removed = true;
     } catch (error) {
       this.annotationError =
         error instanceof Error ? error.message : 'Unable to remove annotation';
     } finally {
       this.annotationBusy = false;
       this.changeDetector.markForCheck();
+    }
+    return removed;
+  }
+
+  async removeEditingAnnotation(): Promise<void> {
+    const annotation = this.editingAnnotation;
+    if (!annotation) {
+      return;
+    }
+    if (await this.removeAnnotation(annotation)) {
+      this.cancelAnnotationEditor();
     }
   }
 
@@ -692,10 +981,15 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    const readerRoot = this.readerRoot.nativeElement;
+    if (readerRoot.ownerDocument.fullscreenElement === readerRoot) {
+      void readerRoot.ownerDocument.exitFullscreen().catch(() => undefined);
+    }
     this.removeTransientBackHandler();
     this.removeBackgroundListener?.();
     this.removeRelocationListener?.();
     this.removeSelectionListener?.();
+    this.removeAnnotationActivationListener?.();
     this.removeNavigationRequestListener?.();
     this.removeExternalLinkRequestListener?.();
     this.passwordChallenge?.cancel();
@@ -987,6 +1281,8 @@ function normalizeTocTitle(title: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
+
+const WHEEL_NAVIGATION_INTERVAL_MS = 400;
 
 const UNNUMBERED_TOP_LEVEL_TOC_TITLES = new Set([
   'about the author',

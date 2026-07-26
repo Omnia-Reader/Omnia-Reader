@@ -1,4 +1,4 @@
-import type { BookRecord } from '@omnia-reader/reader/domain';
+import type { BookRecord, ReadingProgress } from '@omnia-reader/reader/domain';
 
 export type LibraryViewMode = 'grid' | 'list';
 export type LibrarySortMode = 'recent' | 'title' | 'author' | 'added';
@@ -6,6 +6,12 @@ export type LibrarySortMode = 'recent' | 'title' | 'author' | 'added';
 export interface LibraryViewPreferences {
   viewMode: LibraryViewMode;
   sortMode: LibrarySortMode;
+}
+
+export interface LibraryBookProgressSummary {
+  percent: number;
+  label: string;
+  actionLabel: string;
 }
 
 export interface LibraryPreferenceStorage {
@@ -37,6 +43,32 @@ export function selectLibraryBooks(
 
 export function bookActivityTimestamp(book: BookRecord): string {
   return book.lastOpenedAt ?? book.importedAt;
+}
+
+export function summarizeReadingProgress(
+  progress: ReadingProgress,
+): LibraryBookProgressSummary {
+  const totalProgression =
+    progress.locator.locations?.totalProgression ??
+    progress.furthestTotalProgression;
+  const percent = Math.round(
+    Math.min(
+      1,
+      Math.max(0, Number.isFinite(totalProgression) ? totalProgression : 0),
+    ) * 100,
+  );
+
+  return percent === 100
+    ? {
+        percent,
+        label: 'Finished',
+        actionLabel: 'Open finished book',
+      }
+    : {
+        percent,
+        label: `${percent}% read`,
+        actionLabel: 'Continue reading',
+      };
 }
 
 export function loadLibraryViewPreferences(

@@ -89,16 +89,24 @@ export interface PageNavigation {
   ): Promise<void>;
 }
 
+export interface ReaderPageStatus {
+  current: number;
+  total: number;
+  scope: 'publication' | 'section';
+}
+
 export interface ReaderEngine {
   open(source: BookSource): Promise<PublicationMetadata>;
   mount(viewport: HTMLElement): Promise<void>;
   close(): Promise<void>;
   tableOfContents(): readonly TocEntry[];
   currentLocator(): PublicationLocator | null;
+  pageStatus?(): ReaderPageStatus | null;
   onRelocated(listener: (locator: PublicationLocator) => void): () => void;
   onSelection(
     listener: (selection: PublicationSelection | null) => void,
   ): () => void;
+  onAnnotationActivated?(listener: (annotationId: string) => void): () => void;
   onNavigationRequested?(
     listener: (direction: ReaderNavigationDirection) => void,
   ): () => void;
@@ -107,6 +115,11 @@ export interface ReaderEngine {
   setAnnotations(annotations: readonly PublicationAnnotation[]): Promise<void>;
   applyPreferences(preferences: ReaderPreferences): Promise<void>;
   goTo(locator: PublicationLocator): Promise<void>;
+  /**
+   * Moves to the nearest stable location for an overall publication
+   * progression in the inclusive 0..1 range.
+   */
+  goToProgression?(totalProgression: number): Promise<void>;
   next(): Promise<void>;
   previous(): Promise<void>;
   search(query: string): AsyncIterable<SearchResult>;
@@ -233,9 +246,22 @@ export interface PlatformFileSave {
   writable: WritableStream<Uint8Array>;
 }
 
+export type PlatformStoragePersistence =
+  | 'persistent'
+  | 'best-effort'
+  | 'unavailable';
+
+export interface PlatformStorageStatus {
+  persistence: PlatformStoragePersistence;
+  usageBytes?: number;
+  quotaBytes?: number;
+}
+
 export interface PlatformPort {
   readonly kind: 'web' | 'tauri-desktop' | 'tauri-android';
   readonly supportsStreamingFileSave: boolean;
+  getStorageStatus(): Promise<PlatformStorageStatus>;
+  requestPersistentStorage(): Promise<PlatformStorageStatus>;
   pickPublications(): Promise<readonly BookSource[]>;
   createFileSave(request: FileSaveRequest): Promise<PlatformFileSave | null>;
   onPublicationsOpened(

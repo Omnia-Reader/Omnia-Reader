@@ -49,7 +49,7 @@ const scenarios: readonly SyncScenario[] = [
     title: 'Omnia PDF Fixture',
     publication: () => createPdfFixture(),
     navigate: async (page) => {
-      await page.getByRole('button', { name: 'Next' }).click();
+      await page.keyboard.press('ArrowDown');
       await expect
         .poll(() => storedProgressPage(page), { timeout: 20_000 })
         .toBe(2);
@@ -64,7 +64,7 @@ const scenarios: readonly SyncScenario[] = [
     highlightText: 'Page Two',
     annotationNote: 'Git synchronized PDF annotation.',
     navigateToSecondDeviceState: async (page) => {
-      await page.getByRole('button', { name: 'Previous' }).click();
+      await page.keyboard.press('ArrowUp');
       await expect(
         page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
       ).toBeVisible({ timeout: 20_000 });

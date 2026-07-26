@@ -30,6 +30,11 @@ describe('PdfReaderEngine', () => {
       identifier: 'fixture-fingerprint',
     });
     expect(engine.pageNavigation()?.pageCount).toBe(2);
+    expect(engine.pageStatus()).toEqual({
+      current: 1,
+      total: 2,
+      scope: 'publication',
+    });
 
     await engine.goTo({
       href: '',
@@ -44,6 +49,22 @@ describe('PdfReaderEngine', () => {
         totalProgression: 1,
       },
     });
+    expect(engine.pageStatus()).toEqual({
+      current: 2,
+      total: 2,
+      scope: 'publication',
+    });
+
+    await engine.goToProgression(0);
+    expect(engine.currentLocator()).toMatchObject({
+      title: 'Page 1',
+      locations: {
+        position: 1,
+        totalProgression: 0,
+      },
+    });
+    await engine.goToProgression(0.75);
+    expect(engine.currentLocator()?.locations?.position).toBe(2);
 
     const results = [];
     for await (const result of engine.search('needle')) {
@@ -225,11 +246,20 @@ describe('PdfReaderEngine', () => {
       createdAt: '2026-07-25T08:00:00.000Z',
       updatedAt: '2026-07-25T08:00:00.000Z',
     };
+    const activatedAnnotations: string[] = [];
+    engine.onAnnotationActivated((annotationId) =>
+      activatedAnnotations.push(annotationId),
+    );
     await engine.setAnnotations([annotation]);
 
-    expect(
-      viewport.querySelectorAll('[data-omnia-annotation-layer] > div'),
-    ).toHaveLength(1);
+    const renderedHighlight = viewport.querySelector<HTMLElement>(
+      '[data-omnia-annotation-layer] > [data-omnia-annotation-id]',
+    );
+    expect(renderedHighlight?.dataset['omniaAnnotationId']).toBe(annotation.id);
+    expect(renderedHighlight?.getAttribute('role')).toBe('button');
+    expect(renderedHighlight?.tabIndex).toBe(0);
+    renderedHighlight?.click();
+    expect(activatedAnnotations).toEqual([annotation.id]);
     await engine.close();
     expect(viewport.style.position).toBe('relative');
     viewport.remove();

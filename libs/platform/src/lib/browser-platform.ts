@@ -3,6 +3,7 @@ import {
   FileSaveRequest,
   PlatformFileSave,
   PlatformPort,
+  PlatformStorageStatus,
 } from '@omnia-reader/reader/domain';
 import { BrowserBookSource } from './browser-book-source';
 
@@ -21,8 +22,46 @@ type ShowSaveFilePicker = (
 export class BrowserPlatform implements PlatformPort {
   readonly kind = 'web' as const;
 
+  constructor(
+    private readonly storageManager: StorageManager | undefined = globalThis
+      .navigator?.storage,
+  ) {}
+
   get supportsStreamingFileSave(): boolean {
     return typeof showSaveFilePicker() === 'function';
+  }
+
+  async getStorageStatus(): Promise<PlatformStorageStatus> {
+    const estimate = await readStorageEstimate(this.storageManager);
+    if (
+      !this.storageManager ||
+      typeof this.storageManager.persisted !== 'function'
+    ) {
+      return { persistence: 'unavailable', ...estimate };
+    }
+
+    const persisted = await this.storageManager.persisted();
+    return {
+      persistence: persisted
+        ? 'persistent'
+        : typeof this.storageManager.persist === 'function'
+          ? 'best-effort'
+          : 'unavailable',
+      ...estimate,
+    };
+  }
+
+  async requestPersistentStorage(): Promise<PlatformStorageStatus> {
+    if (
+      !this.storageManager ||
+      typeof this.storageManager.persist !== 'function'
+    ) {
+      return this.getStorageStatus();
+    }
+
+    const granted = await this.storageManager.persist();
+    const status = await this.getStorageStatus();
+    return granted ? { ...status, persistence: 'persistent' } : status;
   }
 
   pickPublications(): Promise<readonly BookSource[]> {
@@ -183,4 +222,30 @@ function isSupportedPublication(file: File): boolean {
     file.type === 'application/epub+zip' ||
     file.type === 'application/pdf'
   );
+}
+
+async function readStorageEstimate(
+  storageManager: StorageManager | undefined,
+): Promise<Pick<PlatformStorageStatus, 'usageBytes' | 'quotaBytes'>> {
+  if (!storageManager || typeof storageManager.estimate !== 'function') {
+    return {};
+  }
+
+  try {
+    const estimate = await storageManager.estimate();
+    return {
+      ...(isValidByteCount(estimate.usage)
+        ? { usageBytes: estimate.usage }
+        : {}),
+      ...(isValidByteCount(estimate.quota)
+        ? { quotaBytes: estimate.quota }
+        : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function isValidByteCount(value: number | undefined): value is number {
+  return value !== undefined && Number.isFinite(value) && value >= 0;
 }

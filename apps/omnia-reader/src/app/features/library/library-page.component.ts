@@ -16,13 +16,16 @@ import { BookRecord } from '@omnia-reader/reader/domain';
 import {
   bookActivityTimestamp as activityTimestamp,
   isLibrarySortMode,
+  LibraryBookProgressSummary,
   LibrarySortMode,
   LibraryViewMode,
   loadLibraryViewPreferences,
   saveLibraryViewPreferences,
   selectLibraryBooks,
+  summarizeReadingProgress,
 } from './library-view';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
+import { PublicationExportService } from './publication-export.service';
 import { PublicationImportService } from './publication-import.service';
 
 @Component({
@@ -37,6 +40,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   private readonly platform = inject(PLATFORM_PORT);
   private readonly publicationImports = inject(PublicationImportService);
   private readonly enrichment = inject(PublicationEnrichmentService);
+  private readonly exporter = inject(PublicationExportService);
   private readonly initialViewPreferences = loadLibraryViewPreferences();
   private removeImportListener: (() => void) | null = null;
   private readonly enrichmentInFlight = new Set<string>();
@@ -45,13 +49,17 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   books: readonly BookRecord[] = [];
   displayedBooks: readonly BookRecord[] = [];
   coverUrls: ReadonlyMap<string, string> = new Map();
+  progressSummaries: ReadonlyMap<string, LibraryBookProgressSummary> =
+    new Map();
   searchQuery = '';
   sortMode: LibrarySortMode = this.initialViewPreferences.sortMode;
   viewMode: LibraryViewMode = this.initialViewPreferences.viewMode;
   resultSummary = '0 books';
   loading = true;
   importing = false;
+  exportingBookId: string | null = null;
   errorMessage: string | null = null;
+  statusMessage: string | null = null;
 
   async ngOnInit(): Promise<void> {
     this.removeImportListener = this.publicationImports.onImported(() => {
@@ -121,6 +129,30 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     await this.reload();
   }
 
+  async exportBook(book: BookRecord): Promise<void> {
+    if (this.exportingBookId) {
+      return;
+    }
+    this.exportingBookId = book.id;
+    this.errorMessage = null;
+    this.statusMessage = null;
+    this.changeDetector.markForCheck();
+
+    try {
+      const result = await this.exporter.exportPublication(book);
+      this.statusMessage =
+        result === 'saved'
+          ? `“${book.title}” exported as ${book.fileName}.`
+          : `Export of “${book.title}” cancelled.`;
+    } catch (error) {
+      this.errorMessage =
+        error instanceof Error ? error.message : 'The book export failed';
+    } finally {
+      this.exportingBookId = null;
+      this.changeDetector.markForCheck();
+    }
+  }
+
   formatFileSize(size: number): string {
     if (size < 1024 * 1024) {
       return `${Math.max(1, Math.round(size / 1024))} KB`;
@@ -140,23 +172,46 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     return book.lastOpenedAt ? 'Last opened' : 'Added';
   }
 
+  bookProgressSummary(bookId: string): LibraryBookProgressSummary | null {
+    return this.progressSummaries.get(bookId) ?? null;
+  }
+
+  bookOpenLabel(book: BookRecord): string {
+    const progress = this.bookProgressSummary(book.id);
+    return progress
+      ? `${progress.actionLabel} ${book.title}, ${progress.label}`
+      : `Start reading ${book.title}`;
+  }
+
   private async reload(): Promise<void> {
     this.loading = true;
     this.changeDetector.markForCheck();
     try {
       const books = await this.repository.listBooks();
-      const covers = await Promise.all(
-        books.map(async (book) => ({
-          bookId: book.id,
-          cover: await this.repository.getBookCover(book.id),
-        })),
-      );
+      const [covers, progressRecords] = await Promise.all([
+        Promise.all(
+          books.map(async (book) => ({
+            bookId: book.id,
+            cover: await this.repository.getBookCover(book.id),
+          })),
+        ),
+        this.repository.listProgress().catch(() => []),
+      ]);
       if (this.destroyed) {
         return;
       }
       this.books = books;
       this.updateDisplayedBooks();
       this.replaceCoverUrls(covers);
+      const bookIds = new Set(books.map((book) => book.id));
+      this.progressSummaries = new Map(
+        progressRecords
+          .filter((progress) => bookIds.has(progress.bookId))
+          .map(
+            (progress) =>
+              [progress.bookId, summarizeReadingProgress(progress)] as const,
+          ),
+      );
       this.scheduleEnrichment(
         books,
         new Set(

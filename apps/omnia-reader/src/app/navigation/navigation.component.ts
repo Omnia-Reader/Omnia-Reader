@@ -5,6 +5,7 @@ import {
   OnDestroy,
   inject,
 } from '@angular/core';
+import { NgClass } from '@angular/common';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { BackNavigationService } from '../back-navigation.service';
 
@@ -12,7 +13,7 @@ import { BackNavigationService } from '../back-navigation.service';
   selector: 'omnia-navigation',
   templateUrl: './navigation.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [NgClass, RouterOutlet, RouterLink, RouterLinkActive],
 })
 export class NavigationComponent implements OnDestroy {
   private readonly backNavigation = inject(BackNavigationService);
@@ -20,6 +21,25 @@ export class NavigationComponent implements OnDestroy {
   private removeMenuBackHandler: (() => void) | null = null;
 
   menuOpen = false;
+  desktopMenuCollapsed = false;
+
+  get mainSidenavExpanded(): boolean {
+    return globalThis.matchMedia?.('(min-width: 768px)').matches
+      ? !this.desktopMenuCollapsed
+      : this.menuOpen;
+  }
+
+  toggleMainSidenav(): void {
+    if (globalThis.matchMedia?.('(min-width: 768px)').matches) {
+      this.desktopMenuCollapsed = !this.desktopMenuCollapsed;
+      this.changeDetector.markForCheck();
+      requestAnimationFrame(() =>
+        globalThis.dispatchEvent(new Event('resize')),
+      );
+      return;
+    }
+    this.toggleMenu();
+  }
 
   toggleMenu(): void {
     if (this.menuOpen) {

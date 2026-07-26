@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
 import {
   createEncryptedPdfFixture,
@@ -61,16 +62,40 @@ test('filters, sorts, and remembers the accessible library view', async ({
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0)).toContainText('Omnia PDF Fixture');
 
-  await page.getByRole('link', { name: 'Open Omnia EPUB Fixture' }).click();
+  await page
+    .getByRole('link', { name: 'Start reading Omnia EPUB Fixture' })
+    .click();
   await expect(
     page
       .getByTestId('publication-viewport')
       .frameLocator('iframe')
       .getByRole('heading', { name: 'Chapter One', exact: true }),
   ).toBeVisible({ timeout: 20_000 });
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.getByRole('slider', { name: 'Book progress' }).fill('50');
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeGreaterThanOrEqual(0.45);
+  const libraryProgressPercent = Math.round(
+    (await storedTotalProgression(page)) * 100,
+  );
+  await page.goBack();
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0)).toContainText('Omnia EPUB Fixture');
+  const continueReading = page.getByRole('link', {
+    name: `Continue reading Omnia EPUB Fixture, ${libraryProgressPercent}% read`,
+  });
+  await expect(continueReading).toBeVisible();
+  await expect(
+    page.getByRole('progressbar', {
+      name: `Reading progress for Omnia EPUB Fixture: ${libraryProgressPercent}% read`,
+    }),
+  ).toHaveAttribute('value', String(libraryProgressPercent));
+  await continueReading.click();
+  await expect(page.getByTestId('reader-overall-progress')).toHaveText(
+    `${libraryProgressPercent}% of book`,
+  );
+  await page.goBack();
+  await expect(cards).toHaveCount(2);
 
   await page.getByLabel('Sort books').selectOption('added');
   await expect(cards.nth(0)).toContainText('Omnia PDF Fixture');
@@ -111,6 +136,57 @@ test('filters, sorts, and remembers the accessible library view', async ({
     'data-view',
     'list',
   );
+});
+
+test('exports exact PDF and EPUB publication files from the library', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const pdfBytes = createPdfFixture();
+  const epubBytes = await createEpubFixture();
+  await importPublication(
+    page,
+    'omnia-owned.pdf',
+    'application/pdf',
+    pdfBytes,
+    'Omnia PDF Fixture',
+  );
+  await importPublication(
+    page,
+    'omnia-owned.epub',
+    'application/epub+zip',
+    epubBytes,
+    'Omnia EPUB Fixture',
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(globalThis, 'showSaveFilePicker', {
+      value: undefined,
+      configurable: true,
+    });
+  });
+
+  const pdfDownloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Omnia PDF Fixture' }).click();
+  const pdfDownload = await pdfDownloadPromise;
+  expect(pdfDownload.suggestedFilename()).toBe('omnia-owned.pdf');
+  await expectDownloadedBytes(pdfDownload, pdfBytes);
+  await expect(
+    page.getByRole('status').filter({
+      hasText: '“Omnia PDF Fixture” exported as omnia-owned.pdf.',
+    }),
+  ).toBeVisible();
+
+  const epubDownloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Omnia EPUB Fixture' }).click();
+  const epubDownload = await epubDownloadPromise;
+  expect(epubDownload.suggestedFilename()).toBe('omnia-owned.epub');
+  await expectDownloadedBytes(epubDownload, epubBytes);
+  await expect(
+    page.getByRole('status').filter({
+      hasText: '“Omnia EPUB Fixture” exported as omnia-owned.epub.',
+    }),
+  ).toBeVisible();
+  await expect(page.getByTestId('library-book')).toHaveCount(2);
 });
 
 test('imports, reads, and resumes a PDF', async ({ page }) => {
@@ -154,6 +230,14 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     { timeout: 20_000 },
   );
   await expectPdfPageFitsViewport(page, 1);
+  const pdfProgress = page.getByRole('slider', { name: 'Book progress' });
+  await expect(pdfProgress).toHaveValue('0');
+  await pdfProgress.fill('100');
+  await expectReaderPage(page, 2, 2);
+  await expect.poll(() => storedProgressPage(page)).toBe(2);
+  await pdfProgress.fill('0');
+  await expectReaderPage(page, 1, 2);
+  await page.getByTestId('reader-root').focus();
 
   const readerName = firstPage.locator('.annotationLayer input[type="text"]');
   await expect(readerName).toBeVisible();
@@ -184,19 +268,66 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     .toBe('https://example.com/omnia-reader-pdf');
 
   await firstPage.getByRole('link', { name: 'Continue to page two' }).click();
-  await expect(page.getByText('2 / 2', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Previous' }).click();
-  await expect(page.getByText('1 / 2', { exact: true })).toBeVisible();
+  await expectReaderPage(page, 2, 2);
+  await page.keyboard.press('ArrowUp');
+  await expectReaderPage(page, 1, 2);
   await expect(readerName).toHaveValue('Ada Reader');
 
   await page.keyboard.press('ArrowRight');
-  await expect(page.getByText('2 / 2', { exact: true })).toBeVisible();
+  await expectReaderPage(page, 2, 2);
   await page.keyboard.press('ArrowLeft');
-  await expect(page.getByText('1 / 2', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Next' }).click();
-  await expect(page.getByText('2 / 2', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Previous' }).click();
-  await expect(page.getByText('1 / 2', { exact: true })).toBeVisible();
+  await expectReaderPage(page, 1, 2);
+  await page.keyboard.press('ArrowDown');
+  await expectReaderPage(page, 2, 2);
+  await page.keyboard.press('ArrowUp');
+  await expectReaderPage(page, 1, 2);
+  await page.getByTestId('publication-viewport').hover();
+  await page.mouse.wheel(0, 120);
+  await expectReaderPage(page, 2, 2);
+  const pdfWheelThrottleExpiresAt = Date.now() + 450;
+  await expect
+    .poll(() => Date.now())
+    .toBeGreaterThanOrEqual(pdfWheelThrottleExpiresAt);
+  await page.mouse.wheel(0, -120);
+  await expectReaderPage(page, 1, 2);
+  await page.keyboard.press('ArrowDown');
+  await expectReaderPage(page, 2, 2);
+  await page.keyboard.press('ArrowUp');
+  await expectReaderPage(page, 1, 2);
+  await expect(page.getByRole('button', { name: 'Previous' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Next' })).toHaveCount(0);
+
+  await installMockReaderFullscreen(page);
+  const pdfReaderRoot = page.getByTestId('reader-root');
+  await page
+    .getByRole('button', { name: 'Enter immersive reading mode' })
+    .click();
+  await expect(pdfReaderRoot).toHaveAttribute('data-immersive-mode', 'true');
+  const visiblePdfReaderRootBox = requireVisibleBox(
+    await pdfReaderRoot.boundingBox(),
+    'immersive PDF reader root',
+  );
+  await page.mouse.move(
+    visiblePdfReaderRootBox.x + visiblePdfReaderRootBox.width / 2,
+    visiblePdfReaderRootBox.y + visiblePdfReaderRootBox.height / 2,
+  );
+  await expect
+    .poll(async () => {
+      const viewportBox = await page
+        .getByTestId('publication-viewport')
+        .boundingBox();
+      if (!viewportBox || visiblePdfReaderRootBox.height === 0) {
+        return 0;
+      }
+      return viewportBox.height / visiblePdfReaderRootBox.height;
+    })
+    .toBeGreaterThan(0.75);
+  await expect(firstPage.locator('canvas')).toBeVisible();
+  await page.getByTestId('immersive-toolbar-reveal').click();
+  await page
+    .getByRole('button', { name: 'Exit immersive reading mode' })
+    .click();
+  await expect(pdfReaderRoot).not.toHaveAttribute('data-immersive-mode');
 
   await page
     .getByRole('button', { name: 'Toggle PDF page thumbnails' })
@@ -250,7 +381,7 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await expect(
     page.locator('.pdfViewer .page[data-page-number="2"] canvas'),
   ).toBeVisible();
-  await expect(page.getByText('2 / 2', { exact: true })).toBeVisible();
+  await expectReaderPage(page, 2, 2);
   await expect.poll(() => storedProgressPage(page)).toBe(2);
 
   await page.getByRole('button', { name: 'Toggle bookmarks' }).click();
@@ -261,14 +392,14 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     page.getByRole('button', { name: 'Delete bookmark Page 2' }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Toggle bookmarks' }).click();
-  await page.getByRole('button', { name: 'Previous' }).click();
-  await expect(page.getByText('1 / 2', { exact: true })).toBeVisible();
+  await page.keyboard.press('ArrowUp');
+  await expectReaderPage(page, 1, 2);
   await page.getByRole('button', { name: 'Toggle bookmarks' }).click();
   await page
     .getByRole('complementary', { name: 'Bookmarks' })
     .getByRole('button', { name: 'Page 2', exact: true })
     .click();
-  await expect(page.getByText('2 / 2', { exact: true })).toBeVisible();
+  await expectReaderPage(page, 2, 2);
 
   await createPdfHighlight(page, 2, 'Page Two', 'Review this second page.');
   await expect(
@@ -284,7 +415,7 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
 
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.goBack();
   await page.getByText('Omnia PDF Fixture', { exact: true }).click();
   await expect(
     page.locator('.pdfViewer .page[data-page-number="2"] canvas'),
@@ -305,11 +436,13 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await expect(
     page.getByText('Add a bookmark to return to this location later.'),
   ).toBeVisible();
-  await page
-    .getByRole('button', { name: 'Toggle highlights and notes' })
-    .click();
-  await expect(page.getByText('Review this second page.')).toBeVisible();
-  await page.getByRole('button', { name: 'Edit annotation' }).click();
+  await page.getByRole('button', { name: 'Toggle bookmarks' }).click();
+  const pdfSavedHighlight = page.locator(
+    '.pdfViewer .page[data-page-number="2"] [data-omnia-annotation-id]',
+  );
+  await expect(pdfSavedHighlight).toBeVisible();
+  await expect(pdfSavedHighlight).toHaveAttribute('role', 'button');
+  await pdfSavedHighlight.click();
   const pdfAnnotationEditor = page.getByRole('dialog', {
     name: 'Edit highlight',
   });
@@ -323,13 +456,25 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await pdfAnnotationEditor
     .getByRole('button', { name: 'Save', exact: true })
     .click();
+  await expect(pdfAnnotationEditor).toBeHidden();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   await expect(page.getByText('Updated PDF note.')).toBeVisible();
-  await page.getByRole('button', { name: 'Delete annotation' }).click();
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
+  await pdfSavedHighlight.click();
+  await pdfAnnotationEditor
+    .getByRole('button', { name: 'Delete highlight' })
+    .click();
+  await expect(pdfAnnotationEditor).toBeHidden();
+  await expect(pdfSavedHighlight).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
   await expect(page.getByText('No highlights yet.')).toBeVisible();
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.goBack();
   await page.getByText('Omnia PDF Fixture', { exact: true }).click();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
@@ -368,7 +513,7 @@ test('opens an encrypted PDF after an accessible password retry', async ({
     page.locator('.pdfViewer .page[data-page-number="1"] .textLayer'),
   ).toContainText('Encrypted Omnia PDF - Page One');
   await page.keyboard.press('ArrowRight');
-  await expect(page.getByText('2 / 2', { exact: true })).toBeVisible();
+  await expectReaderPage(page, 2, 2);
 });
 
 test('imports and opens a PDF dropped onto the application', async ({
@@ -422,7 +567,7 @@ test('exports and restores a complete portable library backup', async ({
     .click();
   await page.getByRole('button', { name: 'Toggle bookmarks' }).click();
   await createPdfHighlight(page, 1, 'Page One', 'Portable backup note.');
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.goBack();
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.evaluate(() => {
     Object.defineProperty(window, 'showSaveFilePicker', {
@@ -529,6 +674,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
       .frameLocator('iframe')
       .getByText('Chapter One'),
   ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('reader-page-status')).toHaveText(
+    /Page \d+ of \d+\s+in this section/,
+  );
+  await expect(page.getByTestId('reader-overall-progress')).toHaveText(
+    /\d+% of book/,
+  );
   const epubFrame = page
     .getByTestId('publication-viewport')
     .frameLocator('iframe');
@@ -553,8 +704,128 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
       page.evaluate(() => sessionStorage.getItem('epub-script-executed')),
     )
     .toBeNull();
+  const epubProgress = page.getByRole('slider', { name: 'Book progress' });
+  await epubProgress.fill('75');
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeGreaterThanOrEqual(0.7);
+  await expect(page.getByTestId('reader-overall-progress')).toHaveText(
+    /7\d% of book/,
+  );
+  await epubProgress.fill('0');
+  await expect.poll(() => storedTotalProgression(page)).toBeLessThan(0.1);
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByText('Chapter One'),
+  ).toBeVisible({ timeout: 20_000 });
+  await page.getByTestId('reader-root').focus();
 
-  await page.getByRole('button', { name: 'Toggle table of contents' }).click();
+  const tocButton = page.getByRole('button', {
+    name: 'Toggle table of contents',
+  });
+  const appNavigationButton = page.getByRole('button', {
+    name: 'Toggle app navigation',
+  });
+  const searchButton = page.getByRole('button', {
+    name: 'Open publication search',
+  });
+  await expect(appNavigationButton).toHaveAttribute(
+    'aria-controls',
+    'primary-navigation',
+  );
+  await expect(
+    page.getByTestId('app-toolbar').getByRole('button', {
+      name: 'Toggle app navigation',
+    }),
+  ).toBeVisible();
+  await appNavigationButton.click();
+  await expect(appNavigationButton).toHaveAttribute('aria-expanded', 'false');
+  await expect(
+    page.getByRole('complementary', { name: 'Primary navigation' }),
+  ).toHaveClass(/md:-translate-x-full/);
+  await appNavigationButton.click();
+  await expect(appNavigationButton).toHaveAttribute('aria-expanded', 'true');
+  await expect(
+    page.getByRole('complementary', { name: 'Primary navigation' }),
+  ).toHaveClass(/md:translate-x-0/);
+  const readerRoot = page.getByTestId('reader-root');
+  await installMockReaderFullscreen(page);
+  await page
+    .getByRole('button', { name: 'Enter immersive reading mode' })
+    .click();
+  await expect(readerRoot).toHaveAttribute('data-immersive-mode', 'true');
+  await expect(readerRoot).toHaveClass(/grid-rows-\[minmax\(0,1fr\)_auto\]/);
+  const readerToolbar = page.getByTestId('reader-toolbar');
+  const toolbarReveal = page.getByTestId('immersive-toolbar-reveal');
+  const visibleReaderRootBox = requireVisibleBox(
+    await readerRoot.boundingBox(),
+    'immersive EPUB reader root',
+  );
+  await page.mouse.move(
+    visibleReaderRootBox.x + visibleReaderRootBox.width / 2,
+    visibleReaderRootBox.y + visibleReaderRootBox.height / 2,
+  );
+  await expect(readerToolbar).toHaveClass(
+    /-translate-y-\[calc\(100%-0\.5rem\)\]/,
+  );
+  await expect(readerToolbar).toHaveAttribute('aria-hidden', 'true');
+  await expect
+    .poll(async () => {
+      const [rootBox, viewportBox] = await Promise.all([
+        readerRoot.boundingBox(),
+        page.getByTestId('publication-viewport').boundingBox(),
+      ]);
+      if (!rootBox || !viewportBox || rootBox.height === 0) {
+        return 0;
+      }
+      return viewportBox.height / rootBox.height;
+    })
+    .toBeGreaterThan(0.75);
+  await expect(epubFrame.getByText('Chapter One')).toBeVisible();
+  await toolbarReveal.hover();
+  await expect(toolbarReveal).toHaveAttribute('aria-expanded', 'false');
+  await expect
+    .poll(async () => {
+      const toolbarBox = await readerToolbar.boundingBox();
+      return toolbarBox
+        ? Math.round(toolbarBox.y - visibleReaderRootBox.y)
+        : Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThanOrEqual(1);
+  await page.mouse.move(
+    visibleReaderRootBox.x + visibleReaderRootBox.width / 2,
+    visibleReaderRootBox.y + visibleReaderRootBox.height / 2,
+  );
+  await expect(toolbarReveal).toHaveAttribute('aria-expanded', 'false');
+  await expect
+    .poll(async () => {
+      const toolbarBox = await readerToolbar.boundingBox();
+      return toolbarBox
+        ? Math.round(toolbarBox.y + toolbarBox.height - visibleReaderRootBox.y)
+        : Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThanOrEqual(10);
+  await toolbarReveal.click();
+  await expect(toolbarReveal).toHaveAttribute('aria-expanded', 'true');
+  await expect(readerToolbar).toHaveClass(/translate-y-0/);
+  await page.getByRole('button', { name: 'Hide reader controls' }).click();
+  await expect(readerToolbar).toHaveAttribute('aria-hidden', 'true');
+  await toolbarReveal.focus();
+  await expect(readerToolbar).not.toHaveAttribute('aria-hidden');
+  await page.keyboard.press('Tab');
+  await expect(tocButton).toBeFocused();
+  await page
+    .getByRole('button', { name: 'Exit immersive reading mode' })
+    .click();
+  await expect(readerRoot).not.toHaveAttribute('data-immersive-mode');
+  const [tocButtonBox, searchButtonBox] = await Promise.all([
+    tocButton.boundingBox(),
+    searchButton.boundingBox(),
+  ]);
+  expect(tocButtonBox?.x).toBeLessThan(searchButtonBox?.x ?? 0);
+  await tocButton.click();
   await expect(
     page.getByRole('button', { name: 'Preface', exact: true }),
   ).toBeVisible();
@@ -620,15 +891,68 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .toBe('rgb(244, 236, 216)');
 
   const firstProgression = await storedProgression(page);
-  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowDown');
   await expect
     .poll(() => storedProgression(page))
     .toBeGreaterThan(firstProgression);
+  const progressionAfterDown = await storedProgression(page);
+  await page.keyboard.press('ArrowUp');
+  await expect
+    .poll(() => storedProgression(page))
+    .toBeLessThan(progressionAfterDown);
+  const progressionAfterUp = await storedProgression(page);
+  await page.keyboard.press('ArrowRight');
+  await expect
+    .poll(() => storedProgression(page))
+    .toBeGreaterThan(progressionAfterUp);
   await expect
     .poll(() => storedProgressHref(page))
     .toContain('chapter-1.xhtml');
 
   const progressionAfterOuterArrow = await storedProgression(page);
+  const epubFrameElement = page
+    .getByTestId('publication-viewport')
+    .locator('iframe');
+  const wheelDownPrevented = await epubFrameElement.evaluate((frame) => {
+    const readerWindow = frame.ownerDocument.defaultView;
+    if (!readerWindow) {
+      throw new Error('Reader window is unavailable');
+    }
+    return !frame.dispatchEvent(
+      new readerWindow.WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaY: 120,
+      }),
+    );
+  });
+  expect(wheelDownPrevented).toBe(true);
+  await expect
+    .poll(() => storedProgression(page))
+    .toBeGreaterThan(progressionAfterOuterArrow);
+  const progressionAfterWheelDown = await storedProgression(page);
+  const epubWheelThrottleExpiresAt = Date.now() + 450;
+  await expect
+    .poll(() => Date.now())
+    .toBeGreaterThanOrEqual(epubWheelThrottleExpiresAt);
+  const wheelUpPrevented = await epubFrameElement.evaluate((frame) => {
+    const readerWindow = frame.ownerDocument.defaultView;
+    if (!readerWindow) {
+      throw new Error('Reader window is unavailable');
+    }
+    return !frame.dispatchEvent(
+      new readerWindow.WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaY: -120,
+      }),
+    );
+  });
+  expect(wheelUpPrevented).toBe(true);
+  await expect
+    .poll(() => storedProgression(page))
+    .toBeLessThan(progressionAfterWheelDown);
+  const progressionAfterWheelUp = await storedProgression(page);
   await page
     .getByTestId('publication-viewport')
     .frameLocator('iframe')
@@ -636,9 +960,9 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .press('ArrowRight');
   await expect
     .poll(() => storedProgression(page))
-    .toBeGreaterThan(progressionAfterOuterArrow);
+    .toBeGreaterThan(progressionAfterWheelUp);
 
-  await page.getByRole('button', { name: 'Previous' }).click();
+  await page.keyboard.press('ArrowUp');
   await expect
     .poll(() => storedProgression(page))
     .toBeLessThan(progressionAfterOuterArrow + 0.001);
@@ -653,8 +977,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await expect
     .poll(() => storedProgressHref(page))
     .toContain('chapter-2.xhtml');
+  await expect.poll(() => storedTotalProgression(page)).toBeGreaterThan(0);
+  await expect(page.getByTestId('reader-overall-progress')).toHaveText(
+    /[1-9]\d*% of book/,
+  );
 
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.goBack();
   await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
   await expect(
     page
@@ -685,7 +1013,7 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   await expect(page.getByText('Portable EPUB note.')).toBeVisible();
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.goBack();
   await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
   await expect(
     page
@@ -693,11 +1021,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
       .frameLocator('iframe')
       .getByText('Chapter One'),
   ).toBeVisible({ timeout: 20_000 });
-  await page
-    .getByRole('button', { name: 'Toggle highlights and notes' })
-    .click();
-  await expect(page.getByText('Portable EPUB note.')).toBeVisible();
-  await page.getByRole('button', { name: 'Edit annotation' }).click();
+  const epubSavedHighlight = page.locator(
+    '.omnia-annotation-green[data-annotation-id]',
+  );
+  await expect(epubSavedHighlight).toBeVisible();
+  await expect(epubSavedHighlight).toHaveAttribute('role', 'button');
+  await epubSavedHighlight.click();
   const epubAnnotationEditor = page.getByRole('dialog', {
     name: 'Edit highlight',
   });
@@ -711,13 +1040,29 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await epubAnnotationEditor
     .getByRole('button', { name: 'Save', exact: true })
     .click();
+  await expect(epubAnnotationEditor).toBeHidden();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   await expect(page.getByText('Updated EPUB note.')).toBeVisible();
-  await page.getByRole('button', { name: 'Delete annotation' }).click();
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
+  const updatedEpubHighlight = page.locator(
+    '.omnia-annotation-pink[data-annotation-id]',
+  );
+  await expect(updatedEpubHighlight).toBeVisible();
+  await updatedEpubHighlight.click();
+  await epubAnnotationEditor
+    .getByRole('button', { name: 'Delete highlight' })
+    .click();
+  await expect(epubAnnotationEditor).toBeHidden();
+  await expect(updatedEpubHighlight).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Toggle highlights and notes' })
+    .click();
   await expect(page.getByText('No highlights yet.')).toBeVisible();
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.goBack();
   await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
@@ -776,7 +1121,7 @@ test('preserves fixed-layout EPUB pages, RTL navigation, and safe link policy', 
     frame.getByText('Fixed RTL Page Two', { exact: true }),
   ).toBeVisible({ timeout: 20_000 });
 
-  await page.getByRole('button', { name: 'Previous' }).click();
+  await page.keyboard.press('ArrowUp');
   frame = viewport.frameLocator('iframe');
   await expect(
     frame.getByText('Fixed RTL Page One', { exact: true }),
@@ -788,7 +1133,7 @@ test('preserves fixed-layout EPUB pages, RTL navigation, and safe link policy', 
     frame.getByText('Fixed RTL Page Two', { exact: true }),
   ).toBeVisible({ timeout: 20_000 });
 
-  await page.getByRole('button', { name: 'Previous' }).click();
+  await page.keyboard.press('ArrowUp');
   frame = viewport.frameLocator('iframe');
   await expect(
     frame.getByText('Fixed RTL Page One', { exact: true }),
@@ -821,6 +1166,134 @@ test('preserves fixed-layout EPUB pages, RTL navigation, and safe link policy', 
   ).toHaveCount(0);
 });
 
+test('navigates PDF and EPUB publications with guarded touch swipes', async ({
+  page,
+  browserName,
+}) => {
+  // Playwright WebKit cannot synthesize the sandboxed iframe pointer stream;
+  // its TouchEvent fallback is covered by the engine and shell unit suites.
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip(
+    browserName === 'webkit',
+    'Desktop WebKit does not deliver synthetic iframe touch pointers consistently.',
+  );
+  test.setTimeout(120_000);
+
+  await importPublication(
+    page,
+    'touch-navigation.pdf',
+    'application/pdf',
+    createPdfFixture(),
+    'Omnia PDF Fixture',
+  );
+  await page.getByText('Omnia PDF Fixture', { exact: true }).click();
+  await expect(
+    page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
+  ).toBeVisible({ timeout: 20_000 });
+  const pdfViewport = page.getByTestId('publication-viewport');
+  await expect(
+    dispatchTouchSwipe(pdfViewport, { x: 220, y: 120 }, { x: 70, y: 124 }),
+  ).resolves.toBe(true);
+  await expectReaderPage(page, 2, 2);
+  await dispatchTouchSwipe(pdfViewport, { x: 70, y: 120 }, { x: 220, y: 124 });
+  await expectReaderPage(page, 1, 2);
+  await expect(
+    dispatchTouchSwipe(pdfViewport, { x: 180, y: 80 }, { x: 170, y: 220 }),
+  ).resolves.toBe(false);
+  await expectReaderPage(page, 1, 2);
+  const pdfInput = page.locator(
+    '.pdfViewer .page[data-page-number="1"] .annotationLayer input[type="text"]',
+  );
+  await expect(pdfInput).toBeVisible();
+  await expect(
+    dispatchTouchSwipe(pdfInput, { x: 220, y: 120 }, { x: 70, y: 124 }),
+  ).resolves.toBe(false);
+  await expectReaderPage(page, 1, 2);
+
+  await page.goBack();
+  await importPublication(
+    page,
+    'touch-navigation.epub',
+    'application/epub+zip',
+    await createEpubFixture(),
+    'Omnia EPUB Fixture',
+  );
+  await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
+  const epubFrame = page
+    .getByTestId('publication-viewport')
+    .frameLocator('iframe');
+  await expect(
+    epubFrame.getByRole('heading', { name: 'Chapter One', exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  const epubProgression = await storedProgression(page);
+  await expect(
+    dispatchTouchSwipe(
+      epubFrame.locator('body'),
+      { x: 220, y: 120 },
+      { x: 70, y: 124 },
+    ),
+  ).resolves.toBe(true);
+  await expect
+    .poll(() => storedProgression(page))
+    .toBeGreaterThan(epubProgression);
+  const epubProgressionAfterNext = await storedProgression(page);
+  await dispatchTouchSwipe(
+    epubFrame.locator('body'),
+    { x: 70, y: 120 },
+    { x: 220, y: 124 },
+  );
+  await expect
+    .poll(() => storedProgression(page))
+    .toBeLessThan(epubProgressionAfterNext);
+  const epubProgressionAfterPrevious = await storedProgression(page);
+  await expect(
+    dispatchTouchSwipe(
+      epubFrame.locator('body'),
+      { x: 180, y: 80 },
+      { x: 170, y: 220 },
+    ),
+  ).resolves.toBe(false);
+  await expect
+    .poll(() => storedProgression(page))
+    .toBeCloseTo(epubProgressionAfterPrevious, 6);
+
+  await page.goBack();
+  await importPublication(
+    page,
+    'touch-navigation-rtl.epub',
+    'application/epub+zip',
+    await createFixedLayoutRtlEpubFixture(),
+    'Omnia Fixed RTL Fixture',
+  );
+  await page.getByText('Omnia Fixed RTL Fixture', { exact: true }).click();
+  const rtlViewport = page.getByTestId('publication-viewport');
+  let rtlFrame = rtlViewport.frameLocator('iframe');
+  await expect(
+    rtlFrame.getByText('Fixed RTL Page One', { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('Opening publication…')).toHaveCount(0);
+  await expect(
+    dispatchTouchSwipe(
+      rtlFrame.locator('body'),
+      { x: 70, y: 120 },
+      { x: 220, y: 124 },
+    ),
+  ).resolves.toBe(true);
+  rtlFrame = rtlViewport.frameLocator('iframe');
+  await expect(
+    rtlFrame.getByText('Fixed RTL Page Two', { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  await dispatchTouchSwipe(
+    rtlFrame.locator('body'),
+    { x: 220, y: 120 },
+    { x: 70, y: 124 },
+  );
+  rtlFrame = rtlViewport.frameLocator('iframe');
+  await expect(
+    rtlFrame.getByText('Fixed RTL Page One', { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+});
+
 async function importPublication(
   page: import('@playwright/test').Page,
   name: string,
@@ -835,6 +1308,49 @@ async function importPublication(
   await expect(page.getByText(expectedTitle, { exact: true })).toBeVisible({
     timeout: 20_000,
   });
+}
+
+async function expectDownloadedBytes(
+  download: import('@playwright/test').Download,
+  expected: Buffer,
+): Promise<void> {
+  const path = await download.path();
+  expect(path).not.toBeNull();
+  expect(await readFile(path as string)).toEqual(expected);
+}
+
+async function dispatchTouchSwipe(
+  target: import('@playwright/test').Locator,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): Promise<boolean> {
+  return target.evaluate(
+    (element, points) => {
+      const pointer = {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: 'touch',
+        isPrimary: true,
+        button: 0,
+      };
+      element.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          ...pointer,
+          clientX: points.start.x,
+          clientY: points.start.y,
+        }),
+      );
+      return !element.dispatchEvent(
+        new PointerEvent('pointerup', {
+          ...pointer,
+          clientX: points.end.x,
+          clientY: points.end.y,
+        }),
+      );
+    },
+    { start, end },
+  );
 }
 
 async function expectPdfPageFitsViewport(
@@ -922,6 +1438,16 @@ async function storedProgressHref(
   return (await storedProgress(page))?.locator?.href ?? null;
 }
 
+async function expectReaderPage(
+  page: import('@playwright/test').Page,
+  current: number,
+  total: number,
+): Promise<void> {
+  await expect(page.getByTestId('reader-page-status')).toHaveText(
+    `Page ${current} of ${total}`,
+  );
+}
+
 async function advanceEpubUntilHref(
   page: import('@playwright/test').Page,
   expectedHref: string,
@@ -931,7 +1457,21 @@ async function advanceEpubUntilHref(
     if ((await storedProgressHref(page))?.includes(expectedHref)) {
       return;
     }
-    await page.getByRole('button', { name: 'Next' }).click();
+    const locatorBeforeMove = JSON.stringify(
+      (await storedProgress(page))?.locator ?? null,
+    );
+    await page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .locator('body')
+      .press('ArrowDown');
+    await expect
+      .poll(
+        async () =>
+          JSON.stringify((await storedProgress(page))?.locator ?? null),
+        { timeout: 5_000 },
+      )
+      .not.toBe(locatorBeforeMove);
   }
   throw new Error(
     `EPUB navigation did not reach "${expectedHref}" after ${maximumMoves} moves`,
@@ -944,10 +1484,22 @@ async function storedProgression(
   return (await storedProgress(page))?.locator?.locations?.progression ?? 0;
 }
 
+async function storedTotalProgression(
+  page: import('@playwright/test').Page,
+): Promise<number> {
+  return (
+    (await storedProgress(page))?.locator?.locations?.totalProgression ?? 0
+  );
+}
+
 async function storedProgress(page: import('@playwright/test').Page): Promise<{
   locator?: {
     href?: string;
-    locations?: { position?: number; progression?: number };
+    locations?: {
+      position?: number;
+      progression?: number;
+      totalProgression?: number;
+    };
   };
 } | null> {
   return page.evaluate(async () => {
@@ -959,7 +1511,11 @@ async function storedProgress(page: import('@playwright/test').Page): Promise<{
     const progress = await new Promise<{
       locator?: {
         href?: string;
-        locations?: { position?: number; progression?: number };
+        locations?: {
+          position?: number;
+          progression?: number;
+          totalProgression?: number;
+        };
       };
     } | null>((resolve, reject) => {
       const request = database
@@ -1134,4 +1690,40 @@ function isExpectedSandboxInjectionRejection(message: string): boolean {
       "the document's frame is sandboxed and the 'allow-scripts' permission is not set",
     )
   );
+}
+
+async function installMockReaderFullscreen(
+  page: import('@playwright/test').Page,
+): Promise<void> {
+  await page.getByTestId('reader-root').evaluate((root) => {
+    let activeFullscreenElement: Element | null = null;
+    Object.defineProperty(root.ownerDocument, 'fullscreenElement', {
+      configurable: true,
+      get: () => activeFullscreenElement,
+    });
+    Object.defineProperty(root, 'requestFullscreen', {
+      configurable: true,
+      value: async () => {
+        activeFullscreenElement = root;
+        root.ownerDocument.dispatchEvent(new Event('fullscreenchange'));
+      },
+    });
+    Object.defineProperty(root.ownerDocument, 'exitFullscreen', {
+      configurable: true,
+      value: async () => {
+        activeFullscreenElement = null;
+        root.ownerDocument.dispatchEvent(new Event('fullscreenchange'));
+      },
+    });
+  });
+}
+
+function requireVisibleBox(
+  box: { x: number; y: number; width: number; height: number } | null,
+  label: string,
+): { x: number; y: number; width: number; height: number } {
+  if (!box) {
+    throw new Error(`The ${label} is not visible`);
+  }
+  return box;
 }

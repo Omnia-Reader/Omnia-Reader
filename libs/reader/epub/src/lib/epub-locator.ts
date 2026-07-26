@@ -1,4 +1,7 @@
-import { PublicationLocator } from '@omnia-reader/reader/domain';
+import {
+  PublicationLocator,
+  ReaderPageStatus,
+} from '@omnia-reader/reader/domain';
 
 export function epubLocationToLocator(
   location: unknown,
@@ -39,6 +42,37 @@ export function epubLocationToLocator(
           : undefined,
       totalProgression: isProgression(percentage) ? percentage : undefined,
     },
+  };
+}
+
+export function epubLocationToPageStatus(
+  location: unknown,
+): ReaderPageStatus | null {
+  if (!isRecord(location)) {
+    return null;
+  }
+  const displayedLocation = isRecord(location['start'])
+    ? location['start']
+    : location;
+  const displayed = displayedLocation['displayed'];
+  if (!isRecord(displayed)) {
+    return null;
+  }
+  const current = displayed['page'];
+  const total = displayed['total'];
+  if (
+    !Number.isSafeInteger(current) ||
+    !Number.isSafeInteger(total) ||
+    Number(current) < 1 ||
+    Number(total) < 1 ||
+    Number(current) > Number(total)
+  ) {
+    return null;
+  }
+  return {
+    current: Number(current),
+    total: Number(total),
+    scope: 'section',
   };
 }
 

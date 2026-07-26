@@ -35,6 +35,16 @@
     </p>
   }
 
+  @if (statusMessage) {
+    <p
+      class="mx-auto my-6 max-w-xl text-center text-emerald-800"
+      role="status"
+      aria-live="polite"
+    >
+      {{ statusMessage }}
+    </p>
+  }
+
   @if (loading) {
     <p class="mx-auto my-18 max-w-xl text-center" aria-live="polite">
       Loading your library…
@@ -206,7 +216,7 @@
               class="min-w-0 flex-1 text-left text-inherit no-underline focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-violet-600"
               [class.flex]="viewMode === 'list'"
               [routerLink]="['/reader', book.id]"
-              [attr.aria-label]="'Open ' + book.title"
+              [attr.aria-label]="bookOpenLabel(book)"
             >
               @if (bookCoverUrl(book.id); as coverUrl) {
                 <img
@@ -266,6 +276,29 @@
                     {{ book.publisher }}
                   </p>
                 }
+                @if (bookProgressSummary(book.id); as progress) {
+                  <div class="mt-4">
+                    <div
+                      class="mb-1.5 flex items-center justify-between gap-3 text-sm"
+                    >
+                      <span class="font-semibold text-violet-800">
+                        {{ progress.actionLabel }}
+                      </span>
+                      <span class="text-stone-600">{{ progress.label }}</span>
+                    </div>
+                    <progress
+                      class="block h-2 w-full overflow-hidden rounded-full accent-violet-700"
+                      max="100"
+                      [value]="progress.percent"
+                      [attr.aria-label]="
+                        'Reading progress for ' +
+                        book.title +
+                        ': ' +
+                        progress.label
+                      "
+                    ></progress>
+                  </div>
+                }
               </div>
             </a>
             <footer
@@ -285,14 +318,38 @@
                   {{ bookActivityTimestamp(book) | date: 'mediumDate' }}
                 </time>
               </div>
-              <button
-                mat-icon-button
-                type="button"
-                [attr.aria-label]="'Remove ' + book.title"
-                (click)="removeBook(book)"
+              <div
+                class="flex items-center"
+                role="group"
+                [attr.aria-label]="'Actions for ' + book.title"
               >
-                <mat-icon>delete_outline</mat-icon>
-              </button>
+                <button
+                  mat-icon-button
+                  type="button"
+                  [disabled]="exportingBookId !== null"
+                  [attr.aria-label]="
+                    exportingBookId === book.id
+                      ? 'Exporting ' + book.title
+                      : 'Export ' + book.title
+                  "
+                  (click)="exportBook(book)"
+                >
+                  <mat-icon>
+                    {{
+                      exportingBookId === book.id ? 'hourglass_top' : 'download'
+                    }}
+                  </mat-icon>
+                </button>
+                <button
+                  mat-icon-button
+                  type="button"
+                  [disabled]="exportingBookId !== null"
+                  [attr.aria-label]="'Remove ' + book.title"
+                  (click)="removeBook(book)"
+                >
+                  <mat-icon>delete_outline</mat-icon>
+                </button>
+              </div>
             </footer>
           </article>
         }

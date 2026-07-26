@@ -37,7 +37,7 @@ test('reopens a stored publication while fully offline', async ({
   await expect(
     page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
   ).toBeVisible();
-  await page.getByRole('link', { name: 'Back to library' }).click();
+  await page.goBack();
 
   await context.setOffline(true);
   await page.reload();

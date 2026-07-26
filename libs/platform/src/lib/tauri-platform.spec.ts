@@ -32,6 +32,58 @@ describe('platform selection', () => {
 });
 
 describe('BrowserPlatform', () => {
+  it('reports best-effort browser storage and upgrades a granted request', async () => {
+    let persisted = false;
+    const storageManager = {
+      estimate: vi.fn().mockResolvedValue({
+        usage: 25,
+        quota: 100,
+      }),
+      persisted: vi.fn(() => Promise.resolve(persisted)),
+      persist: vi.fn(() => {
+        persisted = true;
+        return Promise.resolve(true);
+      }),
+    } as unknown as StorageManager;
+    const platform = new BrowserPlatform(storageManager);
+
+    await expect(platform.getStorageStatus()).resolves.toEqual({
+      persistence: 'best-effort',
+      usageBytes: 25,
+      quotaBytes: 100,
+    });
+    await expect(platform.requestPersistentStorage()).resolves.toEqual({
+      persistence: 'persistent',
+      usageBytes: 25,
+      quotaBytes: 100,
+    });
+    expect(storageManager.persist).toHaveBeenCalledOnce();
+  });
+
+  it('reports unavailable persistence when the browser API is absent', async () => {
+    const platform = new BrowserPlatform(undefined);
+
+    await expect(platform.getStorageStatus()).resolves.toEqual({
+      persistence: 'unavailable',
+    });
+    await expect(platform.requestPersistentStorage()).resolves.toEqual({
+      persistence: 'unavailable',
+    });
+  });
+
+  it('keeps best-effort storage usable when a persistence request is denied', async () => {
+    const storageManager = {
+      estimate: vi.fn().mockRejectedValue(new Error('Quota unavailable')),
+      persisted: vi.fn().mockResolvedValue(false),
+      persist: vi.fn().mockResolvedValue(false),
+    } as unknown as StorageManager;
+    const platform = new BrowserPlatform(storageManager);
+
+    await expect(platform.requestPersistentStorage()).resolves.toEqual({
+      persistence: 'best-effort',
+    });
+  });
+
   it('opens a browser streaming save destination when File System Access is available', async () => {
     const writable = new WritableStream<Uint8Array>();
     const createWritable = vi.fn().mockResolvedValue(writable);
@@ -134,6 +186,18 @@ describe('BrowserPlatform', () => {
 describe('TauriPlatform', () => {
   beforeEach(() => {
     invoke.mockReset();
+  });
+
+  it('reports application-managed storage as persistent', async () => {
+    const platform = new TauriPlatform(invoke as NativeInvoke);
+
+    await expect(platform.getStorageStatus()).resolves.toEqual({
+      persistence: 'persistent',
+    });
+    await expect(platform.requestPersistentStorage()).resolves.toEqual({
+      persistence: 'persistent',
+    });
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('keeps native paths opaque and reads the selected publication by ID', async () => {

@@ -16,6 +16,7 @@ import {
   PublicationPasswordRequiredError,
   PublicationSelection,
   ReaderEngine,
+  ReaderPageStatus,
   ReaderPreferences,
   SearchResult,
   TocEntry,
@@ -94,6 +95,9 @@ export class PdfReaderEngine implements ReaderEngine {
   private readonly selectionListeners = new Set<
     (selection: PublicationSelection | null) => void
   >();
+  private readonly annotationActivationListeners = new Set<
+    (annotationId: string) => void
+  >();
   private readonly externalLinkRequestListeners = new Set<
     (url: string) => void
   >();
@@ -125,6 +129,12 @@ export class PdfReaderEngine implements ReaderEngine {
     }
   };
   private readonly handleSelectionAction = (event: MouseEvent): void => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-omnia-annotation-id]')
+    ) {
+      return;
+    }
     if (event.type === 'mousedown' && event.button !== 2) {
       return;
     }
@@ -280,6 +290,7 @@ export class PdfReaderEngine implements ReaderEngine {
     this.relocationListeners.clear();
     this.passwordListeners.clear();
     this.selectionListeners.clear();
+    this.annotationActivationListeners.clear();
     this.externalLinkRequestListeners.clear();
   }
 
@@ -296,6 +307,18 @@ export class PdfReaderEngine implements ReaderEngine {
     return pageLocator(currentPage, document.numPages);
   }
 
+  pageStatus(): ReaderPageStatus | null {
+    const document = this.document;
+    if (!document) {
+      return null;
+    }
+    return {
+      current: this.pdfViewer?.currentPageNumber ?? this.pageNumber,
+      total: document.numPages,
+      scope: 'publication',
+    };
+  }
+
   onRelocated(listener: (locator: PublicationLocator) => void): () => void {
     this.relocationListeners.add(listener);
     return () => this.relocationListeners.delete(listener);
@@ -306,6 +329,11 @@ export class PdfReaderEngine implements ReaderEngine {
   ): () => void {
     this.selectionListeners.add(listener);
     return () => this.selectionListeners.delete(listener);
+  }
+
+  onAnnotationActivated(listener: (annotationId: string) => void): () => void {
+    this.annotationActivationListeners.add(listener);
+    return () => this.annotationActivationListeners.delete(listener);
   }
 
   onExternalLinkRequested(listener: (url: string) => void): () => void {
@@ -375,6 +403,19 @@ export class PdfReaderEngine implements ReaderEngine {
       this.pdfViewer.currentPageNumber = pageNumber;
       this.pdfViewer.scrollPageIntoView({ pageNumber });
     }
+  }
+
+  async goToProgression(totalProgression: number): Promise<void> {
+    const document = this.requireDocument();
+    if (!Number.isFinite(totalProgression)) {
+      throw new Error('Book position must be a finite number');
+    }
+    const progression = Math.min(1, Math.max(0, totalProgression));
+    const pageNumber =
+      document.numPages <= 1
+        ? 1
+        : Math.round(progression * (document.numPages - 1)) + 1;
+    await this.goTo(pageLocator(pageNumber, document.numPages));
   }
 
   async next(): Promise<void> {
@@ -763,6 +804,7 @@ export class PdfReaderEngine implements ReaderEngine {
     });
 
     for (const annotation of annotations) {
+      let focusable = true;
       const rectangles = annotation.locator.locations?.fragments
         ?.map(parsePdfRectangle)
         .filter(
@@ -779,11 +821,17 @@ export class PdfReaderEngine implements ReaderEngine {
             rectangle[2],
             rectangle[3],
           );
-          appendHighlightRectangle(
-            layer,
-            normalizeRectangle([...first, ...second]),
-            annotation.color,
-          );
+          if (
+            appendHighlightRectangle(
+              layer,
+              normalizeRectangle([...first, ...second]),
+              annotation,
+              focusable,
+              (annotationId) => this.notifyAnnotationActivated(annotationId),
+            )
+          ) {
+            focusable = false;
+          }
         }
         continue;
       }
@@ -798,18 +846,24 @@ export class PdfReaderEngine implements ReaderEngine {
           : null;
       const pageRect = page.getBoundingClientRect();
       if (range) {
-        [...range.getClientRects()].forEach((rectangle) =>
-          appendHighlightRectangle(
-            layer,
-            [
-              rectangle.left - pageRect.left,
-              rectangle.top - pageRect.top,
-              rectangle.right - pageRect.left,
-              rectangle.bottom - pageRect.top,
-            ],
-            annotation.color,
-          ),
-        );
+        for (const rectangle of range.getClientRects()) {
+          if (
+            appendHighlightRectangle(
+              layer,
+              [
+                rectangle.left - pageRect.left,
+                rectangle.top - pageRect.top,
+                rectangle.right - pageRect.left,
+                rectangle.bottom - pageRect.top,
+              ],
+              annotation,
+              focusable,
+              (annotationId) => this.notifyAnnotationActivated(annotationId),
+            )
+          ) {
+            focusable = false;
+          }
+        }
       }
     }
     if (layer.childElementCount > 0) {
@@ -908,12 +962,20 @@ export class PdfReaderEngine implements ReaderEngine {
     this.annotations = [];
     this.passwordRequiredWithoutListener = false;
   }
+
+  private notifyAnnotationActivated(annotationId: string): void {
+    for (const listener of this.annotationActivationListeners) {
+      listener(annotationId);
+    }
+  }
 }
 
 function pageLocator(
   pageNumber: number,
   pageCount: number,
 ): PublicationLocator {
+  const totalProgression =
+    pageCount <= 1 ? 1 : (pageNumber - 1) / (pageCount - 1);
   return {
     href: '',
     type: 'application/pdf',
@@ -921,8 +983,8 @@ function pageLocator(
     locations: {
       fragments: [`page=${pageNumber}`],
       position: pageNumber,
-      progression: (pageNumber - 1) / pageCount,
-      totalProgression: pageNumber / pageCount,
+      progression: totalProgression,
+      totalProgression,
     },
   };
 }
@@ -1056,28 +1118,54 @@ function normalizeRectangle(
 function appendHighlightRectangle(
   layer: HTMLElement,
   rectangle: [number, number, number, number],
-  color: PublicationAnnotation['color'],
-): void {
+  annotation: PublicationAnnotation,
+  focusable: boolean,
+  activate: (annotationId: string) => void,
+): boolean {
   const [left, top, right, bottom] = rectangle;
   if (
     ![left, top, right, bottom].every(Number.isFinite) ||
     right <= left ||
     bottom <= top
   ) {
-    return;
+    return false;
   }
   const highlight = layer.ownerDocument.createElement('div');
+  highlight.dataset['omniaAnnotationId'] = annotation.id;
+  highlight.setAttribute('role', 'button');
+  highlight.setAttribute(
+    'aria-label',
+    annotation.locator.text?.highlight
+      ? `Edit highlight: ${annotation.locator.text.highlight.slice(0, 120)}`
+      : 'Edit highlight',
+  );
+  highlight.tabIndex = focusable ? 0 : -1;
   Object.assign(highlight.style, {
     position: 'absolute',
     left: `${left}px`,
     top: `${top}px`,
     width: `${right - left}px`,
     height: `${bottom - top}px`,
-    background: PDF_ANNOTATION_COLORS[color],
+    background: PDF_ANNOTATION_COLORS[annotation.color],
     mixBlendMode: 'multiply',
     borderRadius: '2px',
+    cursor: 'pointer',
+    pointerEvents: 'auto',
+  });
+  const activateAnnotation = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    activate(annotation.id);
+  };
+  highlight.addEventListener('click', activateAnnotation);
+  highlight.addEventListener('contextmenu', activateAnnotation);
+  highlight.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      activateAnnotation(event);
+    }
   });
   layer.append(highlight);
+  return true;
 }
 
 function round(value: number): number {

@@ -1,4 +1,7 @@
-import { epubLocationToLocator } from './epub-locator';
+import {
+  epubLocationToLocator,
+  epubLocationToPageStatus,
+} from './epub-locator';
 
 describe('epubLocationToLocator', () => {
   it('maps the nested relocation shape emitted by EPUB.js', () => {
@@ -63,4 +66,31 @@ describe('epubLocationToLocator', () => {
       expect(epubLocationToLocator(location)).toBeNull();
     },
   );
+});
+
+describe('epubLocationToPageStatus', () => {
+  it('exposes layout-relative pages for the current spine section', () => {
+    expect(
+      epubLocationToPageStatus({
+        start: {
+          href: 'chapter-2.xhtml',
+          displayed: { page: 2, total: 5 },
+        },
+      }),
+    ).toEqual({
+      current: 2,
+      total: 5,
+      scope: 'section',
+    });
+  });
+
+  it.each([
+    null,
+    {},
+    { displayed: {} },
+    { displayed: { page: 0, total: 5 } },
+    { displayed: { page: 6, total: 5 } },
+  ])('rejects invalid or unavailable layout page data', (location) => {
+    expect(epubLocationToPageStatus(location)).toBeNull();
+  });
 });

@@ -19,15 +19,29 @@ import {
   PublicationSelection,
   ReaderEngine,
   ReaderNavigationDirection,
+  ReaderPageStatus,
   ReaderPreferences,
   SearchResult,
+  selectionHasText,
+  startTouchEventNavigationGesture,
+  startTouchNavigationGesture,
   TocEntry,
+  TouchNavigationGesture,
+  touchEventNavigationDirection,
+  touchNavigationDirection,
+  wheelNavigationDirection,
 } from '@omnia-reader/reader/domain';
-import { epubLocationToLocator } from './epub-locator';
+import {
+  epubLocationToLocator,
+  epubLocationToPageStatus,
+} from './epub-locator';
 
 export type EpubRuntimeLoader = () => Promise<
   typeof import('@likecoin/epub-ts')
 >;
+
+const WHEEL_NAVIGATION_INTERVAL_MS = 400;
+const EPUB_LOCATION_BREAK_SIZE = 1_600;
 
 export class EpubReaderEngine implements ReaderEngine {
   private book: Book | null = null;
@@ -35,6 +49,7 @@ export class EpubReaderEngine implements ReaderEngine {
   private viewport: HTMLElement | null = null;
   private toc: readonly TocEntry[] = [];
   private locator: PublicationLocator | null = null;
+  private currentPageStatus: ReaderPageStatus | null = null;
   private readingDirection: PublicationReadingDirection = 'ltr';
   private publicationLayout: PublicationLayout = 'reflowable';
   private publicationSpread: EpubReaderPreferences['spread'] = 'auto';
@@ -51,6 +66,8 @@ export class EpubReaderEngine implements ReaderEngine {
   private monitoredSelectionDocument: Document | null = null;
   private monitoredSelectionKey: string | null = null;
   private monitoredSelectionSince = 0;
+  private lastWheelNavigationAt = Number.NEGATIVE_INFINITY;
+  private readonly handledWheelEvents = new WeakSet<Event>();
   private readonly relocationListeners = new Set<
     (locator: PublicationLocator) => void
   >();
@@ -59,6 +76,9 @@ export class EpubReaderEngine implements ReaderEngine {
   >();
   private readonly navigationRequestListeners = new Set<
     (direction: ReaderNavigationDirection) => void
+  >();
+  private readonly annotationActivationListeners = new Set<
+    (annotationId: string) => void
   >();
   private readonly externalLinkRequestListeners = new Set<
     (url: string) => void
@@ -87,6 +107,29 @@ export class EpubReaderEngine implements ReaderEngine {
     EventListener
   >();
   private readonly contentLinkHandlers = new Map<Document, EventListener>();
+  private readonly contentTouchNavigationGestures = new Map<
+    Document,
+    TouchNavigationGesture
+  >();
+  private readonly contentTouchEventNavigationGestures = new Map<
+    Document,
+    TouchNavigationGesture
+  >();
+  private readonly contentTouchNavigationHandlers = new Map<
+    Document,
+    {
+      readonly pointerDown: EventListener;
+      readonly pointerUp: EventListener;
+      readonly pointerCancel: EventListener;
+      readonly touchStart: EventListener;
+      readonly touchEnd: EventListener;
+      readonly touchCancel: EventListener;
+    }
+  >();
+  private readonly contentTouchNavigationStyles = new Map<
+    Document,
+    HTMLStyleElement
+  >();
   private readonly allowedPublicationLinks = new Set<string>();
   private readonly handledFrameLinkTargets = new WeakMap<
     HTMLIFrameElement,
@@ -131,6 +174,11 @@ export class EpubReaderEngine implements ReaderEngine {
       (anchor as HTMLElement).onclick = null;
     }
     document.addEventListener('keydown', this.handleContentKeydown);
+    for (const target of this.selectionActionTargets(document)) {
+      target.addEventListener('wheel', this.handleContentWheel, {
+        passive: false,
+      });
+    }
     const linkHandler = (event: Event): void => {
       const anchor = closestPublicationAnchor(event.target);
       if (!anchor) {
@@ -171,6 +219,99 @@ export class EpubReaderEngine implements ReaderEngine {
     };
     document.addEventListener('selectionchange', selectionChangeHandler);
     this.contentSelectionChangeHandlers.set(document, selectionChangeHandler);
+    const pointerDownHandler = (event: Event): void => {
+      const gesture = startTouchNavigationGesture(event as PointerEvent);
+      if (gesture) {
+        this.contentTouchNavigationGestures.set(document, gesture);
+      } else {
+        // A secondary touch cancels a primary gesture so pinching never turns
+        // into page navigation when the primary pointer is released.
+        this.contentTouchNavigationGestures.delete(document);
+      }
+    };
+    const pointerUpHandler = (event: Event): void => {
+      const gesture = this.contentTouchNavigationGestures.get(document);
+      this.contentTouchNavigationGestures.delete(document);
+      if (!gesture || selectionHasText(document.defaultView?.getSelection())) {
+        return;
+      }
+      const direction = touchNavigationDirection(
+        gesture,
+        event as PointerEvent,
+        this.readingDirection,
+      );
+      if (!direction) {
+        return;
+      }
+      this.contentTouchEventNavigationGestures.delete(document);
+      event.preventDefault();
+      for (const listener of this.navigationRequestListeners) {
+        listener(direction);
+      }
+    };
+    const pointerCancelHandler = (): void => {
+      this.contentTouchNavigationGestures.delete(document);
+    };
+    const touchStartHandler = (event: Event): void => {
+      const gesture = startTouchEventNavigationGesture(event as TouchEvent);
+      if (gesture) {
+        this.contentTouchEventNavigationGestures.set(document, gesture);
+      } else {
+        this.contentTouchEventNavigationGestures.delete(document);
+      }
+    };
+    const touchEndHandler = (event: Event): void => {
+      const gesture = this.contentTouchEventNavigationGestures.get(document);
+      this.contentTouchEventNavigationGestures.delete(document);
+      if (!gesture || selectionHasText(document.defaultView?.getSelection())) {
+        return;
+      }
+      const direction = touchEventNavigationDirection(
+        gesture,
+        event as TouchEvent,
+        this.readingDirection,
+      );
+      if (!direction) {
+        return;
+      }
+      this.contentTouchNavigationGestures.delete(document);
+      event.preventDefault();
+      for (const listener of this.navigationRequestListeners) {
+        listener(direction);
+      }
+    };
+    const touchCancelHandler = (): void => {
+      this.contentTouchEventNavigationGestures.delete(document);
+    };
+    // WebKit does not consistently bubble synthetic or accessibility-driven
+    // pointer events from an EPUB iframe body to its Document. Register on the
+    // same document/root/body chain used by wheel and selection handling.
+    // Capture also lets publication/rendering handlers keep their own pointer
+    // semantics without pre-emptively marking the navigation gesture handled.
+    for (const target of this.selectionActionTargets(document)) {
+      target.addEventListener('pointerdown', pointerDownHandler, true);
+      target.addEventListener('pointerup', pointerUpHandler, true);
+      target.addEventListener('pointercancel', pointerCancelHandler, true);
+      target.addEventListener('touchstart', touchStartHandler, true);
+      target.addEventListener('touchend', touchEndHandler, true);
+      target.addEventListener('touchcancel', touchCancelHandler, true);
+    }
+    this.contentTouchNavigationHandlers.set(document, {
+      pointerDown: pointerDownHandler,
+      pointerUp: pointerUpHandler,
+      pointerCancel: pointerCancelHandler,
+      touchStart: touchStartHandler,
+      touchEnd: touchEndHandler,
+      touchCancel: touchCancelHandler,
+    });
+    if (document.head) {
+      const touchNavigationStyle = document.createElement('style');
+      touchNavigationStyle.dataset['omniaTouchNavigation'] = 'true';
+      touchNavigationStyle.textContent =
+        'html, body { touch-action: pan-y pinch-zoom; }';
+      document.head.append(touchNavigationStyle);
+      this.contentTouchNavigationStyles.set(document, touchNavigationStyle);
+    }
     const contextMenuHandler = (event: Event): void => {
       if (handledSelectionActionEvents.has(event)) {
         return;
@@ -197,6 +338,38 @@ export class EpubReaderEngine implements ReaderEngine {
       return;
     }
     event.preventDefault();
+    for (const listener of this.navigationRequestListeners) {
+      listener(direction);
+    }
+  };
+  private readonly handleContentWheel: EventListener = (event): void => {
+    if (this.handledWheelEvents.has(event)) {
+      return;
+    }
+    this.handledWheelEvents.add(event);
+    const wheelEvent = event as WheelEvent;
+    if (
+      typeof wheelEvent.deltaX !== 'number' ||
+      typeof wheelEvent.deltaY !== 'number'
+    ) {
+      return;
+    }
+    if (
+      this.publicationLayout !== 'pre-paginated' &&
+      this.preferences.flow !== 'paginated'
+    ) {
+      return;
+    }
+    const direction = wheelNavigationDirection(wheelEvent);
+    if (!direction) {
+      return;
+    }
+    event.preventDefault();
+    const now = Date.now();
+    if (now - this.lastWheelNavigationAt < WHEEL_NAVIGATION_INTERVAL_MS) {
+      return;
+    }
+    this.lastWheelNavigationAt = now;
     for (const listener of this.navigationRequestListeners) {
       listener(direction);
     }
@@ -353,6 +526,7 @@ export class EpubReaderEngine implements ReaderEngine {
       this.attachFrameHandlers(true);
     }, 200);
     await this.refreshRenditionLocation(this.rendition, false);
+    await this.generateBookLocations(this.book);
     this.applyAnnotationsToRendition();
   }
 
@@ -371,6 +545,7 @@ export class EpubReaderEngine implements ReaderEngine {
         frame.removeEventListener('mousedown', selectionActionHandler, true);
         frame.removeEventListener('contextmenu', selectionActionHandler, true);
       }
+      frame.removeEventListener('wheel', this.handleContentWheel);
     }
     this.contentFrames.clear();
     this.contentFrameSelectionActionHandlers.clear();
@@ -384,6 +559,10 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentSelectionTimeouts.clear();
     this.contentContextMenuHandlers.clear();
     this.contentLinkHandlers.clear();
+    this.contentTouchNavigationGestures.clear();
+    this.contentTouchEventNavigationGestures.clear();
+    this.contentTouchNavigationHandlers.clear();
+    this.contentTouchNavigationStyles.clear();
     this.allowedPublicationLinks.clear();
     this.rendition?.off('relocated', this.handleRelocated);
     this.rendition?.off('selected', this.handleSelected);
@@ -400,6 +579,7 @@ export class EpubReaderEngine implements ReaderEngine {
     this.viewport = null;
     this.toc = [];
     this.locator = null;
+    this.currentPageStatus = null;
     this.readingDirection = 'ltr';
     this.publicationLayout = 'reflowable';
     this.publicationSpread = 'auto';
@@ -411,6 +591,7 @@ export class EpubReaderEngine implements ReaderEngine {
     this.monitoredSelectionDocument = null;
     this.monitoredSelectionKey = null;
     this.monitoredSelectionSince = 0;
+    this.lastWheelNavigationAt = Number.NEGATIVE_INFINITY;
   }
 
   tableOfContents(): readonly TocEntry[] {
@@ -420,6 +601,17 @@ export class EpubReaderEngine implements ReaderEngine {
   currentLocator(): PublicationLocator | null {
     this.updateLocator(this.rendition?.currentLocation(), false);
     return this.locator;
+  }
+
+  pageStatus(): ReaderPageStatus | null {
+    this.updateLocator(this.rendition?.currentLocation(), false);
+    if (
+      this.publicationLayout !== 'pre-paginated' &&
+      this.preferences.flow === 'scrolled'
+    ) {
+      return null;
+    }
+    return this.currentPageStatus;
   }
 
   onRelocated(listener: (locator: PublicationLocator) => void): () => void {
@@ -432,6 +624,11 @@ export class EpubReaderEngine implements ReaderEngine {
   ): () => void {
     this.selectionListeners.add(listener);
     return () => this.selectionListeners.delete(listener);
+  }
+
+  onAnnotationActivated(listener: (annotationId: string) => void): () => void {
+    this.annotationActivationListeners.add(listener);
+    return () => this.annotationActivationListeners.delete(listener);
   }
 
   onNavigationRequested(
@@ -503,6 +700,34 @@ export class EpubReaderEngine implements ReaderEngine {
       }
       target = fragment ? `${section.href}#${fragment}` : section.href;
     }
+    await rendition.display(target);
+    this.attachRenditionContentHandlers();
+    await this.refreshRenditionLocation(rendition);
+  }
+
+  async goToProgression(totalProgression: number): Promise<void> {
+    const book = this.book;
+    const rendition = this.requireRendition();
+    const locations = book?.locations;
+    if (
+      !locations ||
+      typeof locations.cfiFromPercentage !== 'function' ||
+      typeof locations.total !== 'number' ||
+      locations.total <= 0
+    ) {
+      throw new Error('Book position seeking is not available yet');
+    }
+    if (!Number.isFinite(totalProgression)) {
+      throw new Error('Book position must be a finite number');
+    }
+
+    const target = locations.cfiFromPercentage(
+      Math.min(1, Math.max(0, totalProgression)),
+    );
+    if (typeof target !== 'string' || !target.startsWith('epubcfi(')) {
+      throw new Error('The requested book position is not available');
+    }
+
     await rendition.display(target);
     this.attachRenditionContentHandlers();
     await this.refreshRenditionLocation(rendition);
@@ -688,6 +913,9 @@ export class EpubReaderEngine implements ReaderEngine {
 
   private detachContentDocument(document: Document): void {
     document.removeEventListener('keydown', this.handleContentKeydown);
+    for (const target of this.selectionActionTargets(document)) {
+      target.removeEventListener('wheel', this.handleContentWheel);
+    }
     const selectionHandler = this.contentSelectionHandlers.get(document);
     if (selectionHandler) {
       document.removeEventListener('mouseup', selectionHandler);
@@ -713,6 +941,43 @@ export class EpubReaderEngine implements ReaderEngine {
         anchor.removeEventListener('click', linkHandler, true);
       }
     }
+    const touchNavigationHandlers =
+      this.contentTouchNavigationHandlers.get(document);
+    if (touchNavigationHandlers) {
+      for (const target of this.selectionActionTargets(document)) {
+        target.removeEventListener(
+          'pointerdown',
+          touchNavigationHandlers.pointerDown,
+          true,
+        );
+        target.removeEventListener(
+          'pointerup',
+          touchNavigationHandlers.pointerUp,
+          true,
+        );
+        target.removeEventListener(
+          'pointercancel',
+          touchNavigationHandlers.pointerCancel,
+          true,
+        );
+        target.removeEventListener(
+          'touchstart',
+          touchNavigationHandlers.touchStart,
+          true,
+        );
+        target.removeEventListener(
+          'touchend',
+          touchNavigationHandlers.touchEnd,
+          true,
+        );
+        target.removeEventListener(
+          'touchcancel',
+          touchNavigationHandlers.touchCancel,
+          true,
+        );
+      }
+    }
+    this.contentTouchNavigationStyles.get(document)?.remove();
     this.contentDocuments.delete(document);
     this.contentsByDocument.delete(document);
     this.contentSelectionHandlers.delete(document);
@@ -720,6 +985,10 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentSelectionTimeouts.delete(document);
     this.contentContextMenuHandlers.delete(document);
     this.contentLinkHandlers.delete(document);
+    this.contentTouchNavigationGestures.delete(document);
+    this.contentTouchEventNavigationGestures.delete(document);
+    this.contentTouchNavigationHandlers.delete(document);
+    this.contentTouchNavigationStyles.delete(document);
   }
 
   private navigateInternalLink(anchor: Element): void {
@@ -776,6 +1045,28 @@ export class EpubReaderEngine implements ReaderEngine {
       return;
     }
 
+    const cfi = locator.locations?.fragments?.[0];
+    const locations = this.book?.locations;
+    if (
+      cfi &&
+      locations &&
+      typeof locations.total === 'number' &&
+      locations.total > 0
+    ) {
+      const generatedProgression = locations.percentageFromCfi(cfi);
+      if (
+        typeof generatedProgression === 'number' &&
+        Number.isFinite(generatedProgression) &&
+        generatedProgression >= 0 &&
+        generatedProgression <= 1
+      ) {
+        locator.locations = {
+          ...locator.locations,
+          totalProgression: generatedProgression,
+        };
+      }
+    }
+    this.currentPageStatus = epubLocationToPageStatus(location);
     const changed = JSON.stringify(locator) !== JSON.stringify(this.locator);
     this.locator = locator;
     if (!notify || !changed) {
@@ -783,6 +1074,21 @@ export class EpubReaderEngine implements ReaderEngine {
     }
     for (const listener of this.relocationListeners) {
       listener(locator);
+    }
+  }
+
+  private async generateBookLocations(book: Book): Promise<void> {
+    const locations = book.locations;
+    if (!locations || typeof locations.generate !== 'function') {
+      return;
+    }
+    try {
+      await locations.generate(EPUB_LOCATION_BREAK_SIZE);
+    } catch {
+      return;
+    }
+    if (this.book === book && this.rendition) {
+      await this.refreshRenditionLocation(this.rendition);
     }
   }
 
@@ -929,18 +1235,63 @@ export class EpubReaderEngine implements ReaderEngine {
         continue;
       }
       try {
-        this.rendition.annotations.highlight(
+        const activateAnnotation: EventListener = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          for (const listener of this.annotationActivationListeners) {
+            listener(annotation.id);
+          }
+        };
+        const renderedAnnotation = this.rendition.annotations.highlight(
           cfi,
           { annotationId: annotation.id },
-          undefined,
+          activateAnnotation,
           `omnia-annotation-${annotation.color}`,
           EPUB_ANNOTATION_STYLES[annotation.color],
         );
+        const decorateMark = (mark: unknown): void => {
+          this.decorateAnnotationMark(mark, annotation, activateAnnotation);
+        };
+        renderedAnnotation?.on('attach', decorateMark);
+        decorateMark(renderedAnnotation?.mark);
         this.appliedAnnotationCfis.add(cfi);
       } catch {
         // Keep a stale or malformed anchor in storage for later repair.
       }
     }
+  }
+
+  private decorateAnnotationMark(
+    mark: unknown,
+    annotation: PublicationAnnotation,
+    activate: EventListener,
+  ): void {
+    const element = (
+      mark as
+        | {
+            element?: Element;
+          }
+        | null
+        | undefined
+    )?.element;
+    if (!element) {
+      return;
+    }
+    element.setAttribute('role', 'button');
+    element.setAttribute('tabindex', '0');
+    element.setAttribute(
+      'aria-label',
+      annotation.locator.text?.highlight
+        ? `Edit highlight: ${annotation.locator.text.highlight.slice(0, 120)}`
+        : 'Edit highlight',
+    );
+    element.addEventListener('contextmenu', activate);
+    element.addEventListener('keydown', (event) => {
+      const keyboardEvent = event as KeyboardEvent;
+      if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') {
+        activate(event);
+      }
+    });
   }
 
   private notifySelection(selection: PublicationSelection | null): void {
@@ -1081,6 +1432,9 @@ export class EpubReaderEngine implements ReaderEngine {
         frame.addEventListener('load', loadHandler);
         frame.addEventListener('mousedown', selectionActionHandler, true);
         frame.addEventListener('contextmenu', selectionActionHandler, true);
+        frame.addEventListener('wheel', this.handleContentWheel, {
+          passive: false,
+        });
         this.contentFrames.set(frame, loadHandler);
         this.contentFrameSelectionActionHandlers.set(
           frame,
@@ -1168,10 +1522,30 @@ const EPUB_THEME_PALETTES = {
 } as const;
 
 const EPUB_ANNOTATION_STYLES = {
-  yellow: { fill: '#facc15', 'fill-opacity': '0.42' },
-  green: { fill: '#4ade80', 'fill-opacity': '0.38' },
-  blue: { fill: '#60a5fa', 'fill-opacity': '0.38' },
-  pink: { fill: '#f472b6', 'fill-opacity': '0.38' },
+  yellow: {
+    fill: '#facc15',
+    'fill-opacity': '0.42',
+    'pointer-events': 'all',
+    cursor: 'pointer',
+  },
+  green: {
+    fill: '#4ade80',
+    'fill-opacity': '0.38',
+    'pointer-events': 'all',
+    cursor: 'pointer',
+  },
+  blue: {
+    fill: '#60a5fa',
+    'fill-opacity': '0.38',
+    'pointer-events': 'all',
+    cursor: 'pointer',
+  },
+  pink: {
+    fill: '#f472b6',
+    'fill-opacity': '0.38',
+    'pointer-events': 'all',
+    cursor: 'pointer',
+  },
 } as const;
 
 function quoteFromRange(

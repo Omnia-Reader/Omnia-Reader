@@ -1,9 +1,10 @@
-import type { BookRecord } from '@omnia-reader/reader/domain';
+import type { BookRecord, ReadingProgress } from '@omnia-reader/reader/domain';
 import {
   bookActivityTimestamp,
   loadLibraryViewPreferences,
   saveLibraryViewPreferences,
   selectLibraryBooks,
+  summarizeReadingProgress,
   type LibraryPreferenceStorage,
 } from './library-view';
 
@@ -84,6 +85,27 @@ describe('library view', () => {
     expect(bookActivityTimestamp(books[1])).toBe(books[1].lastOpenedAt);
   });
 
+  it('summarizes the current durable reading position for the library', () => {
+    expect(summarizeReadingProgress(createProgress(0.42, 0.7))).toEqual({
+      percent: 42,
+      label: '42% read',
+      actionLabel: 'Continue reading',
+    });
+  });
+
+  it('falls back to furthest progress and identifies finished books', () => {
+    expect(summarizeReadingProgress(createProgress(undefined, 0.58))).toEqual({
+      percent: 58,
+      label: '58% read',
+      actionLabel: 'Continue reading',
+    });
+    expect(summarizeReadingProgress(createProgress(1, 1))).toEqual({
+      percent: 100,
+      label: 'Finished',
+      actionLabel: 'Open finished book',
+    });
+  });
+
   it('persists validated view and sort preferences', () => {
     const values = new Map<string, string>();
     const storage: LibraryPreferenceStorage = {
@@ -156,4 +178,25 @@ function createBook(
 
 function titles(books: readonly BookRecord[]): string[] {
   return books.map((book) => book.title);
+}
+
+function createProgress(
+  totalProgression: number | undefined,
+  furthestTotalProgression: number,
+): ReadingProgress {
+  return {
+    schemaVersion: 1,
+    bookId: `sha256:${'a'.repeat(64)}`,
+    format: 'epub',
+    deviceId: 'test-device',
+    locator: {
+      href: 'chapter.xhtml',
+      type: 'application/xhtml+xml',
+      locations:
+        totalProgression === undefined ? undefined : { totalProgression },
+    },
+    furthestTotalProgression,
+    updatedAt: '2026-07-26T00:00:00.000Z',
+    appVersion: '0.0.0',
+  };
 }

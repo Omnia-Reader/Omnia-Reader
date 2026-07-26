@@ -8,7 +8,6 @@ import {
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
-import { RouterLink } from '@angular/router';
 import {
   LIBRARY_BACKUP_MEDIA_TYPE,
   LIBRARY_QUARANTINE_REPOSITORY,
@@ -18,12 +17,13 @@ import {
   QuarantinedLibraryRecord,
 } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
+import { PlatformStorageStatus } from '@omnia-reader/reader/domain';
 
 @Component({
   selector: 'omnia-settings-page',
   templateUrl: './settings-page.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MatButtonModule, MatCardModule, MatIconModule, RouterLink],
+  imports: [MatButtonModule, MatCardModule, MatIconModule],
   providers: [
     {
       provide: LibraryQuarantineService,
@@ -47,8 +47,111 @@ export class SettingsPageComponent implements OnInit {
   quarantineLoading = true;
   quarantineErrorMessage: string | null = null;
   quarantinedRecords: readonly QuarantinedLibraryRecord[] = [];
+  storageLoading = true;
+  storageRequesting = false;
+  storageStatus: PlatformStorageStatus | null = null;
+  storageErrorMessage: string | null = null;
+  storageStatusMessage: string | null = null;
 
   async ngOnInit(): Promise<void> {
+    await Promise.all([
+      this.loadStorageStatus(),
+      this.loadQuarantinedRecords(),
+    ]);
+  }
+
+  get storagePersistenceLabel(): string {
+    switch (this.storageStatus?.persistence) {
+      case 'persistent':
+        return 'Protected';
+      case 'best-effort':
+        return 'Best effort';
+      default:
+        return 'Unavailable';
+    }
+  }
+
+  get storagePersistenceDescription(): string {
+    switch (this.storageStatus?.persistence) {
+      case 'persistent':
+        return this.platform.kind === 'web'
+          ? 'The browser should not automatically evict this offline library when storage is under pressure.'
+          : 'The offline library is stored in application-managed files on this device.';
+      case 'best-effort':
+        return 'The browser may remove local books and progress when storage is under pressure. Keep a current backup or request protection.';
+      default:
+        return 'This platform does not expose a persistent-storage permission. Keep a current portable backup.';
+    }
+  }
+
+  get storageUsagePercent(): number | null {
+    const usage = this.storageStatus?.usageBytes;
+    const quota = this.storageStatus?.quotaBytes;
+    if (
+      usage === undefined ||
+      quota === undefined ||
+      !Number.isFinite(usage) ||
+      !Number.isFinite(quota) ||
+      quota <= 0
+    ) {
+      return null;
+    }
+    return Math.min(100, Math.max(0, (usage / quota) * 100));
+  }
+
+  get storageUsageLabel(): string | null {
+    const usage = this.storageStatus?.usageBytes;
+    const quota = this.storageStatus?.quotaBytes;
+    if (usage === undefined || quota === undefined || quota <= 0) {
+      return null;
+    }
+    return `${formatBytes(usage)} of ${formatBytes(quota)} used`;
+  }
+
+  async requestPersistentStorage(): Promise<void> {
+    if (
+      this.storageRequesting ||
+      this.storageStatus?.persistence !== 'best-effort'
+    ) {
+      return;
+    }
+
+    this.storageRequesting = true;
+    this.storageErrorMessage = null;
+    this.storageStatusMessage = null;
+    this.changeDetector.markForCheck();
+    try {
+      this.storageStatus = await this.platform.requestPersistentStorage();
+      this.storageStatusMessage =
+        this.storageStatus.persistence === 'persistent'
+          ? 'Offline library storage is now protected from automatic browser eviction.'
+          : 'This browser did not grant persistent storage. Keep a current portable backup.';
+    } catch (error) {
+      this.storageErrorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to request persistent offline storage.';
+    } finally {
+      this.storageRequesting = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  private async loadStorageStatus(): Promise<void> {
+    try {
+      this.storageStatus = await this.platform.getStorageStatus();
+    } catch (error) {
+      this.storageErrorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to inspect offline storage.';
+    } finally {
+      this.storageLoading = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  private async loadQuarantinedRecords(): Promise<void> {
     try {
       this.quarantinedRecords = await this.quarantine.listRecords();
     } catch (error) {
@@ -196,10 +299,19 @@ function describeBackupProgress(progress: LibraryBackupExportProgress): string {
 }
 
 function formatBytes(bytes: number): string {
+  if (bytes === 0) {
+    return '0 bytes';
+  }
+  if (bytes < 1024) {
+    return `${Math.ceil(bytes)} bytes`;
+  }
   if (bytes < 1024 * 1024) {
     return `${Math.ceil(bytes / 1024)} KiB`;
   }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }
 
 function downloadBlob(blob: Blob, fileName: string): void {

@@ -1,7 +1,14 @@
 # Omnia Reader: Universal Reader Development Plan
 
 Status: In active development
-Last updated: 2026-07-25
+
+Current delivery priority: finish and harden the local Angular web reader.
+GitHub/MEGA authentication, remote synchronization, and Tauri/native packaging
+remain documented but are deferred until the local PDF/EPUB experience is
+complete and production-ready. Remote-provider work is not part of the current
+implementation or acceptance gates while authentication and credential
+management remain unavailable.
+Last updated: 2026-07-26
 
 ## 1. Goal
 
@@ -32,17 +39,33 @@ implemented:
   EPUB.js-compatible renderer, PDF.js, browser storage, platform adapters, and
   Git sync concerns.
 - Library, reader, settings, and sync settings routes are lazy loaded.
+- Remote-provider code remains available to focused integration tests, but the
+  shipped local-reader UI does not advertise it and the automatic scheduler is
+  disabled. Stale provider selections therefore cannot trigger background
+  GitHub or MEGA requests while authentication and credential management are
+  deferred.
 - The library has responsive, accessible grid and list views, metadata-aware
   search, deterministic recent/title/author/added sorting, activity and import
-  dates, useful empty states, and locally persisted view preferences. Opening a
-  publication updates its recent activity without changing its original import
-  time.
+  dates, useful empty states, and locally persisted view preferences. Durable
+  current reading percentages distinguish untouched, in-progress, and finished
+  publications, and each card exposes an accessible start or continue-reading
+  affordance. Opening a publication updates its recent activity without
+  changing its original import time. Every book exposes an accessible
+  exact-file export action that preserves its original EPUB/PDF bytes and file
+  name. Supported hosts stream directly to a user-selected destination;
+  browsers without that API use a standard download without changing or
+  removing the local publication.
 - Imported EPUB/PDF binaries, extracted metadata, normalized cover artwork,
   progress, bookmarks, highlights, notes, and format preferences are durable.
   Publication bytes use OPFS where available with a versioned, byte-backed
   IndexedDB fallback and lazy migration from legacy Blob records; EPUB covers
   come from the package manifest, PDF covers come from page one, and
   exact-edition SHA-256 IDs provide duplicate detection.
+- Settings reports whether the offline library has persistent or best-effort
+  host storage, displays browser quota usage when available, and lets the user
+  explicitly request protection from automatic browser eviction. A denied or
+  unavailable browser permission remains non-fatal and points the user to the
+  portable backup path.
 - The browser library database is at schema version 8. Every persisted domain
   record is validated when read or written. Malformed books, binary
   references, covers, merged progress, per-device progress documents,
@@ -73,12 +96,15 @@ implemented:
   iframe with scripts disabled. It retains the EPUB.js API while replacing the
   obsolete `unload` lifecycle listener with `pagehide`. Recursive contents,
   NAV/NCX-relative and fragment-only table-of-contents targets, headless
-  incremental full-text search, finite paginated layout, button and
-  left/right-arrow navigation in both the application and publication iframe,
-  relocation events, CFI resume, themes, typography, flow, and spread
-  preferences use the common reader contract. Invalid table-of-contents
-  targets produce a controlled reader error instead of an unhandled renderer
-  rejection. The reader presents every ToC level with stable hierarchical
+  incremental full-text search, finite paginated layout, direction-aware
+  keyboard, wheel, Pointer Event swipe, and deduplicated Touch Event fallback
+  navigation in both the application and publication iframe, relocation
+  events, CFI resume, themes, typography, flow, and spread preferences use the
+  common reader contract. Horizontal swipes ignore vertical scrolling,
+  multitouch, controls, links, annotations, and active text selections.
+  Invalid table-of-contents targets produce a controlled reader error instead
+  of an unhandled renderer rejection. The reader presents every ToC level with
+  stable hierarchical
   numbering and accessible per-section expand/collapse controls, collapsed by
   default. EPUB landmark semantics deterministically exempt front/back matter
   such as prefaces and contributors from generated chapter numbers; a
@@ -113,6 +139,20 @@ implemented:
 - Progress is saved from renderer relocation events, not only button actions.
   Local writes remain authoritative and append to an offline sync operation
   journal.
+- The shared footer exposes an accessible cross-format book-progress scrubber.
+  It uses EPUB generated-location percentages and stable CFIs, while PDF
+  percentages resolve to the nearest stable page. The native range control is
+  keyboard, touch, and assistive-technology operable; seeking updates the same
+  persisted locator used by automatic resume. Its final footer geometry is
+  reserved before either renderer mounts so EPUB pagination and fullscreen
+  viewports remain stable.
+- The shared reader shell supports true browser fullscreen immersive reading
+  without collapsing the EPUB iframe or PDF canvas viewport. Its toolbar
+  retracts to the top edge after the pointer returns to the publication,
+  reappears from a thin desktop hover strip, and remains independently
+  discoverable through a touch-sized coarse-pointer target and keyboard focus.
+  Explicit show/hide controls and focus transfer keep the mode operable without
+  relying on hover alone.
 - The shared reader shell can create, revisit, persist, and delete PDF or EPUB
   bookmarks. Deletions are durable tombstones, so an older provider copy
   cannot resurrect a bookmark on another device.
@@ -204,6 +244,9 @@ Verified in the current implementation:
 ```text
 npx nx run-many -t test --all --skip-nx-cache            PASS (256 JS + 1 native; 1 JS skipped)
 npx nx run-many -t lint --all --skip-nx-cache            PASS (12 projects)
+npx nx test omnia-reader                                PASS (61/61)
+npx nx lint omnia-reader                                PASS
+npx nx lint omnia-reader-e2e                            PASS
 npx nx build omnia-reader --configuration production     PASS
 npx nx build sync-gateway --configuration production     PASS
 npm audit --omit=dev                                     PASS (0 vulnerabilities)
@@ -211,27 +254,36 @@ npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
 npm run native:build                                     PASS (deb + rpm + AppImage)
-Initial production bundle                                461.94 kB (115.04 kB estimated transfer)
+Initial production bundle                                468.57 kB (116.33 kB estimated transfer)
 Schema-v8 migration and corrupt-record recovery tests     PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
 Chromium layered PDF/EPUB reader and resume E2E          PASS
-Chromium PDF/EPUB button and arrow navigation E2E         PASS
+Chromium PDF/EPUB arrow and wheel navigation E2E          PASS
+Chromium/Firefox PDF/EPUB swipe navigation E2E            PASS (6/6)
+Chromium/Firefox/WebKit PDF/EPUB progress seeking E2E      PASS (6/6)
+Chromium/Firefox/WebKit exact PDF/EPUB library export E2E  PASS (3/3)
+WebKit PDF/EPUB/fixed-layout reader regression E2E        PASS (3/3)
 Chromium finite PDF/EPUB viewport and pagination E2E      PASS
 Chromium reader console and EPUB script-sandbox E2E       PASS
 Chromium/Firefox/WebKit nested EPUB ToC navigation E2E     PASS (3/3)
 Chromium durable PDF bookmark create/resume/delete E2E   PASS
 Chromium/Firefox/WebKit PDF/EPUB annotation lifecycle E2E PASS (6/6)
+Chromium/Firefox/WebKit PDF/EPUB immersive reader E2E    PASS (6/6)
 Chromium drag-and-drop import and automatic open E2E      PASS
 Chromium installed-PWA fully-offline reopen E2E          PASS
 Chromium durable EPUB/PDF cover extraction E2E           PASS
 Chromium OPFS storage and legacy Blob migration E2E      PASS
+Chromium/Firefox/WebKit storage persistence/quota E2E     PASS (3/3)
+Chromium/Firefox/WebKit remote-sync dormancy E2E          PASS (3/3)
+Chromium/Firefox/WebKit storage Settings WCAG E2E         PASS (3/3)
 Chromium/Firefox/WebKit backup/device-progress restore E2E PASS (3/3)
 Chromium deterministic reader Escape handling E2E         PASS
 Chromium fixed-layout/RTL/link-policy EPUB E2E            PASS
 Chromium WCAG A/AA library/settings/PDF/EPUB E2E           PASS (4/4)
 Chromium/Firefox/WebKit library search/sort/view E2E       PASS (3/3)
-Chromium/Firefox/WebKit populated grid/list WCAG E2E       PASS (3/3)
+Chromium/Firefox/WebKit library progress/resume E2E        PASS (3/3)
+Chromium/Firefox/WebKit populated progress grid/list WCAG  PASS (3/3)
 Chromium large-publication performance/memory/backup E2E   PASS (3/3)
 Chromium/Firefox/WebKit active web E2E matrix              PASS (16/16 each)
 Chromium/Firefox/WebKit Git/LFS PDF convergence E2E        PASS (3/3)
@@ -910,8 +962,8 @@ web, desktop, and Android development targets.
   script-disabled iframe rendering.
 - Implemented: lazy section rendering, recursive numbered and initially
   collapsed TOC, semantic unnumbered front/back matter, headless search,
-  themes, finite pagination, scrolling, button/arrow navigation, and exact CFI
-  resume.
+  themes, finite pagination, scrolling, keyboard/wheel/touch navigation, and
+  exact CFI resume.
 - Implemented: remove the custom parser after fixture parity is demonstrated.
 
 Exit gate: the EPUB corpus passes on Chromium, Firefox, WebKit, Tauri desktop,
@@ -926,6 +978,9 @@ and Android WebView.
   OPFS-first binary storage with a versioned IndexedDB fallback and lazy
   migration, duplicate repair, import-time metadata, durable bounded cover
   artwork, and local progress.
+- Implemented: host-neutral storage durability status, browser persistence
+  requests and quota estimates, native persistent-storage reporting, and
+  accessible Settings guidance for denied or unavailable browser grants.
 - Implemented: enable and test the PWA shell.
 
 Exit gate: EPUB and PDF reading work offline and restore after forced

@@ -32,6 +32,12 @@ describe('BookDeepLinkService', () => {
     const platform: PlatformPort = {
       kind: 'tauri-desktop',
       supportsStreamingFileSave: true,
+      getStorageStatus: vi.fn().mockResolvedValue({
+        persistence: 'persistent',
+      }),
+      requestPersistentStorage: vi.fn().mockResolvedValue({
+        persistence: 'persistent',
+      }),
       pickPublications: vi.fn().mockResolvedValue([]),
       createFileSave: vi.fn().mockResolvedValue(null),
       onPublicationsOpened: vi.fn().mockResolvedValue(vi.fn()),

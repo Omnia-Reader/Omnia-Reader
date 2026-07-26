@@ -4,21 +4,85 @@
   </p>
   <h1 class="mt-1 text-4xl font-semibold">Settings</h1>
   <section class="grid gap-5">
-    <a class="text-inherit no-underline" routerLink="/settings/sync">
-      <mat-card
-        class="grid grid-cols-[auto_1fr_auto] items-center gap-5 p-5"
-        appearance="outlined"
-      >
-        <mat-icon>sync</mat-icon>
+    <mat-card class="grid gap-5 p-5" appearance="outlined">
+      <div class="grid grid-cols-[auto_1fr] items-start gap-5">
+        <mat-icon>storage</mat-icon>
         <div>
-          <h2 class="m-0 text-xl font-semibold">Git progress sync</h2>
-          <p class="m-0 text-stone-600">
-            Connect a repository and keep device progress convergent.
+          <h2 class="m-0 text-xl font-semibold">Offline library storage</h2>
+          <p class="mt-1 mb-0 text-stone-600">
+            Check whether this device protects downloaded books and reading
+            progress from automatic storage cleanup.
           </p>
         </div>
-        <mat-icon>chevron_right</mat-icon>
-      </mat-card>
-    </a>
+      </div>
+
+      @if (storageLoading) {
+        <p class="m-0 pl-11 text-sm text-stone-600" role="status">
+          Inspecting offline storage…
+        </p>
+      } @else if (!storageStatus) {
+        <p class="m-0 pl-11 text-sm text-red-700" role="alert">
+          {{ storageErrorMessage ?? 'Unable to inspect offline storage.' }}
+        </p>
+      } @else {
+        <div class="grid gap-3 pl-11">
+          <div>
+            <strong>{{ storagePersistenceLabel }}</strong>
+            <p
+              id="storage-persistence-description"
+              class="mt-1 mb-0 text-sm text-stone-600"
+            >
+              {{ storagePersistenceDescription }}
+            </p>
+          </div>
+
+          @if (storageUsagePercent !== null && storageUsageLabel) {
+            <div class="grid gap-1">
+              <meter
+                class="w-full"
+                min="0"
+                max="100"
+                [value]="storageUsagePercent"
+                aria-label="Offline library storage usage"
+              ></meter>
+              <p class="m-0 text-xs text-stone-600">
+                {{ storageUsageLabel }}
+              </p>
+            </div>
+          }
+
+          @if (storageStatus.persistence === 'best-effort') {
+            <div>
+              <button
+                mat-stroked-button
+                type="button"
+                [disabled]="storageRequesting"
+                aria-describedby="storage-persistence-description"
+                (click)="requestPersistentStorage()"
+              >
+                <mat-icon>verified_user</mat-icon>
+                {{
+                  storageRequesting
+                    ? 'Requesting protection…'
+                    : 'Protect offline library'
+                }}
+              </button>
+            </div>
+          }
+
+          @if (storageStatusMessage) {
+            <p class="m-0 text-sm text-emerald-700" role="status">
+              {{ storageStatusMessage }}
+            </p>
+          }
+          @if (storageErrorMessage) {
+            <p class="m-0 text-sm text-red-700" role="alert">
+              {{ storageErrorMessage }}
+            </p>
+          }
+        </div>
+      }
+    </mat-card>
 
     <mat-card class="grid gap-5 p-5" appearance="outlined">
       <div class="grid grid-cols-[auto_1fr] items-start gap-5">

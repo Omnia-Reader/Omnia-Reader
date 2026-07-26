@@ -67,18 +67,24 @@ test('keeps a 180-page PDF virtualized and releases its reader resources', async
       page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
     ).toBeVisible({ timeout: MAX_OPEN_MS });
     expect(performance.now() - openStarted).toBeLessThan(MAX_OPEN_MS);
-    await expect(page.getByText('1 / 180', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('reader-page-status')).toHaveText(
+      'Page 1 of 180',
+    );
 
     await page.keyboard.press('ArrowRight');
-    await expect(page.getByText('2 / 180', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Next' }).click();
-    await expect(page.getByText('3 / 180', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('reader-page-status')).toHaveText(
+      'Page 2 of 180',
+    );
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByTestId('reader-page-status')).toHaveText(
+      'Page 3 of 180',
+    );
     expect(await page.locator('.pdfViewer canvas').count()).toBeLessThanOrEqual(
       6,
     );
 
     await assertLongTaskBudget(page);
-    await page.getByRole('link', { name: 'Back to library' }).click();
+    await page.goBack();
     await expect(
       page.getByRole('heading', { name: 'Library', exact: true }),
     ).toBeVisible();
@@ -121,7 +127,7 @@ test('keeps an 80-chapter EPUB incremental and releases its reader resources', a
     expect(performance.now() - openStarted).toBeLessThan(MAX_OPEN_MS);
 
     await page.keyboard.press('ArrowRight');
-    await page.getByRole('button', { name: 'Next' }).click();
+    await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowLeft');
     expect(await viewport.locator('iframe').count()).toBeLessThanOrEqual(2);
     await expect(
@@ -131,7 +137,7 @@ test('keeps an 80-chapter EPUB incremental and releases its reader resources', a
     ).toHaveCount(0);
 
     await assertLongTaskBudget(page);
-    await page.getByRole('link', { name: 'Back to library' }).click();
+    await page.goBack();
     await expect(
       page.getByRole('heading', { name: 'Library', exact: true }),
     ).toBeVisible();

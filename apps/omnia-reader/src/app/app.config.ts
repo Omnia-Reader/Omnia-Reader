@@ -53,6 +53,7 @@ import {
   MegaGateway,
   MegaGatewayClient,
 } from '@omnia-reader/sync/mega';
+import { REMOTE_SYNC_ENABLED } from './app-capabilities';
 import { appRoutes } from './app.routes';
 import { BackNavigationService } from './back-navigation.service';
 import { BookDeepLinkService } from './book-deep-link.service';
@@ -230,7 +231,9 @@ export const appConfig: ApplicationConfig = {
         SyncActivityNotifier,
       ],
     },
-    provideAppInitializer(initializeAutomaticSync),
+    ...(REMOTE_SYNC_ENABLED
+      ? [provideAppInitializer(initializeAutomaticSync)]
+      : []),
     provideAppInitializer(initializePublicationIngress),
     provideAppInitializer(initializeBookDeepLinks),
     provideAppInitializer(initializeBackNavigation),

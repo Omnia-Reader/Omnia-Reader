@@ -13,6 +13,7 @@ import {
 
 const ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
 const ARROW_RIGHT = '\uE014';
+const ARROW_UP = '\uE013';
 const PORT = 44_000 + (process.pid % 10_000);
 const SERVER_URL = `http://127.0.0.1:${PORT}`;
 const nativeBinary = resolve(
@@ -113,16 +114,14 @@ async function verifyStartupPdfJourney(driver) {
     '.pdfViewer .page[data-page-number="1"] canvas',
     30_000,
   );
-  await driver.waitForExactText('1 / 2');
+  await driver.waitForExactText('Page 1 of 2');
 
   await driver.key(ARROW_RIGHT);
-  await driver.waitForExactText('2 / 2');
+  await driver.waitForExactText('Page 2 of 2');
 
-  await driver.click(
-    await driver.waitForElement('[aria-keyshortcuts="ArrowLeft"]', 30_000),
-  );
-  await driver.waitForExactText('1 / 2');
-  console.log('✓ startup PDF open-with and both navigation controls');
+  await driver.key(ARROW_UP);
+  await driver.waitForExactText('Page 1 of 2');
+  console.log('✓ startup PDF open-with and keyboard navigation');
 }
 
 async function verifySingleInstanceEpubJourney(driver) {
@@ -133,9 +132,7 @@ async function verifySingleInstanceEpubJourney(driver) {
   await driver.key(ARROW_RIGHT);
   await verifyEpubChapter(driver, 'Native Chapter Two');
 
-  await driver.click(
-    await driver.waitForElement('[aria-keyshortcuts="ArrowLeft"]', 30_000),
-  );
+  await driver.key(ARROW_UP);
   await verifyEpubChapter(driver, 'Native Chapter One');
   console.log('✓ single-instance EPUB forwarding, rendering, and navigation');
 }
@@ -150,7 +147,7 @@ async function verifyBookDeepLinkJourney(driver) {
     '.pdfViewer .page[data-page-number="1"] canvas',
     30_000,
   );
-  await driver.waitForExactText('1 / 2');
+  await driver.waitForExactText('Page 1 of 2');
   console.log('✓ exact-edition deep link reopened the existing PDF');
 }
 

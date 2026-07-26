@@ -10,8 +10,12 @@
 
   <aside
     id="primary-navigation"
-    class="fixed inset-y-0 left-0 z-30 flex w-60 flex-col bg-white shadow-xl transition-transform md:translate-x-0 md:shadow-[1px_0_10px_rgb(15_23_42/8%)]"
-    [class.-translate-x-full]="!menuOpen"
+    class="fixed inset-y-0 left-0 z-30 flex w-60 flex-col bg-white shadow-xl transition-transform md:shadow-[1px_0_10px_rgb(15_23_42/8%)]"
+    [ngClass]="{
+      '-translate-x-full': !menuOpen,
+      'md:translate-x-0': !desktopMenuCollapsed,
+      'md:-translate-x-full': desktopMenuCollapsed,
+    }"
     aria-label="Primary navigation"
   >
     <a
@@ -55,17 +59,21 @@
     </nav>
   </aside>
 
-  <div class="min-h-screen md:pl-60">
+  <div
+    class="min-h-screen"
+    [ngClass]="desktopMenuCollapsed ? 'md:pl-0' : 'md:pl-60'"
+  >
     <header
+      data-testid="app-toolbar"
       class="sticky top-0 z-10 flex h-16 items-center bg-violet-700 px-3 text-white shadow-sm"
     >
       <button
-        class="grid size-12 cursor-pointer place-content-center rounded-full border-0 bg-transparent text-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white md:hidden"
+        class="grid size-12 cursor-pointer place-content-center rounded-full border-0 bg-transparent text-white hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
         type="button"
-        aria-label="Open navigation"
+        aria-label="Toggle app navigation"
         aria-controls="primary-navigation"
-        [attr.aria-expanded]="menuOpen"
-        (click)="toggleMenu()"
+        [attr.aria-expanded]="mainSidenavExpanded"
+        (click)="toggleMainSidenav()"
       >
         <span class="material-icons" aria-hidden="true" translate="no">
           menu

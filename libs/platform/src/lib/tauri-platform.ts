@@ -3,6 +3,7 @@ import {
   FileSaveRequest,
   PlatformFileSave,
   PlatformPort,
+  PlatformStorageStatus,
 } from '@omnia-reader/reader/domain';
 
 interface NativePublicationDescriptor {
@@ -45,6 +46,14 @@ export class TauriPlatform implements PlatformPort {
     readonly kind: TauriPlatformKind = detectTauriPlatformKind(),
     private readonly openExternalNative: NativeOpenExternal = openTauriExternal,
   ) {}
+
+  async getStorageStatus(): Promise<PlatformStorageStatus> {
+    return { persistence: 'persistent' };
+  }
+
+  async requestPersistentStorage(): Promise<PlatformStorageStatus> {
+    return this.getStorageStatus();
+  }
 
   async pickPublications(): Promise<readonly BookSource[]> {
     const publications =
