@@ -43,7 +43,9 @@ args = ["ng", "mcp", "--read-only"]
 command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
 env = { npm_config_cache = "/tmp/omnia-reader-context7-mcp-cache" }
+env_vars = ["CONTEXT7_API_KEY"]
 startup_timeout_sec = 20
+required = true
 
 [mcp_servers.engram]
 command = "engram"
