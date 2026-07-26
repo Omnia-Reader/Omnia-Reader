@@ -184,6 +184,46 @@ describe('SyncSettingsPageComponent', () => {
       'Initial library synchronization queued',
     );
   });
+
+  it('creates and selects a private GitHub repository before syncing', async () => {
+    const repository = {
+      id: 99,
+      fullName: 'reader/omnia-reader-library',
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    };
+    const authenticatedSession = {
+      authenticated: true as const,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository,
+    };
+    selected = 'git';
+    vi.mocked(git.session).mockResolvedValue(authenticatedSession);
+    vi.mocked(git.repositories).mockResolvedValue([repository]);
+    vi.mocked(git.createRepository).mockResolvedValue({
+      repository,
+      selected: true,
+      session: authenticatedSession,
+      installationSettingsUrl: null,
+    });
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.createRepository('omnia-reader-library');
+
+    expect(git.createRepository).toHaveBeenCalledWith('omnia-reader-library');
+    expect(fixture.componentInstance.gitSession).toEqual(authenticatedSession);
+    expect(autoSync.requestImmediate).toHaveBeenCalledWith(
+      'destination-selected',
+    );
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'Created and selected private repository',
+    );
+  });
 });
 
 function gatewayStub(overrides: Record<string, unknown>) {
@@ -195,6 +235,7 @@ function gatewayStub(overrides: Record<string, unknown>) {
     downloadObject: vi.fn(),
     uploadObject: vi.fn(),
     selectRepository: vi.fn(),
+    createRepository: vi.fn(),
     selectFolder: vi.fn(),
     disconnect: vi.fn(),
     beginAuthorization: vi.fn(),

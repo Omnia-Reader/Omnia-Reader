@@ -60,6 +60,49 @@ describe('GitHubSyncGatewayAdapter', () => {
     });
   });
 
+  it('creates, discovers, and selects a private repository', async () => {
+    const provider = new FakeGitHub();
+    const { adapter } = testAdapter(provider);
+    await authorize(adapter);
+
+    await expect(
+      adapter.createDestination('session', {
+        name: 'omnia-reader-library',
+      }),
+    ).resolves.toMatchObject({
+      repository: {
+        id: 100,
+        fullName: 'reader/omnia-reader-library',
+        private: true,
+      },
+      selected: true,
+      session: {
+        authenticated: true,
+        repository: { id: 100 },
+      },
+      installationSettingsUrl: null,
+    });
+    expect(provider.createdRepositories).toEqual(['omnia-reader-library']);
+  });
+
+  it('directs the user to grant installation access when a new repository is not visible', async () => {
+    const provider = new FakeGitHub();
+    provider.exposeCreatedRepositoryToInstallation = false;
+    const { adapter } = testAdapter(provider);
+    await authorize(adapter);
+
+    await expect(
+      adapter.createDestination('session', {
+        name: 'omnia-reader-library',
+      }),
+    ).resolves.toMatchObject({
+      repository: { fullName: 'reader/omnia-reader-library' },
+      selected: false,
+      session: { authenticated: true, repository: null },
+      installationSettingsUrl: 'https://github.test/settings/installations',
+    });
+  });
+
   it('commits and lists JSON documents using optimistic blob revisions', async () => {
     const provider = new FakeGitHub();
     const { adapter } = testAdapter(provider);
@@ -187,22 +230,37 @@ function testAdapter(provider: FakeGitHub): {
 async function authorizeAndSelect(
   adapter: GitHubSyncGatewayAdapter,
 ): Promise<void> {
+  await authorize(adapter);
+  await adapter.destinations('session');
+  await adapter.selectDestination('session', { repositoryId: 99 });
+}
+
+async function authorize(adapter: GitHubSyncGatewayAdapter): Promise<void> {
   await adapter.authorizationUrl('pending', '/settings/sync');
   await adapter.completeAuthorization('pending', 'session', {
     code: 'oauth-code',
     state: 'fixed-state',
   });
-  await adapter.destinations('session');
-  await adapter.selectDestination('session', { repositoryId: 99 });
 }
 
 class FakeGitHub {
   readonly files = new Map<string, { content: string; sha: string }>();
   readonly events: string[] = [];
   readonly lfs = new Map<string, Buffer>();
+  readonly createdRepositories: string[] = [];
   failLfsUpload = false;
+  exposeCreatedRepositoryToInstallation = true;
   private revision = 0;
   private pendingLfs: { oid: string; size: number } | null = null;
+  private readonly repositories: Array<Record<string, unknown>> = [
+    {
+      id: 99,
+      full_name: 'reader/library',
+      private: true,
+      default_branch: 'main',
+      permissions: { push: true },
+    },
+  ];
 
   readonly fetch: typeof fetch = async (input, init = {}) => {
     const url = new URL(String(input));
@@ -219,6 +277,31 @@ class FakeGitHub {
         refresh_token_expires_in: 15_552_000,
       });
     }
+    if (
+      url.origin === 'https://api.github.test' &&
+      url.pathname === '/user/repos' &&
+      method === 'POST'
+    ) {
+      const body = JSON.parse(String(init.body)) as {
+        name: string;
+        private: boolean;
+        auto_init: boolean;
+      };
+      expect(body.private).toBe(true);
+      expect(body.auto_init).toBe(true);
+      this.createdRepositories.push(body.name);
+      const repository = {
+        id: 100,
+        full_name: `reader/${body.name}`,
+        private: true,
+        default_branch: 'main',
+        permissions: { push: true },
+      };
+      if (this.exposeCreatedRepositoryToInstallation) {
+        this.repositories.push(repository);
+      }
+      return json(repository, 201);
+    }
     if (url.origin === 'https://api.github.test' && url.pathname === '/user') {
       return json({
         id: 42,
@@ -231,15 +314,7 @@ class FakeGitHub {
     }
     if (url.pathname === '/user/installations/7/repositories') {
       return json({
-        repositories: [
-          {
-            id: 99,
-            full_name: 'reader/library',
-            private: true,
-            default_branch: 'main',
-            permissions: { push: true },
-          },
-        ],
+        repositories: this.repositories,
       });
     }
     if (

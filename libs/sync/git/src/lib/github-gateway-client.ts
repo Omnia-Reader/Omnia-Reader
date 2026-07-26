@@ -31,10 +31,18 @@ export type GitHubGatewaySession =
       repository: GitHubRepository | null;
     };
 
+export interface GitHubRepositoryCreationResult {
+  repository: GitHubRepository;
+  selected: boolean;
+  session: GitHubGatewaySession;
+  installationSettingsUrl: string | null;
+}
+
 export interface GitHubGateway extends LibrarySyncTransport {
   session(): Promise<GitHubGatewaySession>;
   repositories(): Promise<readonly GitHubRepository[]>;
   selectRepository(repositoryId: number): Promise<GitHubGatewaySession>;
+  createRepository(name: string): Promise<GitHubRepositoryCreationResult>;
   disconnect(): Promise<void>;
   beginAuthorization(returnTo?: string): void;
 }
@@ -114,6 +122,22 @@ export class GitHubGatewayClient implements GitHubGateway {
       body: JSON.stringify({ repositoryId }),
     });
     return parseSession(await responseJson(response));
+  }
+
+  async createRepository(
+    repositoryName: string,
+  ): Promise<GitHubRepositoryCreationResult> {
+    const name = repositoryName.trim();
+    if (!/^[a-z0-9._-]{1,100}$/i.test(name) || name === '.' || name === '..') {
+      throw new TypeError(
+        'Repository names may contain letters, numbers, dots, hyphens, and underscores',
+      );
+    }
+    const response = await this.request('/repository', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    return parseRepositoryCreationResult(await responseJson(response));
   }
 
   async disconnect(): Promise<void> {
@@ -303,6 +327,41 @@ function parseSession(value: unknown): GitHubGatewaySession {
   };
 }
 
+function parseRepositoryCreationResult(
+  value: unknown,
+): GitHubRepositoryCreationResult {
+  if (
+    !isRecord(value) ||
+    !isRepository(value['repository']) ||
+    typeof value['selected'] !== 'boolean'
+  ) {
+    throw new GitHubGatewayProtocolError();
+  }
+  const session = parseSession(value['session']);
+  const rawInstallationSettingsUrl = value['installationSettingsUrl'];
+  let installationSettingsUrl: string | null;
+  if (rawInstallationSettingsUrl === null) {
+    installationSettingsUrl = null;
+  } else if (isSafeExternalUrl(rawInstallationSettingsUrl)) {
+    installationSettingsUrl = rawInstallationSettingsUrl;
+  } else {
+    throw new GitHubGatewayProtocolError();
+  }
+  if (
+    value['selected'] &&
+    (!session.authenticated ||
+      session.repository?.id !== value['repository'].id)
+  ) {
+    throw new GitHubGatewayProtocolError();
+  }
+  return {
+    repository: value['repository'],
+    selected: value['selected'],
+    session,
+    installationSettingsUrl,
+  };
+}
+
 function isUser(value: unknown): value is GitHubGatewayUser {
   return (
     isRecord(value) &&
@@ -354,6 +413,24 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) > 0;
+}
+
+function isSafeExternalUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2048) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return (
+      !url.username &&
+      !url.password &&
+      (url.protocol === 'https:' ||
+        (url.protocol === 'http:' &&
+          ['localhost', '127.0.0.1'].includes(url.hostname)))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function sanitizeReturnPath(value: string): string {

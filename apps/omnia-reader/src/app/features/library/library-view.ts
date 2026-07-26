@@ -2,6 +2,7 @@ import type { BookRecord, ReadingProgress } from '@omnia-reader/reader/domain';
 
 export type LibraryViewMode = 'grid' | 'list';
 export type LibrarySortMode = 'recent' | 'title' | 'author' | 'added';
+export type LibraryReadingStatus = 'all' | 'reading' | 'finished' | 'unread';
 
 export interface LibraryViewPreferences {
   viewMode: LibraryViewMode;
@@ -34,10 +35,19 @@ export function selectLibraryBooks(
   books: readonly BookRecord[],
   query: string,
   sortMode: LibrarySortMode,
+  readingStatus: LibraryReadingStatus = 'all',
+  progressSummaries: ReadonlyMap<
+    string,
+    LibraryBookProgressSummary
+  > = new Map(),
 ): readonly BookRecord[] {
   const needle = normalizeSearchText(query.trim());
   return books
-    .filter((book) => !needle || searchableBookText(book).includes(needle))
+    .filter(
+      (book) =>
+        matchesReadingStatus(book.id, readingStatus, progressSummaries) &&
+        (!needle || searchableBookText(book).includes(needle)),
+    )
     .sort((left, right) => compareBooks(left, right, sortMode));
 }
 
@@ -123,6 +133,37 @@ export function isLibrarySortMode(
     value === 'author' ||
     value === 'added'
   );
+}
+
+export function isLibraryReadingStatus(
+  value: string | null,
+): value is LibraryReadingStatus {
+  return (
+    value === 'all' ||
+    value === 'reading' ||
+    value === 'finished' ||
+    value === 'unread'
+  );
+}
+
+function matchesReadingStatus(
+  bookId: string,
+  readingStatus: LibraryReadingStatus,
+  progressSummaries: ReadonlyMap<string, LibraryBookProgressSummary>,
+): boolean {
+  if (readingStatus === 'all') {
+    return true;
+  }
+  const progress = progressSummaries.get(bookId);
+  if (readingStatus === 'unread') {
+    return !progress;
+  }
+  if (!progress) {
+    return false;
+  }
+  return readingStatus === 'finished'
+    ? progress.percent === 100
+    : progress.percent < 100;
 }
 
 function compareBooks(

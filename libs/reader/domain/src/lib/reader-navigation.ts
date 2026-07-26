@@ -1,5 +1,6 @@
 export type PublicationReadingDirection = 'ltr' | 'rtl';
 export type ReaderNavigationDirection = 'previous' | 'next';
+export type ReaderZoomDirection = 'in' | 'out';
 
 export interface TouchNavigationGesture {
   readonly pointerId: number;
@@ -78,6 +79,35 @@ export function wheelNavigationDirection(
   }
 
   return event.deltaY > 0 ? 'next' : 'previous';
+}
+
+export function wheelZoomDirection(
+  event: Pick<
+    WheelEvent,
+    | 'altKey'
+    | 'ctrlKey'
+    | 'defaultPrevented'
+    | 'deltaX'
+    | 'deltaY'
+    | 'metaKey'
+    | 'shiftKey'
+    | 'target'
+  >,
+): ReaderZoomDirection | null {
+  if (
+    event.defaultPrevented ||
+    event.altKey ||
+    !event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    isEditableTarget(event.target) ||
+    event.deltaY === 0 ||
+    Math.abs(event.deltaX) > Math.abs(event.deltaY)
+  ) {
+    return null;
+  }
+
+  return event.deltaY < 0 ? 'in' : 'out';
 }
 
 export function startTouchNavigationGesture(

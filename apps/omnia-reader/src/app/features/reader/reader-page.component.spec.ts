@@ -37,6 +37,7 @@ describe('ReaderPageComponent annotations', () => {
       selection?: (selection: PublicationSelection | null) => void;
       annotationActivation?: (annotationId: string) => void;
       navigation?: (direction: 'previous' | 'next') => void;
+      zoom?: (direction: 'in' | 'out') => void;
       externalLink?: (url: string) => void;
     } = {};
     const setAnnotations = vi.fn().mockResolvedValue(undefined);
@@ -82,7 +83,7 @@ describe('ReaderPageComponent annotations', () => {
           ],
         },
         {
-          title: 'Chapter Two',
+          title: '2. Chapter Two',
           locator: {
             href: 'chapter-2',
             type: 'application/pdf',
@@ -123,6 +124,12 @@ describe('ReaderPageComponent annotations', () => {
           delete callbacks.navigation;
         };
       },
+      onZoomRequested: (listener: (direction: 'in' | 'out') => void) => {
+        callbacks.zoom = listener;
+        return () => {
+          delete callbacks.zoom;
+        };
+      },
       onExternalLinkRequested: (listener: (url: string) => void) => {
         callbacks.externalLink = listener;
         return () => {
@@ -157,6 +164,7 @@ describe('ReaderPageComponent annotations', () => {
       updateMetadata: vi.fn().mockResolvedValue(BOOK),
       saveAnnotation,
       saveProgress: vi.fn().mockResolvedValue(undefined),
+      saveReaderPreferences: vi.fn().mockResolvedValue(undefined),
     } as unknown as LibraryRepository;
     const journal = {
       append: vi.fn().mockImplementation(async (input) => ({
@@ -299,6 +307,9 @@ describe('ReaderPageComponent annotations', () => {
     expect(
       fixture.componentInstance.tocItems.map((item) => item.number),
     ).toEqual([null, null, '1', '1.1', '2']);
+    expect(fixture.componentInstance.tocItems[4].displayLabel).toBe(
+      '2 Chapter Two',
+    );
     expect(
       fixture.componentInstance.visibleTocItems.map((item) => item.number),
     ).toEqual([null, null, '1', '2']);
@@ -314,6 +325,76 @@ describe('ReaderPageComponent annotations', () => {
       fixture.componentInstance.visibleTocItems.map((item) => item.number),
     ).toEqual([null, null, '1', '2']);
     expect(fixture.componentInstance.isTocItemExpanded(chapterOne)).toBe(false);
+
+    const panelFocusCases = [
+      {
+        trigger: 'Toggle table of contents',
+        panel: 'Table of contents',
+        close: 'Close table of contents',
+      },
+      {
+        trigger: 'Open publication search',
+        panel: 'Publication search',
+        close: 'Close publication search',
+        initialSelector: '#reader-search',
+      },
+      {
+        trigger: 'Open reader settings',
+        panel: 'Reader settings',
+        close: 'Close reader settings',
+      },
+      {
+        trigger: 'Toggle bookmarks',
+        panel: 'Bookmarks',
+        close: 'Close bookmarks',
+      },
+      {
+        trigger: 'Toggle highlights and notes',
+        panel: 'Highlights and notes',
+        close: 'Close highlights and notes',
+      },
+    ];
+    for (const panelCase of panelFocusCases) {
+      const trigger = fixture.nativeElement.querySelector(
+        `[aria-label="${panelCase.trigger}"]`,
+      ) as HTMLButtonElement;
+      trigger.click();
+      fixture.detectChanges();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const panel = fixture.nativeElement.querySelector(
+        `[aria-label="${panelCase.panel}"]`,
+      ) as HTMLElement;
+      const expectedFocus = panelCase.initialSelector
+        ? (fixture.nativeElement.querySelector(
+            panelCase.initialSelector,
+          ) as HTMLElement)
+        : panel;
+      expect(document.activeElement).toBe(expectedFocus);
+      (
+        fixture.nativeElement.querySelector(
+          `[aria-label="${panelCase.close}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      fixture.detectChanges();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(document.activeElement).toBe(trigger);
+    }
+
+    (
+      fixture.nativeElement.querySelector(
+        '[aria-label="Toggle table of contents"]',
+      ) as HTMLButtonElement
+    ).click();
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    );
+    await Promise.resolve();
+    expect(engine.next).not.toHaveBeenCalled();
+    (
+      fixture.nativeElement.querySelector(
+        '[aria-label="Close table of contents"]',
+      ) as HTMLButtonElement
+    ).click();
 
     document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
@@ -338,6 +419,41 @@ describe('ReaderPageComponent annotations', () => {
     viewport.dispatchEvent(wheelDown);
     await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(3));
     expect(wheelDown.defaultPrevented).toBe(true);
+    const zoomIn = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    viewport.dispatchEvent(zoomIn);
+    await vi.waitFor(() =>
+      expect(engine.applyPreferences).toHaveBeenCalledWith(
+        expect.objectContaining({
+          format: 'pdf',
+          zoomMode: 'custom',
+          zoomPercent: 105,
+        }),
+      ),
+    );
+    expect(zoomIn.defaultPrevented).toBe(true);
+    expect(engine.next).toHaveBeenCalledTimes(3);
+    let releaseNavigation: (() => void) | undefined;
+    engine.next.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseNavigation = resolve;
+        }),
+    );
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+    );
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+    );
+    await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(4));
+    expect(releaseNavigation).toBeTypeOf('function');
+    releaseNavigation?.();
+    await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(5));
     dispatchTouchPointer(viewport, 'pointerdown', {
       clientX: 180,
       clientY: 80,
@@ -346,7 +462,7 @@ describe('ReaderPageComponent annotations', () => {
       clientX: 70,
       clientY: 84,
     });
-    await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(6));
     expect(swipeNext.defaultPrevented).toBe(true);
     dispatchTouchPointer(viewport, 'pointerdown', {
       clientX: 180,
@@ -357,7 +473,7 @@ describe('ReaderPageComponent annotations', () => {
       clientY: 190,
     });
     await Promise.resolve();
-    expect(engine.next).toHaveBeenCalledTimes(4);
+    expect(engine.next).toHaveBeenCalledTimes(6);
     const publicationControl = document.createElement('button');
     viewport.append(publicationControl);
     dispatchTouchPointer(publicationControl, 'pointerdown', {
@@ -369,7 +485,7 @@ describe('ReaderPageComponent annotations', () => {
       clientY: 84,
     });
     await Promise.resolve();
-    expect(engine.next).toHaveBeenCalledTimes(4);
+    expect(engine.next).toHaveBeenCalledTimes(6);
     publicationControl.remove();
     dispatchTouchPointer(viewport, 'pointerdown', { clientX: 70, clientY: 80 });
     dispatchTouchPointer(viewport, 'pointerup', { clientX: 180, clientY: 84 });
@@ -382,7 +498,7 @@ describe('ReaderPageComponent annotations', () => {
       clientX: 70,
       clientY: 84,
     });
-    await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(5));
+    await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(7));
     expect(legacySwipeNext.defaultPrevented).toBe(true);
     const input = document.createElement('input');
     document.body.append(input);
@@ -400,6 +516,12 @@ describe('ReaderPageComponent annotations', () => {
     expect(fixture.componentInstance.pendingExternalUrl).toBe(
       'https://example.com/reference',
     );
+    const nextCallsBeforeConsent = engine.next.mock.calls.length;
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    );
+    await Promise.resolve();
+    expect(engine.next).toHaveBeenCalledTimes(nextCallsBeforeConsent);
     await fixture.componentInstance.openExternalLink();
     expect(openExternalUrl).toHaveBeenCalledWith(
       'https://example.com/reference',

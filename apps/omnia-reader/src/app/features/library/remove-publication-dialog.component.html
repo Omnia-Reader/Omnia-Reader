@@ -1,0 +1,31 @@
+<h2 mat-dialog-title>Remove “{{ book.title }}”?</h2>
+
+<mat-dialog-content class="!text-stone-900">
+  <p class="mt-0 text-stone-900">
+    This permanently removes the publication file and its reading progress,
+    bookmarks, highlights, and notes from this device.
+  </p>
+  <p class="mb-0 text-sm text-stone-600">
+    You can restore it later from a backup or by importing the same EPUB or PDF
+    again.
+  </p>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button
+    class="!text-stone-900"
+    mat-button
+    type="button"
+    [mat-dialog-close]="false"
+  >
+    Cancel
+  </button>
+  <button
+    class="!text-red-950"
+    mat-button
+    type="button"
+    [mat-dialog-close]="true"
+  >
+    Remove book
+  </button>
+</mat-dialog-actions>

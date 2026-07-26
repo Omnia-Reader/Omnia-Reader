@@ -80,6 +80,76 @@ describe('library view', () => {
     expect(books).toEqual(originalOrder);
   });
 
+  it('filters unread, in-progress, and finished books using durable progress', () => {
+    const progressSummaries = new Map([
+      [
+        'algebra-10',
+        {
+          percent: 0,
+          label: '0% read',
+          actionLabel: 'Continue reading',
+        },
+      ],
+      [
+        'algebra-2',
+        {
+          percent: 100,
+          label: 'Finished',
+          actionLabel: 'Open finished book',
+        },
+      ],
+    ]);
+
+    expect(
+      titles(
+        selectLibraryBooks(books, '', 'title', 'reading', progressSummaries),
+      ),
+    ).toEqual(['Álgebra 10']);
+    expect(
+      titles(
+        selectLibraryBooks(books, '', 'title', 'finished', progressSummaries),
+      ),
+    ).toEqual(['Algebra 2']);
+    expect(
+      titles(
+        selectLibraryBooks(books, '', 'title', 'unread', progressSummaries),
+      ),
+    ).toEqual(['Reading Notes']);
+  });
+
+  it('composes reading status with normalized search and sorting', () => {
+    const progressSummaries = new Map([
+      [
+        'algebra-10',
+        {
+          percent: 42,
+          label: '42% read',
+          actionLabel: 'Continue reading',
+        },
+      ],
+      [
+        'algebra-2',
+        {
+          percent: 70,
+          label: '70% read',
+          actionLabel: 'Continue reading',
+        },
+      ],
+    ]);
+
+    expect(
+      titles(
+        selectLibraryBooks(
+          books,
+          'algebra',
+          'author',
+          'reading',
+          progressSummaries,
+        ),
+      ),
+    ).toEqual(['Algebra 2', 'Álgebra 10']);
+  });
+
   it('uses the last-opened timestamp as recent activity when available', () => {
     expect(bookActivityTimestamp(books[0])).toBe(books[0].importedAt);
     expect(bookActivityTimestamp(books[1])).toBe(books[1].lastOpenedAt);

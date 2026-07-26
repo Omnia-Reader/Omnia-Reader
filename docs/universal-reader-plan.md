@@ -2,12 +2,12 @@
 
 Status: In active development
 
-Current delivery priority: finish and harden the local Angular web reader.
-GitHub/MEGA authentication, remote synchronization, and Tauri/native packaging
-remain documented but are deferred until the local PDF/EPUB experience is
-complete and production-ready. Remote-provider work is not part of the current
-implementation or acceptance gates while authentication and credential
-management remain unavailable.
+Current delivery priority: finish and harden the Angular web reader while
+bringing GitHub synchronization into the supported application flow. GitHub
+uses the gateway-hosted GitHub App authorization path and can select or create
+a private repository for books and reading state. MEGA deployment and
+Tauri/native packaging remain secondary until the Angular and GitHub journeys
+are production-ready.
 Last updated: 2026-07-26
 
 ## 1. Goal
@@ -38,23 +38,36 @@ implemented:
 - Enforced Nx boundaries separate format-neutral domain/core code, the
   EPUB.js-compatible renderer, PDF.js, browser storage, platform adapters, and
   Git sync concerns.
-- Library, reader, settings, and sync settings routes are lazy loaded.
+- Library, reader, and settings routes are lazy loaded. The deferred sync
+  settings route redirects to local Settings in the shipped build.
 - Remote-provider code remains available to focused integration tests, but the
-  shipped local-reader UI does not advertise it and the automatic scheduler is
-  disabled. Stale provider selections therefore cannot trigger background
-  GitHub or MEGA requests while authentication and credential management are
-  deferred.
+  shipped local-reader app does not register its provider services, accumulate
+  undeliverable operations, advertise the feature, or start the automatic
+  scheduler. Stale provider selections are cleared at startup, so neither a
+  legacy deep link nor reading activity can trigger GitHub or MEGA requests
+  while authentication and credential management are deferred.
 - The library has responsive, accessible grid and list views, metadata-aware
-  search, deterministic recent/title/author/added sorting, activity and import
-  dates, useful empty states, and locally persisted view preferences. Durable
-  current reading percentages distinguish untouched, in-progress, and finished
-  publications, and each card exposes an accessible start or continue-reading
-  affordance. Opening a publication updates its recent activity without
+  search, deterministic recent/title/author/added sorting, composable
+  all/in-progress/finished/not-started filters, activity and import dates,
+  useful empty states, and locally persisted view preferences. Durable current
+  reading percentages distinguish untouched, in-progress, and finished
+  publications, drive those status filters, and give each card an accessible
+  start or continue-reading affordance. Exact-edition duplicate imports remain
+  single stored books and
+  produce explicit added/already-present feedback for individual and mixed
+  multi-file selections. Every selected publication is independently atomic:
+  damaged files are rejected by name without discarding valid books from the
+  same batch. Opening a publication updates its recent activity without
   changing its original import time. Every book exposes an accessible
   exact-file export action that preserves its original EPUB/PDF bytes and file
   name. Supported hosts stream directly to a user-selected destination;
   browsers without that API use a standard download without changing or
-  removing the local publication.
+  removing the local publication. Removing a book uses an accessible in-app
+  confirmation that names the publication and explains that its local file,
+  progress, bookmarks, highlights, and notes will be deleted. Cancellation
+  restores focus, confirmed removal reports success and disables competing
+  actions while busy, and persistence failures keep the book available with an
+  actionable error.
 - Imported EPUB/PDF binaries, extracted metadata, normalized cover artwork,
   progress, bookmarks, highlights, notes, and format preferences are durable.
   Publication bytes use OPFS where available with a versioned, byte-backed
@@ -94,14 +107,22 @@ implemented:
   annotation records.
 - The exact-pinned `@likecoin/epub-ts` runtime renders EPUB content in its own
   iframe with scripts disabled. It retains the EPUB.js API while replacing the
-  obsolete `unload` lifecycle listener with `pagehide`. Recursive contents,
-  NAV/NCX-relative and fragment-only table-of-contents targets, headless
-  incremental full-text search, finite paginated layout, direction-aware
-  keyboard, wheel, Pointer Event swipe, and deduplicated Touch Event fallback
-  navigation in both the application and publication iframe, relocation
-  events, CFI resume, themes, typography, flow, and spread preferences use the
-  common reader contract. Horizontal swipes ignore vertical scrolling,
-  multitouch, controls, links, annotations, and active text selections.
+  obsolete `unload` lifecycle listener with `pagehide`. The adapter waits for
+  the runtime's separate archived-resource replacement promise before first
+  render or teardown, so embedded CSS and fonts cannot race book destruction
+  in slower WebKit environments. Recursive contents, NAV/NCX-relative and
+  fragment-only table-of-contents targets, headless incremental full-text
+  search, finite paginated layout, direction-aware keyboard, wheel, Pointer
+  Event swipe, and deduplicated Touch Event fallback navigation in both the
+  application and publication iframe, relocation events, CFI resume, themes,
+  typography, flow, and spread preferences use the common reader contract.
+  EPUB reading mode defaults to the publication: package-level and item-level
+  `rendition:flow` declarations select paginated or document-scrolling
+  presentation, while explicit Paginated and Scrolling choices remain durable
+  user overrides. Scrolled publications retain normal browser wheel behavior
+  instead of translating vertical scrolling into page turns.
+  Horizontal swipes ignore vertical scrolling, multitouch, controls, links,
+  annotations, and active text selections.
   Invalid table-of-contents targets produce a controlled reader error instead
   of an unhandled renderer rejection. The reader presents every ToC level with
   stable hierarchical
@@ -153,6 +174,15 @@ implemented:
   discoverable through a touch-sized coarse-pointer target and keyboard focus.
   Explicit show/hide controls and focus transfer keep the mode operable without
   relying on hover alone.
+- Reader-owned password, external-link consent, and annotation dialogs use
+  automatic initial focus, keyboard focus containment, and focus restoration.
+  While external-link consent is open, book-navigation shortcuts are isolated
+  so a decision cannot move the publication behind the modal.
+- Reader side panels remain semantically complementary, move focus to their
+  first useful surface, expose explicit close controls, and restore the
+  corresponding toolbar trigger when dismissed. Choosing panel content returns
+  focus to the publication, while arrow, wheel, and swipe navigation are
+  isolated whenever a panel is open.
 - The shared reader shell can create, revisit, persist, and delete PDF or EPUB
   bookmarks. Deletions are durable tombstones, so an older provider copy
   cannot resurrect a bookmark on another device.
@@ -163,7 +193,14 @@ implemented:
   honors RTL page progression and authored spread settings, and routes
   internal links without allowing publication scripts. HTTP(S) links require
   explicit reader consent before the browser or narrowly scoped native opener
-  receives them; unsupported schemes remain inert.
+  receives them; unsupported schemes remain inert. A hash-pinned,
+  independently authored W3C/IDPF corpus verifies the 136-chapter,
+  embedded-font Moby-Dick sample, the embedded-font Hebrew Israel Sailing
+  sample, the mixed reflowable/fixed-layout Voyage of Life sample, and a
+  vertically scrollable manga, including search, ToC navigation, authored
+  direction, physical arrow order, authored layout/flow transitions, natural
+  vertical scrolling, and user flow overrides in Chromium, Firefox, and
+  WebKit.
 - The provider-neutral synchronization core covers the complete local library:
   immutable EPUB/PDF objects, per-book manifests, and per-device progress
   documents plus bookmark and annotation records and tombstones. It verifies
@@ -177,10 +214,11 @@ implemented:
   content-identity, and enabled-feature contract; malformed, incomplete, or
   future schemas fail closed before any child document is read or written.
 - Git/Git LFS and MEGA gateway clients implement the same logical sync layout.
-  Settings let the user choose a provider, authenticate, select a repository or
-  folder, and manually synchronize books, reading progress, bookmarks,
-  highlights, and notes. Provider credentials remain behind the documented
-  same-origin gateway contract.
+  In the preserved deferred feature, sync Settings let the user choose a
+  provider, authenticate, select a repository or folder, and manually
+  synchronize books, reading progress, bookmarks, highlights, and notes.
+  Provider credentials remain behind the documented same-origin gateway
+  contract; this route is not exposed by the active local-reader build.
 - A runnable Nx/Fastify gateway core now enforces provider-scoped HttpOnly
   sessions, same-origin/CSRF checks, confined logical paths, bounded JSON and
   publication metadata, streaming object bodies, and non-sensitive errors for
@@ -234,7 +272,8 @@ implemented:
 - The Tauri capability grants core defaults plus only HTTP(S) URL opening.
   Dialog and filesystem plugins are called from Rust, not exposed to
   publication content or the frontend. A restrictive production CSP is
-  configured.
+  configured. Web and Tauri font policies allow renderer-generated `blob:`
+  URLs for embedded EPUB fonts while continuing to reject remote font origins.
 - EPUB/PDF associations are configured for desktop bundles and are present in
   the generated Android manifest. A Tauri aarch64 Android debug APK has been
   built successfully with NDK 29 and Java 21.
@@ -242,9 +281,10 @@ implemented:
 Verified in the current implementation:
 
 ```text
-npx nx run-many -t test --all --skip-nx-cache            PASS (256 JS + 1 native; 1 JS skipped)
+npx nx run-many -t test --all --skip-nx-cache            BLOCKED (deferred MEGA bridge task recursion)
 npx nx run-many -t lint --all --skip-nx-cache            PASS (12 projects)
-npx nx test omnia-reader                                PASS (61/61)
+npx nx test omnia-reader                                PASS (74/74)
+Local reader/domain/engine/storage/platform suites        PASS (102/102)
 npx nx lint omnia-reader                                PASS
 npx nx lint omnia-reader-e2e                            PASS
 npx nx build omnia-reader --configuration production     PASS
@@ -254,7 +294,7 @@ npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
 npm run native:build                                     PASS (deb + rpm + AppImage)
-Initial production bundle                                468.57 kB (116.33 kB estimated transfer)
+Initial production bundle                                432.65 kB (110.35 kB estimated transfer)
 Schema-v8 migration and corrupt-record recovery tests     PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
@@ -263,6 +303,9 @@ Chromium PDF/EPUB arrow and wheel navigation E2E          PASS
 Chromium/Firefox PDF/EPUB swipe navigation E2E            PASS (6/6)
 Chromium/Firefox/WebKit PDF/EPUB progress seeking E2E      PASS (6/6)
 Chromium/Firefox/WebKit exact PDF/EPUB library export E2E  PASS (3/3)
+Chromium/Firefox/WebKit duplicate/mixed/corrupt import E2E PASS (6/6)
+Chromium/Firefox/WebKit representative EPUB corpus E2E    PASS (15/15)
+Chromium/Firefox/WebKit malformed PDF/EPUB rollback E2E   PASS (6/6)
 WebKit PDF/EPUB/fixed-layout reader regression E2E        PASS (3/3)
 Chromium finite PDF/EPUB viewport and pagination E2E      PASS
 Chromium reader console and EPUB script-sandbox E2E       PASS
@@ -275,22 +318,27 @@ Chromium installed-PWA fully-offline reopen E2E          PASS
 Chromium durable EPUB/PDF cover extraction E2E           PASS
 Chromium OPFS storage and legacy Blob migration E2E      PASS
 Chromium/Firefox/WebKit storage persistence/quota E2E     PASS (3/3)
-Chromium/Firefox/WebKit remote-sync dormancy E2E          PASS (3/3)
+Chromium/Firefox/WebKit storage/remote-sync dormancy E2E  PASS (6/6)
 Chromium/Firefox/WebKit storage Settings WCAG E2E         PASS (3/3)
-Chromium/Firefox/WebKit backup/device-progress restore E2E PASS (3/3)
+Chromium/Firefox/WebKit removal/backup/progress restore E2E PASS (3/3)
+Chromium/Firefox/WebKit removal-dialog WCAG E2E            PASS (3/3)
 Chromium deterministic reader Escape handling E2E         PASS
 Chromium fixed-layout/RTL/link-policy EPUB E2E            PASS
 Chromium WCAG A/AA library/settings/PDF/EPUB E2E           PASS (4/4)
-Chromium/Firefox/WebKit library search/sort/view E2E       PASS (3/3)
+Chromium/Firefox/WebKit library search/sort/status/view E2E PASS (3/3)
 Chromium/Firefox/WebKit library progress/resume E2E        PASS (3/3)
 Chromium/Firefox/WebKit populated progress grid/list WCAG  PASS (3/3)
 Chromium large-publication performance/memory/backup E2E   PASS (3/3)
-Chromium/Firefox/WebKit active web E2E matrix              PASS (16/16 each)
-Chromium/Firefox/WebKit Git/LFS PDF convergence E2E        PASS (3/3)
-Chromium/Firefox/WebKit MEGA EPUB convergence E2E          PASS (3/3)
-Firefox repeated PDF/EPUB full-state sync gate             PASS (3/3 each)
+Chromium/Firefox/WebKit active local web E2E matrix        PASS (59 active; 34 opt-in skipped; 2 workers; 6.0m)
+Chromium/Firefox/WebKit Git/LFS PDF convergence E2E        DEFERRED (REMOTE_SYNC_E2E=1)
+Chromium/Firefox/WebKit MEGA EPUB convergence E2E          DEFERRED (REMOTE_SYNC_E2E=1)
+Firefox repeated PDF/EPUB full-state sync gate             DEFERRED
 Git interrupted upload and optimistic 409 browser retry    PASS
 Chromium/Firefox/WebKit PDF forms/links/encryption/recovery PASS
+Chromium/Firefox/WebKit reader modal focus/isolation E2E   PASS (6/6)
+Chromium/Firefox/WebKit reader side-panel focus/isolation   PASS (6/6)
+Chromium/Firefox/WebKit reader side-panel WCAG E2E          PASS (6/6)
+Chromium/Firefox/WebKit PDF reader-dialog WCAG E2E         PASS (3/3)
 Chromium/Firefox/WebKit quarantine export and WCAG E2E     PASS
 Chromium/Firefox/WebKit hostile EPUB no-script/network E2E PASS
 Chromium/Firefox/WebKit production security headers        PASS
@@ -378,8 +426,12 @@ The following release requirements remain open:
   virtualized 180-page publication. Representative real-world very large,
   complex-form, and unusual-encryption publications remain release
   requirements.
-- Extend the implemented fixed-layout, RTL, internal-link, and external-link
-  compatibility corpus with representative real-world publications.
+- Reflowable long-form, embedded-font, RTL, mixed fixed-layout, authored
+  vertical-scrolling, and legacy EPUB 2/NCX representative coverage is
+  implemented. Deterministic malformed-archive coverage proves readable errors,
+  complete rollback, and clean browser consoles. Add broader unusual and
+  independently authored malformed samples without making the deterministic
+  default matrix network-dependent.
 - Packaged desktop, Android emulator, and physical-device compatibility gates
   plus the remaining manual assistive-technology, security, performance, and
   release audits.
@@ -534,7 +586,7 @@ Application routes:
 /library
 /reader/:bookId
 /settings
-/settings/sync
+/settings/sync (deferred; redirects to /settings)
 ```
 
 The EPUB and PDF libraries must be loaded only when their respective formats
@@ -854,6 +906,7 @@ Library milestone:
 
 - Grid and list views.
 - Recent books.
+- Search, sorting, and durable reading-status filters.
 - Cover and metadata display.
 - Duplicate detection.
 - Import, remove, export, and restore.
@@ -988,6 +1041,11 @@ termination.
 
 ### Phase 3: Full library synchronization
 
+Current delivery state: deferred. The implementation and opt-in simulated
+provider tests below are preserved, but none of this phase is registered by the
+active Angular build until authentication and credential management return to
+scope.
+
 - Implemented: operation journal and deterministic progress merge rules.
 - Implemented: canonical root schema/features manifest initialization,
   validation, optimistic conflict retry, and fail-closed coordination before
@@ -1084,9 +1142,19 @@ Exit gate: signed release candidates pass the full cross-platform test matrix.
   opens a generated 180-page PDF and 80-chapter EPUB, verifies arrow/button
   navigation, bounds live PDF canvases and EPUB frames, enforces import/open
   and main-thread long-task budgets, proves reader DOM teardown, and limits
-  post-GC retained heap growth through the Chrome DevTools Protocol. Real
-  Android and representative real-publication profiling remain release
-  requirements.
+  post-GC retained heap growth through the Chrome DevTools Protocol. The
+  representative EPUB compatibility corpus, including a pinned Readium EPUB
+  2/NCX smoke test, is implemented across Chromium, Firefox, and WebKit.
+  Deterministic malformed EPUB import also proves user-readable recovery,
+  rollback, and console cleanliness. Performance profiling on those
+  publications and real Android remain release requirements.
+- Implemented: Playwright keeps CPU- and memory-heavy tests ordered within
+  their files. The active local gate runs Chromium and WebKit with four workers,
+  while CI scales across a browser-by-two-shard job matrix with one worker per
+  machine. Firefox automation is temporarily opt-in so app feature work remains
+  the priority. The dedicated PWA and large-publication performance gates remain
+  serialized in a separate Chromium job. The first hosted execution of this
+  sharded topology remains required.
 - Implemented: matching web and Tauri Content Security Policies plus a hostile
   EPUB corpus covering scripts, inline handlers, nested frames, refresh,
   forms, remote images, stylesheets, CSS imports, and CSS URLs. Unit and
@@ -1205,7 +1273,8 @@ Performance gates:
 
 Compatibility matrix:
 
-- Latest Chromium, Firefox, and WebKit Playwright targets.
+- Latest Chromium and WebKit Playwright targets; Firefox is temporarily
+  deferred.
 - Windows, macOS, and Linux Tauri builds.
 - At least one current physical Android device plus an emulator in CI.
 

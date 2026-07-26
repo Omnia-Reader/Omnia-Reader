@@ -70,7 +70,12 @@ describe('PublicationImportService', () => {
     const listener = vi.fn();
     service.onImported(listener);
 
-    await expect(service.importPublications([source])).resolves.toEqual([book]);
+    await expect(service.importPublications([source])).resolves.toEqual({
+      books: [book],
+      added: [book],
+      duplicates: [],
+      failures: [],
+    });
     expect(repository.importBook).toHaveBeenCalledWith(source);
     expect(enrichment.validateAndEnrich).toHaveBeenCalledWith(book);
     expect(journal.append).toHaveBeenCalledWith(
@@ -87,7 +92,26 @@ describe('PublicationImportService', () => {
     journal.append.mockRejectedValueOnce(new Error('offline'));
     const service = TestBed.inject(PublicationImportService);
 
-    await expect(service.importPublications([source])).resolves.toEqual([book]);
+    await expect(service.importPublications([source])).resolves.toEqual({
+      books: [book],
+      added: [book],
+      duplicates: [],
+      failures: [],
+    });
+  });
+
+  it('reports an exact-edition re-import as a duplicate', async () => {
+    repository.listBooks.mockResolvedValueOnce([book]);
+    const service = TestBed.inject(PublicationImportService);
+
+    await expect(service.importPublications([source])).resolves.toEqual({
+      books: [book],
+      added: [],
+      duplicates: [book],
+      failures: [],
+    });
+
+    expect(repository.removeBook).not.toHaveBeenCalled();
   });
 
   it('rolls back a newly stored publication when validation fails', async () => {
@@ -95,7 +119,17 @@ describe('PublicationImportService', () => {
     enrichment.validateAndEnrich.mockRejectedValueOnce(malformed);
     const service = TestBed.inject(PublicationImportService);
 
-    await expect(service.importPublications([source])).rejects.toBe(malformed);
+    await expect(service.importPublications([source])).resolves.toEqual({
+      books: [],
+      added: [],
+      duplicates: [],
+      failures: [
+        {
+          sourceName: 'book.pdf',
+          message: 'Invalid PDF structure',
+        },
+      ],
+    });
 
     expect(repository.removeBook).toHaveBeenCalledWith(book.id);
     expect(journal.append).not.toHaveBeenCalled();
@@ -108,11 +142,56 @@ describe('PublicationImportService', () => {
     );
     const service = TestBed.inject(PublicationImportService);
 
-    await expect(service.importPublications([source])).rejects.toThrow(
-      'Renderer temporarily unavailable',
-    );
+    await expect(service.importPublications([source])).resolves.toEqual({
+      books: [],
+      added: [],
+      duplicates: [],
+      failures: [
+        {
+          sourceName: 'book.pdf',
+          message: 'Renderer temporarily unavailable',
+        },
+      ],
+    });
 
     expect(repository.removeBook).not.toHaveBeenCalled();
     expect(journal.append).not.toHaveBeenCalled();
+  });
+
+  it('continues a mixed batch after one publication fails validation', async () => {
+    const secondSource: BookSource = {
+      ...source,
+      name: 'second.pdf',
+    };
+    const secondBook: BookRecord = {
+      ...book,
+      id: `sha256:${'b'.repeat(64)}`,
+      fileName: secondSource.name,
+      title: 'Second',
+    };
+    repository.importBook
+      .mockResolvedValueOnce(book)
+      .mockResolvedValueOnce(secondBook);
+    enrichment.validateAndEnrich
+      .mockRejectedValueOnce(new Error('Invalid PDF structure'))
+      .mockResolvedValueOnce(secondBook);
+    const service = TestBed.inject(PublicationImportService);
+
+    await expect(
+      service.importPublications([source, secondSource]),
+    ).resolves.toEqual({
+      books: [secondBook],
+      added: [secondBook],
+      duplicates: [],
+      failures: [
+        {
+          sourceName: 'book.pdf',
+          message: 'Invalid PDF structure',
+        },
+      ],
+    });
+
+    expect(repository.removeBook).toHaveBeenCalledWith(book.id);
+    expect(journal.append).toHaveBeenCalledTimes(1);
   });
 });

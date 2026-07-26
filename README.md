@@ -4,23 +4,36 @@ Omnia Reader is an offline-first EPUB and PDF reader built from one Angular
 application for the web/PWA, Tauri desktop, and Android.
 
 The current implementation includes an OPFS-first local library with a
-byte-backed IndexedDB fallback, incremental worker hashing, durable EPUB/PDF covers,
-the maintained `@likecoin/epub-ts` EPUB.js-compatible runtime and PDF.js reader
-engines, keyboard and button page navigation, exact resume locations, format
-preferences, fixed-layout and RTL EPUB support, NAV/NCX-relative table-of-contents
-navigation with numbered, initially collapsed sections and unnumbered
-front/back matter, safe internal links, consent-gated HTTP(S) links, durable
-bookmarks, highlights and notes, full-text search, versioned full-library backup
-archives, a local-first sync journal, PWA offline support, and narrow native
+byte-backed IndexedDB fallback, incremental worker hashing, durable EPUB/PDF
+covers, explicit duplicate and partial-import outcomes, the maintained
+`@likecoin/epub-ts` EPUB.js-compatible runtime and PDF.js reader engines,
+keyboard, wheel, and guarded touch navigation, exact resume locations,
+book-wide progress seeking, library reading-status filters, accessible
+recoverable local-book removal, immersive
+fullscreen reading, format preferences,
+fixed-layout and RTL EPUB support, NAV/NCX-relative table-of-contents navigation
+with numbered, initially collapsed sections and unnumbered front/back matter,
+safe internal links, consent-gated HTTP(S) links, durable bookmarks, highlights
+and notes, full-text search, versioned full-library backup archives, a
+preserved provider-neutral sync core, PWA offline support, and narrow native
 import, exact-edition deep-link, and external-link bridges.
 Backups stream directly to File System Access and native save destinations
 where supported, with cancellation and a compatible browser download fallback.
 Reader panels, desktop Escape, and Android hardware back share deterministic
 last-opened-first navigation behavior.
-The synchronization core journals books, progress, bookmark tombstones, and
-annotation tombstones, verifies immutable publication objects, automatically
-retries after local and lifecycle changes, and has client contracts for
-Git/Git LFS and MEGA gateways.
+Each reader side panel moves focus to its first useful surface, has an explicit
+close control, restores the corresponding toolbar trigger when dismissed, and
+returns focus to the publication after navigation. Page arrows, wheel, and
+swipe gestures are isolated while a panel is open.
+Reader-owned password, external-link consent, and annotation dialogs contain
+keyboard focus, start on the safest useful control, restore focus when closed,
+and prevent page-navigation shortcuts from acting behind modal consent.
+The synchronization core journals books, progress, bookmark
+tombstones, and annotation tombstones, verify immutable publication objects,
+and communicate with Git/Git LFS and MEGA gateways. The Angular app exposes
+the sync route, durable operation journal, and automatic scheduler. GitHub uses
+a state-bound GitHub App login with encrypted server-side sessions; users can
+select an existing private repository or create one from the settings flow.
 See the
 [universal reader development plan](docs/universal-reader-plan.md) for the
 architecture, verified status, and remaining release work. Release candidates
@@ -39,8 +52,8 @@ npm start
 
 The development application is served at <http://localhost:4300>.
 
-The app remains fully usable without a sync server. To run the Angular app and
-the local gateway boundary together:
+Offline reading needs no sync server. GitHub synchronization is available
+through the isolated same-origin gateway, which can be started with:
 
 ```sh
 npm run start:full
@@ -51,12 +64,30 @@ The gateway listens on `127.0.0.1:3333`; the Angular development server proxies
 documented environment variables are present and otherwise fail closed. MEGA
 uses a private service built with the official SDK; its deployment boundary is
 specified in [the MEGA SDK bridge contract](docs/mega-sdk-bridge.md).
-Git/LFS and MEGA buttons expect the same-origin endpoints documented in
+The provider clients use the same-origin endpoints documented in
 [the sync gateway contract](docs/sync-gateway-api.md). Provider credentials
 stay in that gateway; they are never stored by the Angular app. Development
 uses an encrypted in-memory session store. Multi-replica deployments can use
 the documented Redis store with atomic session rotation, TTL expiry, and
 rolling AES key rotation.
+
+The default browser E2E matrix covers GitHub repository onboarding. The longer
+two-device Git/LFS and MEGA convergence journeys remain opt-in:
+
+```sh
+REMOTE_SYNC_E2E=1 npx nx run omnia-reader-e2e:e2e -- src/sync.spec.ts
+```
+
+The opt-in
+[representative publication corpus](docs/representative-publication-corpus.md)
+downloads hash-pinned W3C/IDPF EPUB samples and checks long-form embedded-font
+rendering, search, and authored RTL navigation in Chromium and WebKit:
+
+```sh
+REPRESENTATIVE_PUBLICATIONS_E2E=1 npx playwright test \
+  --config apps/omnia-reader-e2e/playwright.config.ts \
+  apps/omnia-reader-e2e/src/representative-publications.spec.ts
+```
 
 The pinned native bridge source is an Nx project. After installing the MEGA
 SDK's documented native dependencies, build it with:
@@ -83,8 +114,15 @@ is intentionally not a supported exposure model.
 Useful verification commands:
 
 ```sh
-npx nx run-many -t test --all --skip-nx-cache
-npx nx run-many -t lint --all --skip-nx-cache
+npx nx test omnia-reader
+npx nx test reader-domain
+npx nx test reader-core
+npx nx test reader-epub
+npx nx test reader-pdf
+npx nx test library-data-access
+npx nx test platform
+npx nx lint omnia-reader
+npx nx lint omnia-reader-e2e
 npx nx build omnia-reader --configuration production
 npx nx run omnia-reader-e2e:e2e -- --project=chromium
 npm run performance:e2e
@@ -93,6 +131,11 @@ npm run native:e2e
 npm run release:test
 npm run release:verify
 ```
+
+The workspace-wide test aggregate currently enters a recursive Nx invocation
+through the deferred `mega-sdk-bridge:configure-core` target. Use the explicit
+local-reader commands above until provider/native task orchestration returns to
+scope.
 
 The release verifier rebuilds the production web app and gateway, checks the
 shared `0.1.0` version, production dependency vulnerabilities, reviewed
@@ -120,8 +163,10 @@ platform signing identities and explicit release approval.
 
 ## Web deployment
 
-Deploy the built PWA and `/api/sync` gateway behind the same HTTPS origin. The
-required browser security policy is exported from
+Deploy the built local-reader PWA behind HTTPS; it does not require the
+`/api/sync` gateway. If remote providers are re-enabled later, deploy their
+gateway behind the same origin. The required browser security policy is
+exported from
 `tools/web-security-headers.mjs`; the production-like Playwright server applies
 it and the cross-browser suite verifies it. Configure the same headers at the
 real CDN or reverse proxy and add HTTP Strict Transport Security at the TLS

@@ -1,4 +1,5 @@
 import { Route } from '@angular/router';
+import { REMOTE_SYNC_ENABLED } from './app-capabilities';
 
 export const appRoutes: Route[] = [
   {
@@ -27,13 +28,23 @@ export const appRoutes: Route[] = [
         (module) => module.SettingsPageComponent,
       ),
   },
-  {
-    path: 'settings/sync',
-    loadComponent: () =>
-      import('./features/settings/sync-settings-page.component').then(
-        (module) => module.SyncSettingsPageComponent,
-      ),
-  },
+  ...(REMOTE_SYNC_ENABLED
+    ? [
+        {
+          path: 'settings/sync',
+          loadComponent: () =>
+            import('./features/settings/sync-settings-page.component').then(
+              (module) => module.SyncSettingsPageComponent,
+            ),
+        },
+      ]
+    : [
+        {
+          path: 'settings/sync',
+          pathMatch: 'full' as const,
+          redirectTo: 'settings',
+        },
+      ]),
   {
     path: 'viewer',
     redirectTo: 'library',

@@ -1,6 +1,9 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { createMalformedPdfFixture } from './publication-fixtures';
+import {
+  createMalformedEpubFixture,
+  createMalformedPdfFixture,
+} from './publication-fixtures';
 
 const browserFailures = new WeakMap<
   import('@playwright/test').Page,
@@ -40,6 +43,34 @@ test('rejects a malformed PDF without retaining an unusable library entry', asyn
   });
 
   await expect(page.getByRole('alert')).toContainText(/invalid pdf/i);
+  await expect(
+    page.getByText('broken-publication', { exact: true }),
+  ).toHaveCount(0);
+
+  await page.reload();
+  await expect(
+    page.getByRole('heading', { name: 'Library', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('broken-publication', { exact: true }),
+  ).toHaveCount(0);
+});
+
+test('rejects a malformed EPUB without retaining an unusable library entry', async ({
+  page,
+}) => {
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Import books' }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    name: 'broken-publication.epub',
+    mimeType: 'application/epub+zip',
+    buffer: await createMalformedEpubFixture(),
+  });
+
+  await expect(page.getByRole('alert')).toContainText(
+    /this epub is damaged or unsupported/i,
+  );
   await expect(
     page.getByText('broken-publication', { exact: true }),
   ).toHaveCount(0);

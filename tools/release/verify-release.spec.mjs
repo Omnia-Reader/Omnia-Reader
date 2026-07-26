@@ -170,6 +170,23 @@ test('the HTTP CSP preserves the application HTML fallback policy', async () => 
     /frame-ancestors 'none'/,
   );
   assert.doesNotMatch(WEB_CONTENT_SECURITY_POLICY, /frame-ancestors/);
+  assert.match(
+    WEB_CONTENT_SECURITY_POLICY,
+    /font-src 'self' data: blob:/,
+    'Embedded EPUB fonts require local blob URLs without allowing remote font origins',
+  );
+
+  const tauriConfig = JSON.parse(
+    await readFile(
+      new URL('../../src-tauri/tauri.conf.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  assert.match(
+    tauriConfig.app.security.csp,
+    /font-src 'self' data: blob:/,
+    'Tauri must preserve embedded EPUB font rendering',
+  );
 });
 
 test('Rust CycloneDX output contains a deterministic dependency graph', () => {

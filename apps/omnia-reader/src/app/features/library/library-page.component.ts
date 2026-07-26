@@ -8,15 +8,19 @@ import {
 } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { RouterLink } from '@angular/router';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { BookRecord } from '@omnia-reader/reader/domain';
+import { firstValueFrom } from 'rxjs';
 import {
   bookActivityTimestamp as activityTimestamp,
+  isLibraryReadingStatus,
   isLibrarySortMode,
   LibraryBookProgressSummary,
+  LibraryReadingStatus,
   LibrarySortMode,
   LibraryViewMode,
   loadLibraryViewPreferences,
@@ -26,13 +30,24 @@ import {
 } from './library-view';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 import { PublicationExportService } from './publication-export.service';
-import { PublicationImportService } from './publication-import.service';
+import {
+  describePublicationImportFailures,
+  PublicationImportResult,
+  PublicationImportService,
+} from './publication-import.service';
+import { RemovePublicationDialogComponent } from './remove-publication-dialog.component';
 
 @Component({
   selector: 'omnia-library-page',
   templateUrl: './library-page.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DatePipe, MatButtonModule, MatIconModule, RouterLink],
+  imports: [
+    DatePipe,
+    MatButtonModule,
+    MatDialogModule,
+    MatIconModule,
+    RouterLink,
+  ],
 })
 export class LibraryPageComponent implements OnInit, OnDestroy {
   private readonly repository = inject(LIBRARY_REPOSITORY);
@@ -41,6 +56,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   private readonly publicationImports = inject(PublicationImportService);
   private readonly enrichment = inject(PublicationEnrichmentService);
   private readonly exporter = inject(PublicationExportService);
+  private readonly dialog = inject(MatDialog);
   private readonly initialViewPreferences = loadLibraryViewPreferences();
   private removeImportListener: (() => void) | null = null;
   private readonly enrichmentInFlight = new Set<string>();
@@ -52,12 +68,14 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   progressSummaries: ReadonlyMap<string, LibraryBookProgressSummary> =
     new Map();
   searchQuery = '';
+  readingStatus: LibraryReadingStatus = 'all';
   sortMode: LibrarySortMode = this.initialViewPreferences.sortMode;
   viewMode: LibraryViewMode = this.initialViewPreferences.viewMode;
   resultSummary = '0 books';
   loading = true;
   importing = false;
   exportingBookId: string | null = null;
+  removingBookId: string | null = null;
   errorMessage: string | null = null;
   statusMessage: string | null = null;
 
@@ -77,12 +95,15 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   async importBooks(): Promise<void> {
     this.importing = true;
     this.errorMessage = null;
+    this.statusMessage = null;
     this.changeDetector.markForCheck();
 
     try {
       const sources = await this.platform.pickPublications();
-      await this.publicationImports.importPublications(sources);
+      const result = await this.publicationImports.importPublications(sources);
       await this.reload();
+      this.statusMessage = importStatusMessage(result);
+      this.errorMessage = describePublicationImportFailures(result);
     } catch (error) {
       this.errorMessage =
         error instanceof Error ? error.message : 'The import failed';
@@ -99,6 +120,21 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
 
   clearSearch(): void {
     this.searchQuery = '';
+    this.updateDisplayedBooks();
+  }
+
+  clearFilters(): void {
+    this.searchQuery = '';
+    this.readingStatus = 'all';
+    this.updateDisplayedBooks();
+  }
+
+  updateReadingStatus(event: Event): void {
+    const value = (event.target as HTMLSelectElement).value;
+    if (!isLibraryReadingStatus(value)) {
+      return;
+    }
+    this.readingStatus = value;
     this.updateDisplayedBooks();
   }
 
@@ -120,13 +156,29 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     this.persistViewPreferences();
   }
 
-  async removeBook(book: BookRecord): Promise<void> {
-    if (!window.confirm(`Remove "${book.title}" from this device?`)) {
+  async requestBookRemoval(book: BookRecord): Promise<void> {
+    if (this.exportingBookId || this.removingBookId) {
       return;
     }
 
-    await this.repository.removeBook(book.id);
-    await this.reload();
+    const confirmed = await firstValueFrom(
+      this.dialog
+        .open<RemovePublicationDialogComponent, BookRecord, boolean>(
+          RemovePublicationDialogComponent,
+          {
+            data: book,
+            autoFocus: 'first-tabbable',
+            restoreFocus: true,
+            width: 'min(32rem, calc(100vw - 2rem))',
+          },
+        )
+        .afterClosed(),
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await this.removeBook(book);
   }
 
   async exportBook(book: BookRecord): Promise<void> {
@@ -201,7 +253,6 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         return;
       }
       this.books = books;
-      this.updateDisplayedBooks();
       this.replaceCoverUrls(covers);
       const bookIds = new Set(books.map((book) => book.id));
       this.progressSummaries = new Map(
@@ -212,6 +263,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
               [progress.bookId, summarizeReadingProgress(progress)] as const,
           ),
       );
+      this.updateDisplayedBooks();
       this.scheduleEnrichment(
         books,
         new Set(
@@ -224,6 +276,27 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         error instanceof Error ? error.message : 'Unable to load the library';
     } finally {
       this.loading = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  private async removeBook(book: BookRecord): Promise<void> {
+    this.removingBookId = book.id;
+    this.errorMessage = null;
+    this.statusMessage = null;
+    this.changeDetector.markForCheck();
+    try {
+      await this.repository.removeBook(book.id);
+      await this.reload();
+      if (!this.errorMessage) {
+        this.statusMessage = `“${book.title}” removed from this device.`;
+      }
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : 'Unknown storage error';
+      this.errorMessage = `Unable to remove “${book.title}”: ${detail}`;
+    } finally {
+      this.removingBookId = null;
       this.changeDetector.markForCheck();
     }
   }
@@ -272,12 +345,15 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
       this.books,
       this.searchQuery,
       this.sortMode,
+      this.readingStatus,
+      this.progressSummaries,
     );
     const total = this.books.length;
     const shown = this.displayedBooks.length;
-    this.resultSummary = this.searchQuery.trim()
-      ? `Showing ${shown} of ${total} ${total === 1 ? 'book' : 'books'}`
-      : `${total} ${total === 1 ? 'book' : 'books'}`;
+    this.resultSummary =
+      this.searchQuery.trim() || this.readingStatus !== 'all'
+        ? `Showing ${shown} of ${total} ${total === 1 ? 'book' : 'books'}`
+        : `${total} ${total === 1 ? 'book' : 'books'}`;
     this.changeDetector.markForCheck();
   }
 
@@ -319,4 +395,27 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     }
     this.coverUrls = new Map();
   }
+}
+
+function importStatusMessage(result: PublicationImportResult): string | null {
+  const added = result.added.length;
+  const duplicates = result.duplicates.length;
+  if (added === 0 && duplicates === 0) {
+    return null;
+  }
+  if (added === 1 && duplicates === 0) {
+    return `“${result.added[0].title}” added to your library.`;
+  }
+  if (added === 0 && duplicates === 1) {
+    return `“${result.duplicates[0].title}” is already in your library.`;
+  }
+  if (duplicates === 0) {
+    return `${added} books added to your library.`;
+  }
+  if (added === 0) {
+    return `${duplicates} selected books are already in your library.`;
+  }
+  return `${added} ${added === 1 ? 'book' : 'books'} added; ${duplicates} ${
+    duplicates === 1 ? 'is' : 'are'
+  } already in your library.`;
 }

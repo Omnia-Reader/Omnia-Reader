@@ -6,6 +6,25 @@
   <section class="grid gap-5">
     <mat-card class="grid gap-5 p-5" appearance="outlined">
       <div class="grid grid-cols-[auto_1fr] items-start gap-5">
+        <mat-icon>sync</mat-icon>
+        <div>
+          <h2 class="m-0 text-xl font-semibold">Cross-device library sync</h2>
+          <p class="mt-1 mb-0 text-stone-600">
+            Connect GitHub, choose or create a private repository, and
+            synchronize publication files with reading progress. Authentication
+            tokens remain encrypted in the sync gateway.
+          </p>
+        </div>
+      </div>
+      <div class="pl-11">
+        <a mat-flat-button routerLink="/settings/sync">
+          Configure library sync
+        </a>
+      </div>
+    </mat-card>
+
+    <mat-card class="grid gap-5 p-5" appearance="outlined">
+      <div class="grid grid-cols-[auto_1fr] items-start gap-5">
         <mat-icon>storage</mat-icon>
         <div>
           <h2 class="m-0 text-xl font-semibold">Offline library storage</h2>

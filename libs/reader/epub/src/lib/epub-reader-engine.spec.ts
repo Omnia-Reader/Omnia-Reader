@@ -56,6 +56,7 @@ describe('EpubReaderEngine annotations', () => {
       },
       themes: {
         registerRules: vi.fn(),
+        registerCss: vi.fn(),
         select: vi.fn(),
       },
       flow: vi.fn(),
@@ -94,7 +95,6 @@ describe('EpubReaderEngine annotations', () => {
           default: () => book,
         }) as unknown as typeof import('@likecoin/epub-ts'),
     );
-
     await engine.open(source());
     const viewport = globalThis.document.createElement('div');
     globalThis.document.body.append(viewport);
@@ -170,7 +170,9 @@ describe('EpubReaderEngine annotations', () => {
     );
     expect(unsafeDocument.querySelector('style')).toBeNull();
     const navigation: string[] = [];
+    const zoom: string[] = [];
     engine.onNavigationRequested((direction) => navigation.push(direction));
+    engine.onZoomRequested((direction) => zoom.push(direction));
     const renderedContents = {
       window: globalThis.window,
       document: globalThis.document,
@@ -194,6 +196,24 @@ describe('EpubReaderEngine annotations', () => {
     globalThis.document.dispatchEvent(wheelDown);
     expect(navigation).toEqual(['next', 'previous', 'next', 'next']);
     expect(wheelDown.defaultPrevented).toBe(true);
+    const zoomIn = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    globalThis.document.dispatchEvent(zoomIn);
+    const zoomOut = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: 120,
+    });
+    globalThis.document.dispatchEvent(zoomOut);
+    expect(zoom).toEqual(['in', 'out']);
+    expect(zoomIn.defaultPrevented).toBe(true);
+    expect(zoomOut.defaultPrevented).toBe(true);
+    expect(navigation).toEqual(['next', 'previous', 'next', 'next']);
     dispatchTouchPointer(globalThis.document.body, 'pointerdown', {
       clientX: 180,
       clientY: 80,
@@ -368,6 +388,199 @@ describe('EpubReaderEngine annotations', () => {
   });
 });
 
+describe('EpubReaderEngine mixed-layout compatibility', () => {
+  it('switches item-level fixed layouts on relocated spine boundaries', async () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const layout = vi.fn();
+    const selectTheme = vi.fn();
+    const registerCss = vi.fn();
+    const contentDocument =
+      globalThis.document.implementation.createHTMLDocument('Mixed layout');
+    const contents = {
+      document: contentDocument,
+      sectionIndex: 0,
+    } as unknown as Contents;
+    const sections = [
+      {
+        index: 0,
+        href: 'text.xhtml',
+        properties: [],
+      },
+      {
+        index: 1,
+        href: 'painting.xhtml',
+        properties: [
+          'rendition:flow-paginated',
+          'rendition:layout-pre-paginated',
+          'rendition:orientation-landscape',
+          'rendition:spread-none',
+        ],
+      },
+      {
+        index: 2,
+        href: 'next-text.xhtml',
+        properties: [],
+      },
+    ] as Section[];
+    sections[0].next = () => sections[1];
+    sections[1].prev = () => sections[0];
+    sections[1].next = () => sections[2];
+    sections[2].prev = () => sections[1];
+
+    const locationState: { current: unknown } = { current: undefined };
+    const renditionSettings = {
+      flow: 'scrolled-doc',
+      globalLayoutProperties: {
+        layout: 'reflowable',
+        spread: 'auto',
+        orientation: 'auto',
+        flow: 'scrolled-doc',
+        viewport: '',
+        minSpreadWidth: 800,
+        direction: 'ltr',
+      },
+    };
+    const flow = vi.fn((value: string) => {
+      renditionSettings.flow = value;
+      renditionSettings.globalLayoutProperties.flow = value;
+    });
+    const rendition = {
+      settings: renditionSettings,
+      on: vi.fn((name: string, listener: (...args: unknown[]) => void) =>
+        listeners.set(name, listener),
+      ),
+      off: vi.fn((name: string) => listeners.delete(name)),
+      display: vi.fn().mockResolvedValue(undefined),
+      next: vi.fn().mockResolvedValue(undefined),
+      currentLocation: vi.fn(() => locationState.current),
+      annotations: { highlight: vi.fn(), remove: vi.fn() },
+      getContents: vi.fn(() => [contents]),
+      hooks: { content: { register: vi.fn() } },
+      themes: { registerRules: vi.fn(), registerCss, select: selectTheme },
+      direction: vi.fn(),
+      flow,
+      spread: vi.fn(),
+      layout,
+      reportLocation: vi.fn().mockResolvedValue(undefined),
+      _disconnectContainerObserver: vi.fn(),
+      destroy: vi.fn(),
+    } as unknown as Rendition;
+    const renderTo = vi.fn(() => rendition);
+    const spine = {
+      get: vi.fn((target?: string | number) => {
+        if (target === undefined) {
+          return sections[0];
+        }
+        if (typeof target === 'number') {
+          return sections[target] ?? null;
+        }
+        const href = target.split('#', 1)[0];
+        return sections.find((section) => section.href === href) ?? null;
+      }),
+      hooks: { content: { register: vi.fn() } },
+    };
+    const book = {
+      loaded: {
+        metadata: Promise.resolve({
+          title: 'Mixed layout fixture',
+          creator: 'Reader',
+          direction: 'ltr',
+          flow: 'scrolled-doc',
+        }),
+        navigation: Promise.resolve({ toc: [] }),
+      },
+      ready: Promise.resolve(),
+      spine,
+      renderTo,
+      coverUrl: vi.fn().mockResolvedValue(null),
+      destroy: vi.fn(),
+    } as unknown as Book;
+    const engine = new EpubReaderEngine(
+      async () =>
+        ({
+          default: () => book,
+        }) as unknown as typeof import('@likecoin/epub-ts'),
+    );
+    const relocations: string[] = [];
+    engine.onRelocated((locator) => relocations.push(locator.href));
+
+    await engine.open(source());
+    const viewport = globalThis.document.createElement('div');
+    globalThis.document.body.append(viewport);
+    await engine.mount(viewport);
+    expect(viewport.dataset['currentSectionLayout']).toBe('reflowable');
+    expect(viewport.dataset['currentSectionFlow']).toBe('scrolled');
+    expect(renderTo).toHaveBeenCalledWith(
+      viewport,
+      expect.objectContaining({ flow: 'scrolled-doc' }),
+    );
+    expect(engine.pageStatus()).toBeNull();
+    expect(
+      contentDocument.getElementById('epubjs-inserted-css-omnia-reader'),
+    ).not.toBeNull();
+
+    locationState.current = sectionLocation(1, 'painting.xhtml');
+    contents.sectionIndex = 1;
+    expect(engine.currentLocator()?.href).toBe('painting.xhtml');
+    listeners.get('relocated')?.(locationState.current);
+    expect(relocations).toEqual(['painting.xhtml']);
+    await vi.waitFor(() =>
+      expect(viewport.dataset['currentSectionLayout']).toBe('pre-paginated'),
+    );
+    expect(viewport.dataset['currentSectionFlow']).toBe('paginated');
+    expect(rendition.flow).toHaveBeenLastCalledWith('paginated');
+    expect(selectTheme).toHaveBeenLastCalledWith('default');
+    expect(
+      contentDocument.getElementById('epubjs-inserted-css-omnia-reader'),
+    ).toBeNull();
+    expect(layout).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        layout: 'pre-paginated',
+        spread: 'none',
+        orientation: 'landscape',
+      }),
+    );
+
+    contents.sectionIndex = 2;
+    await engine.next();
+    expect(engine.currentLocator()).toMatchObject({
+      href: 'next-text.xhtml',
+      locations: { position: 3 },
+    });
+    expect(relocations).toEqual(['painting.xhtml', 'next-text.xhtml']);
+    await vi.waitFor(() =>
+      expect(viewport.dataset['currentSectionLayout']).toBe('reflowable'),
+    );
+    expect(viewport.dataset['currentSectionFlow']).toBe('scrolled');
+    expect(rendition.flow).toHaveBeenLastCalledWith('scrolled-doc');
+    expect(selectTheme).toHaveBeenLastCalledWith('omnia-reader');
+    expect(
+      contentDocument.getElementById('epubjs-inserted-css-omnia-reader'),
+    ).not.toBeNull();
+    expect(registerCss).toHaveBeenCalled();
+    expect(layout).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        layout: 'reflowable',
+        spread: 'auto',
+        orientation: 'auto',
+      }),
+    );
+
+    await engine.applyPreferences({
+      ...DEFAULT_EPUB_READER_PREFERENCES,
+      flow: 'paginated',
+    });
+    expect(viewport.dataset['currentSectionFlow']).toBe('paginated');
+    expect(rendition.flow).toHaveBeenLastCalledWith('paginated');
+    await engine.applyPreferences(DEFAULT_EPUB_READER_PREFERENCES);
+    expect(viewport.dataset['currentSectionFlow']).toBe('scrolled');
+    expect(rendition.flow).toHaveBeenLastCalledWith('scrolled-doc');
+
+    await engine.close();
+    viewport.remove();
+  });
+});
+
 describe('EpubReaderEngine publication compatibility', () => {
   it('preserves fixed layout, follows RTL keys, and mediates external links', async () => {
     let attachContent: ((contents: Contents) => void) | undefined;
@@ -375,9 +588,12 @@ describe('EpubReaderEngine publication compatibility', () => {
     const reportedLocation: { current: unknown } = { current: undefined };
     const direction = vi.fn();
     const registerRules = vi.fn();
+    const registerCss = vi.fn();
     const selectTheme = vi.fn();
     const reportLocation = vi.fn(async () => {
-      locationState.current = reportedLocation.current;
+      requestAnimationFrame(() => {
+        locationState.current = reportedLocation.current;
+      });
     });
     const rendition = {
       on: vi.fn(),
@@ -395,6 +611,7 @@ describe('EpubReaderEngine publication compatibility', () => {
       },
       themes: {
         registerRules,
+        registerCss,
         select: selectTheme,
       },
       direction,
@@ -494,6 +711,7 @@ describe('EpubReaderEngine publication compatibility', () => {
     expect(viewport.dir).toBe('rtl');
     expect(direction).toHaveBeenCalledWith('rtl');
     expect(registerRules).not.toHaveBeenCalled();
+    expect(registerCss).not.toHaveBeenCalled();
     expect(selectTheme).not.toHaveBeenCalled();
 
     const chapter =
@@ -589,7 +807,11 @@ describe('EpubReaderEngine table of contents navigation', () => {
       annotations: { highlight: vi.fn(), remove: vi.fn() },
       getContents: vi.fn(() => []),
       hooks: { content: { register: vi.fn() } },
-      themes: { registerRules: vi.fn(), select: vi.fn() },
+      themes: {
+        registerRules: vi.fn(),
+        registerCss: vi.fn(),
+        select: vi.fn(),
+      },
       direction: vi.fn(),
       reportLocation: vi.fn().mockResolvedValue(undefined),
       _disconnectContainerObserver: vi.fn(),
@@ -732,6 +954,93 @@ describe('EpubReaderEngine table of contents navigation', () => {
   });
 });
 
+describe('EpubReaderEngine resource readiness', () => {
+  it('resets a partially opened book and reports a readable EPUB error', async () => {
+    const parsingError = new Error('Missing package document');
+    const destroy = vi.fn();
+    const book = {
+      loaded: {
+        metadata: Promise.reject(parsingError),
+        navigation: Promise.resolve({ toc: [] }),
+      },
+      ready: Promise.resolve(),
+      spine: {
+        hooks: {
+          content: {
+            register: vi.fn(),
+          },
+        },
+      },
+      destroy,
+    } as unknown as Book;
+    const engine = new EpubReaderEngine(
+      async () =>
+        ({
+          default: () => book,
+        }) as unknown as typeof import('@likecoin/epub-ts'),
+    );
+
+    await expect(engine.open(source())).rejects.toMatchObject({
+      message:
+        'This EPUB is damaged or unsupported. Verify the file in another reader or import a repaired copy.',
+      cause: parsingError,
+    });
+    expect(destroy).toHaveBeenCalledOnce();
+    await expect(
+      engine.mount(globalThis.document.createElement('div')),
+    ).rejects.toThrow('Open an EPUB before mounting its reader');
+  });
+
+  it('waits for archived CSS and font replacements before opening', async () => {
+    let resolveReplacements: (() => void) | undefined;
+    const replacementsReady = new Promise<void>((resolve) => {
+      resolveReplacements = resolve;
+    });
+    const book = {
+      loaded: {
+        metadata: Promise.resolve({
+          title: 'Embedded font fixture',
+          creator: 'Reader',
+          direction: 'ltr',
+        }),
+        navigation: Promise.resolve({ toc: [] }),
+      },
+      ready: Promise.resolve(),
+      replacementsReady,
+      spine: {
+        hooks: {
+          content: {
+            register: vi.fn(),
+          },
+        },
+      },
+      coverUrl: vi.fn().mockResolvedValue(null),
+      destroy: vi.fn(),
+    } as unknown as Book;
+    const engine = new EpubReaderEngine(
+      async () =>
+        ({
+          default: () => book,
+        }) as unknown as typeof import('@likecoin/epub-ts'),
+    );
+
+    const opening = engine.open(source());
+    const earlyResult = await Promise.race([
+      opening.then(() => 'opened'),
+      new Promise<'waiting'>((resolve) =>
+        setTimeout(() => resolve('waiting'), 0),
+      ),
+    ]);
+
+    expect(earlyResult).toBe('waiting');
+    resolveReplacements?.();
+    await expect(opening).resolves.toMatchObject({
+      title: 'Embedded font fixture',
+    });
+    await engine.close();
+  });
+});
+
 function source(): BookSource {
   return {
     name: 'fixture.epub',
@@ -749,6 +1058,23 @@ function fallbackLocator() {
       fragments: ['epubcfi(/6/2!/4/2,/1:7,/1:25)'],
     },
     text: { highlight: 'selected quotation' },
+  };
+}
+
+function sectionLocation(index: number, href: string) {
+  return {
+    start: {
+      index,
+      href,
+      cfi: `epubcfi(/6/${index * 2 + 2}!/4/2)`,
+      displayed: { page: 1, total: 1 },
+    },
+    end: {
+      index,
+      href,
+      cfi: `epubcfi(/6/${index * 2 + 2}!/4/4)`,
+      displayed: { page: 1, total: 1 },
+    },
   };
 }
 

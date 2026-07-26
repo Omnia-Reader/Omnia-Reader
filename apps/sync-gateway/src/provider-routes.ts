@@ -7,6 +7,7 @@ import {
   type SyncGatewayAdapter,
   type SyncProviderKind,
   supportsCredentialAuthorization,
+  supportsDestinationCreation,
 } from './gateway-contract.js';
 import {
   logicalSyncPath,
@@ -170,6 +171,15 @@ export async function registerProviderRoutes(
     const sessionId = session(request, reply, cookieName, options);
     return options.adapter.selectDestination(sessionId, request.body);
   });
+
+  if (supportsDestinationCreation(options.adapter)) {
+    const destinationAdapter = options.adapter;
+    app.post(names.selectionPath, async (request, reply) => {
+      requireSameOriginMutation(request);
+      const sessionId = session(request, reply, cookieName, options);
+      return destinationAdapter.createDestination(sessionId, request.body);
+    });
+  }
 
   app.get<{ Querystring: { prefix?: string } }>(
     names.documentListPath,

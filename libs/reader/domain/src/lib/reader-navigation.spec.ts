@@ -6,6 +6,7 @@ import {
   touchEventNavigationDirection,
   touchNavigationDirection,
   wheelNavigationDirection,
+  wheelZoomDirection,
 } from './reader-navigation';
 
 describe('keyboardNavigationDirection', () => {
@@ -69,6 +70,41 @@ describe('wheelNavigationDirection', () => {
     ).toBeNull();
     expect(
       wheelDirection(120, 0, document.createElement('textarea')),
+    ).toBeNull();
+  });
+});
+
+describe('wheelZoomDirection', () => {
+  it('maps Ctrl with vertical wheel movement to conventional zoom direction', () => {
+    expect(wheelZoomDirection({ ...wheelEvent(-120), ctrlKey: true })).toBe(
+      'in',
+    );
+    expect(wheelZoomDirection({ ...wheelEvent(120), ctrlKey: true })).toBe(
+      'out',
+    );
+  });
+
+  it('does not intercept unmodified, horizontal, handled, or editing input', () => {
+    expect(wheelZoomDirection(wheelEvent(-120))).toBeNull();
+    expect(
+      wheelZoomDirection({
+        ...wheelEvent(-120, 240),
+        ctrlKey: true,
+      }),
+    ).toBeNull();
+    expect(
+      wheelZoomDirection({
+        ...wheelEvent(-120),
+        ctrlKey: true,
+        defaultPrevented: true,
+      }),
+    ).toBeNull();
+    expect(
+      wheelZoomDirection({
+        ...wheelEvent(-120),
+        ctrlKey: true,
+        target: document.createElement('input'),
+      }),
     ).toBeNull();
   });
 });

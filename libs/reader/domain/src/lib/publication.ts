@@ -1,8 +1,11 @@
 import type { ReaderPreferences } from './reader-preferences';
 import type { PublicationAnnotation } from './publication-annotation';
 import type { PublicationBookmark } from './publication-bookmark';
-import type { PublicationReadingDirection } from './reader-navigation';
-import type { ReaderNavigationDirection } from './reader-navigation';
+import type {
+  PublicationReadingDirection,
+  ReaderNavigationDirection,
+  ReaderZoomDirection,
+} from './reader-navigation';
 
 export type PublicationFormat = 'epub' | 'pdf';
 export type PublicationLayout = 'reflowable' | 'pre-paginated';
@@ -109,6 +112,9 @@ export interface ReaderEngine {
   onAnnotationActivated?(listener: (annotationId: string) => void): () => void;
   onNavigationRequested?(
     listener: (direction: ReaderNavigationDirection) => void,
+  ): () => void;
+  onZoomRequested?(
+    listener: (direction: ReaderZoomDirection) => void,
   ): () => void;
   onExternalLinkRequested?(listener: (url: string) => void): () => void;
   clearSelection(): void;

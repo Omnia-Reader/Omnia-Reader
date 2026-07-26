@@ -82,12 +82,26 @@ export interface CredentialSyncGatewayAdapter extends SyncGatewayAdapter {
   ): Promise<CredentialAuthorizationPage>;
 }
 
+export interface DestinationCreatingSyncGatewayAdapter
+  extends SyncGatewayAdapter {
+  createDestination(sessionId: string, request: unknown): Promise<unknown>;
+}
+
 export function supportsCredentialAuthorization(
   adapter: SyncGatewayAdapter,
 ): adapter is CredentialSyncGatewayAdapter {
   return (
     'credentialAuthorizationPage' in adapter &&
     typeof adapter.credentialAuthorizationPage === 'function'
+  );
+}
+
+export function supportsDestinationCreation(
+  adapter: SyncGatewayAdapter,
+): adapter is DestinationCreatingSyncGatewayAdapter {
+  return (
+    'createDestination' in adapter &&
+    typeof adapter.createDestination === 'function'
   );
 }
 

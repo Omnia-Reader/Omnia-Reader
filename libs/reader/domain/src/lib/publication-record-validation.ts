@@ -73,7 +73,7 @@ export function isReaderPreferences(
     isFiniteNumberInRange(value['paragraphSpacingRem'], 0, 10) &&
     isFiniteNumberInRange(value['marginPercent'], 0, 40) &&
     isFiniteNumberInRange(value['maxLineWidthRem'], 10, 200) &&
-    ['paginated', 'scrolled'].includes(String(value['flow'])) &&
+    ['auto', 'paginated', 'scrolled'].includes(String(value['flow'])) &&
     ['none', 'auto'].includes(String(value['spread']))
   );
 }

@@ -68,7 +68,7 @@
       aria-label="Library controls"
     >
       <div
-        class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_14rem_auto] lg:items-end"
+        class="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_12rem_14rem_auto] lg:items-end"
       >
         <div>
           <label
@@ -111,6 +111,26 @@
         <div>
           <label
             class="mb-1.5 block text-sm font-semibold text-stone-800"
+            for="library-reading-status"
+          >
+            Reading status
+          </label>
+          <select
+            id="library-reading-status"
+            class="min-h-12 w-full rounded-xl border border-stone-300 bg-white px-3 text-base text-stone-950 outline-none focus:border-violet-600 focus:ring-3 focus:ring-violet-200"
+            [value]="readingStatus"
+            (change)="updateReadingStatus($event)"
+          >
+            <option value="all">All books</option>
+            <option value="reading">In progress</option>
+            <option value="finished">Finished</option>
+            <option value="unread">Not started</option>
+          </select>
+        </div>
+
+        <div>
+          <label
+            class="mb-1.5 block text-sm font-semibold text-stone-800"
             for="library-sort"
           >
             Sort books
@@ -138,7 +158,7 @@
             aria-label="Library view"
           >
             <button
-              class="inline-flex min-w-12 items-center justify-center gap-2 rounded-lg px-3 text-stone-700 transition-colors hover:bg-stone-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-600 aria-pressed:bg-violet-700 aria-pressed:text-white"
+              class="inline-flex min-w-12 items-center justify-center gap-2 rounded-lg px-3 text-stone-700 hover:bg-stone-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-600 aria-pressed:bg-violet-700 aria-pressed:text-white"
               type="button"
               [attr.aria-pressed]="viewMode === 'grid'"
               (click)="setViewMode('grid')"
@@ -148,7 +168,7 @@
               <span class="sr-only">view</span>
             </button>
             <button
-              class="inline-flex min-w-12 items-center justify-center gap-2 rounded-lg px-3 text-stone-700 transition-colors hover:bg-stone-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-600 aria-pressed:bg-violet-700 aria-pressed:text-white"
+              class="inline-flex min-w-12 items-center justify-center gap-2 rounded-lg px-3 text-stone-700 hover:bg-stone-200 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-600 aria-pressed:bg-violet-700 aria-pressed:text-white"
               type="button"
               [attr.aria-pressed]="viewMode === 'list'"
               (click)="setViewMode('list')"
@@ -181,14 +201,15 @@
           No books found
         </h2>
         <p class="text-stone-600">
-          Try another title, author, publisher, file name, or format.
+          Try another title, author, publisher, file name, format, or reading
+          status.
         </p>
         <button
           mat-stroked-button
           type="button"
-          (click)="clearSearch(); searchInput.focus()"
+          (click)="clearFilters(); searchInput.focus()"
         >
-          Clear search
+          Clear filters
         </button>
       </section>
     } @else {
@@ -326,7 +347,9 @@
                 <button
                   mat-icon-button
                   type="button"
-                  [disabled]="exportingBookId !== null"
+                  [disabled]="
+                    exportingBookId !== null || removingBookId !== null
+                  "
                   [attr.aria-label]="
                     exportingBookId === book.id
                       ? 'Exporting ' + book.title
@@ -343,11 +366,23 @@
                 <button
                   mat-icon-button
                   type="button"
-                  [disabled]="exportingBookId !== null"
-                  [attr.aria-label]="'Remove ' + book.title"
-                  (click)="removeBook(book)"
+                  [disabled]="
+                    exportingBookId !== null || removingBookId !== null
+                  "
+                  [attr.aria-label]="
+                    removingBookId === book.id
+                      ? 'Removing ' + book.title
+                      : 'Remove ' + book.title
+                  "
+                  (click)="requestBookRemoval(book)"
                 >
-                  <mat-icon>delete_outline</mat-icon>
+                  <mat-icon>
+                    {{
+                      removingBookId === book.id
+                        ? 'hourglass_top'
+                        : 'delete_outline'
+                    }}
+                  </mat-icon>
                 </button>
               </div>
             </footer>

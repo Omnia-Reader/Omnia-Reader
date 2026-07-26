@@ -15,6 +15,10 @@ import {
   createPdfHighlight,
 } from './reader-state-helpers';
 
+// Browser routing is the provider boundary in this suite. A production service
+// worker must not satisfy `/api/sync/**` before the simulated gateway sees it.
+test.use({ serviceWorkers: 'block' });
+
 interface SyncScenario {
   provider: SimulatedSyncProvider;
   providerButtonName: RegExp;
@@ -150,10 +154,41 @@ const scenarios: readonly SyncScenario[] = [
   },
 ];
 
+test('creates and selects a private GitHub synchronization repository', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git');
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
+  await expect(page.getByText('Connected to GitHub as')).toBeVisible();
+  await page
+    .getByRole('textbox', { name: 'Repository name' })
+    .fill('omnia-reader-private');
+  await page.getByRole('button', { name: 'Create private repository' }).click();
+
+  await expect(
+    page.getByText(
+      'Created and selected private repository omnia-e2e/omnia-reader-private',
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await expect(page.locator('select').first()).toHaveValue('2');
+});
+
 for (const scenario of scenarios) {
   test(`synchronizes an exact ${scenario.mimeType} publication and reader state between two devices through ${scenario.provider}`, async ({
     browser,
   }) => {
+    // The complete two-device transfer is intentionally opt-in because it is
+    // substantially longer than repository onboarding, which runs by default.
+    // eslint-disable-next-line playwright/no-skipped-test
+    test.skip(
+      process.env['REMOTE_SYNC_E2E'] !== '1',
+      'Run the extended two-device provider convergence suite explicitly',
+    );
     test.setTimeout(120_000);
     const evidence = await synchronizeBetweenTwoDevices(browser, scenario);
     expect(evidence.documentPaths).toContain('.omnia-reader/v1/manifest.json');

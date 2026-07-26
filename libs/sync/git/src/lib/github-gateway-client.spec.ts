@@ -88,6 +88,43 @@ describe('GitHubGatewayClient', () => {
     expect(selectionInit?.body).toBe('{"repositoryId":11}');
   });
 
+  it('creates a private repository through the session gateway', async () => {
+    const repository = {
+      id: 12,
+      fullName: 'reader/omnia-reader-library',
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    };
+    const fetcher = mockFetch(
+      jsonResponse({
+        repository,
+        selected: true,
+        session: {
+          authenticated: true,
+          user: { id: 7, login: 'reader', avatarUrl: '' },
+          repository,
+        },
+        installationSettingsUrl: null,
+      }),
+    );
+    const client = new GitHubGatewayClient({ fetcher });
+
+    await expect(
+      client.createRepository(' omnia-reader-library '),
+    ).resolves.toMatchObject({
+      repository: { id: 12 },
+      selected: true,
+      session: { authenticated: true, repository: { id: 12 } },
+    });
+
+    const init = fetcher.mock.calls[0]?.[1];
+    const headers = new Headers(init?.headers);
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBe('{"name":"omnia-reader-library"}');
+    expect(headers.get('X-Omnia-CSRF')).toBe('1');
+  });
+
   it('implements list, missing-file reads, and optimistic writes', async () => {
     const file = {
       path: '.omnia-reader/v1/progress/book/device.json',

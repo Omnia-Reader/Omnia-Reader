@@ -77,6 +77,7 @@ describe('publication record validation', () => {
 
   it('accepts supported preferences and rejects out-of-range values', () => {
     expect(isReaderPreferences(DEFAULT_EPUB_READER_PREFERENCES)).toBe(true);
+    expect(DEFAULT_EPUB_READER_PREFERENCES.flow).toBe('auto');
     expect(isReaderPreferences(DEFAULT_PDF_READER_PREFERENCES)).toBe(true);
     expect(
       isReaderPreferences({
@@ -88,6 +89,12 @@ describe('publication record validation', () => {
       isReaderPreferences({
         ...DEFAULT_PDF_READER_PREFERENCES,
         rotation: 45,
+      }),
+    ).toBe(false);
+    expect(
+      isReaderPreferences({
+        ...DEFAULT_EPUB_READER_PREFERENCES,
+        flow: 'publication-decides-sometimes',
       }),
     ).toBe(false);
   });

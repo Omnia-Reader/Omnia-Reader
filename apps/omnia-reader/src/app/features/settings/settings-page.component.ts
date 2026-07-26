@@ -8,6 +8,7 @@ import {
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
+import { RouterLink } from '@angular/router';
 import {
   LIBRARY_BACKUP_MEDIA_TYPE,
   LIBRARY_QUARANTINE_REPOSITORY,
@@ -23,7 +24,7 @@ import { PlatformStorageStatus } from '@omnia-reader/reader/domain';
   selector: 'omnia-settings-page',
   templateUrl: './settings-page.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MatButtonModule, MatCardModule, MatIconModule],
+  imports: [MatButtonModule, MatCardModule, MatIconModule, RouterLink],
   providers: [
     {
       provide: LibraryQuarantineService,

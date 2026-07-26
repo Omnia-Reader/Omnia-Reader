@@ -27,6 +27,13 @@ interface GitHubRepository {
   installationId: number;
 }
 
+interface CreatedGitHubRepository {
+  id: number;
+  fullName: string;
+  private: true;
+  defaultBranch: string;
+}
+
 export interface GitHubSessionState {
   authorizationState?: string;
   returnTo?: string;
@@ -210,6 +217,58 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     };
     await this.options.sessions.set(sessionId, updated);
     return this.publicSession(updated);
+  }
+
+  async createDestination(
+    sessionId: string,
+    request: unknown,
+  ): Promise<unknown> {
+    const name = privateRepositoryName(request);
+    const state = await this.requireAuthenticatedState(sessionId);
+    if (!state.userAccessToken) {
+      throw new GatewayHttpError(401, 'GitHub authentication is required');
+    }
+    const value = await this.githubJson<unknown>('/user/repos', {
+      method: 'POST',
+      token: state.userAccessToken,
+      body: {
+        name,
+        description:
+          'Private Omnia Reader library, publication, and reading progress synchronization',
+        private: true,
+        auto_init: true,
+        has_issues: false,
+        has_projects: false,
+        has_wiki: false,
+        has_discussions: false,
+      },
+    });
+    const created = parseCreatedRepository(value);
+    const repositories = await this.loadRepositories(sessionId, state);
+    const selected = repositories.find(
+      (repository) => repository.id === created.id && repository.canPush,
+    );
+    const refreshed = await this.requireAuthenticatedState(sessionId);
+    const updated: GitHubSessionState = selected
+      ? {
+          ...refreshed,
+          repositories,
+          repository: selected,
+          installationAccessToken: undefined,
+          installationTokenExpiresAt: undefined,
+        }
+      : refreshed;
+    if (selected) {
+      await this.options.sessions.set(sessionId, updated);
+    }
+    return {
+      repository: publicCreatedRepository(created),
+      selected: !!selected,
+      session: this.publicSession(updated),
+      installationSettingsUrl: selected
+        ? null
+        : `${this.webBaseUrl}/settings/installations`,
+    };
   }
 
   async listDocuments(
@@ -994,6 +1053,24 @@ function parseRepository(
   };
 }
 
+function parseCreatedRepository(value: unknown): CreatedGitHubRepository {
+  if (
+    !isRecord(value) ||
+    !positiveInteger(value['id']) ||
+    !isBoundedString(value['full_name'], 512) ||
+    value['private'] !== true ||
+    !isBoundedString(value['default_branch'], 256)
+  ) {
+    throw providerProtocolError();
+  }
+  return {
+    id: value['id'],
+    fullName: value['full_name'],
+    private: true,
+    defaultBranch: value['default_branch'],
+  };
+}
+
 function publicRepository(repository: GitHubRepository): unknown {
   return {
     id: repository.id,
@@ -1001,6 +1078,13 @@ function publicRepository(repository: GitHubRepository): unknown {
     private: repository.private,
     defaultBranch: repository.defaultBranch,
     canPush: repository.canPush,
+  };
+}
+
+function publicCreatedRepository(repository: CreatedGitHubRepository): unknown {
+  return {
+    ...repository,
+    canPush: true,
   };
 }
 
@@ -1279,4 +1363,18 @@ function positiveNumber(value: unknown): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function privateRepositoryName(value: unknown): string {
+  if (!isRecord(value) || typeof value['name'] !== 'string') {
+    throw new GatewayHttpError(400, 'A repository name is required');
+  }
+  const name = value['name'].trim();
+  if (!/^[a-z0-9._-]{1,100}$/i.test(name) || name === '.' || name === '..') {
+    throw new GatewayHttpError(
+      400,
+      'Repository names may contain letters, numbers, dots, hyphens, and underscores',
+    );
+  }
+  return name;
 }

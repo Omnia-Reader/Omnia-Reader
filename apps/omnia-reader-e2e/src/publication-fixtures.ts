@@ -323,6 +323,25 @@ function fixedLayoutPage(title: string, contents: string): string {
 </html>`;
 }
 
+export async function createMalformedEpubFixture(): Promise<Buffer> {
+  const archive = new JSZip();
+  archive.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+  archive.file(
+    'META-INF/container.xml',
+    `<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/missing-package.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`,
+  );
+  return archive.generateAsync({
+    type: 'nodebuffer',
+    mimeType: 'application/epub+zip',
+    compression: 'DEFLATE',
+  });
+}
+
 export function createPdfFixture(): Buffer {
   const pages = [
     `BT /F1 18 Tf 72 720 Td (Omnia PDF Fixture - Page One) Tj ET

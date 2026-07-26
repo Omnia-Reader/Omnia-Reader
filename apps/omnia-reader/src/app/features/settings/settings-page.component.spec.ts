@@ -75,7 +75,7 @@ describe('SettingsPageComponent', () => {
     expect(label.control).toBe(input);
   });
 
-  it('does not advertise remote providers while authentication is deferred', async () => {
+  it('links to authenticated cross-device library synchronization', async () => {
     const fixture = TestBed.createComponent(SettingsPageComponent);
 
     fixture.detectChanges();
@@ -84,9 +84,9 @@ describe('SettingsPageComponent', () => {
 
     expect(
       fixture.nativeElement.querySelector('a[href="/settings/sync"]'),
-    ).toBeNull();
-    expect(fixture.nativeElement.textContent).not.toContain(
-      'Git progress sync',
+    ).toBeTruthy();
+    expect(fixture.nativeElement.textContent).toContain(
+      'Cross-device library sync',
     );
   });
 

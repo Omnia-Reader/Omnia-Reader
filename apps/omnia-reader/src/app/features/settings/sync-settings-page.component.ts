@@ -58,6 +58,7 @@ export class SyncSettingsPageComponent implements OnInit {
   gitSession: GitHubGatewaySession = { authenticated: false };
   megaSession: MegaGatewaySession = { authenticated: false };
   repositories: readonly GitHubRepository[] = [];
+  repositoryInstallationSettingsUrl: string | null = null;
   folders: readonly MegaFolder[] = [];
   errorMessage: string | null = null;
   statusMessage: string | null = null;
@@ -77,6 +78,7 @@ export class SyncSettingsPageComponent implements OnInit {
     this.selectedProvider = provider;
     this.errorMessage = null;
     this.statusMessage = null;
+    this.repositoryInstallationSettingsUrl = null;
     await this.runBusy(() => this.refreshProvider());
   }
 
@@ -99,10 +101,38 @@ export class SyncSettingsPageComponent implements OnInit {
 
     await this.runBusy(async () => {
       this.gitSession = await this.gitGateway.selectRepository(repositoryId);
+      this.repositoryInstallationSettingsUrl = null;
       this.statusMessage =
         `Sync repository set to ${repository.fullName}. ` +
         'Initial library synchronization queued.';
       this.autoSync.requestImmediate('destination-selected');
+    });
+  }
+
+  async createRepository(name: string): Promise<void> {
+    await this.runBusy(async () => {
+      const result = await this.gitGateway.createRepository(name);
+      this.gitSession = result.session;
+      this.repositories = await this.gitGateway.repositories();
+      this.repositoryInstallationSettingsUrl = result.installationSettingsUrl;
+      if (result.selected) {
+        this.statusMessage =
+          `Created and selected private repository ${result.repository.fullName}. ` +
+          'Initial library synchronization queued.';
+        this.autoSync.requestImmediate('destination-selected');
+      } else {
+        this.statusMessage =
+          `Created private repository ${result.repository.fullName}. ` +
+          'Grant the Omnia Reader GitHub App access to it, then refresh the repository list.';
+      }
+    });
+  }
+
+  async refreshRepositories(): Promise<void> {
+    await this.runBusy(async () => {
+      this.repositories = await this.gitGateway.repositories();
+      this.gitSession = await this.gitGateway.session();
+      this.statusMessage = 'GitHub repositories refreshed.';
     });
   }
 
@@ -154,6 +184,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.providerSelection.clear();
       this.selectedProvider = null;
       this.repositories = [];
+      this.repositoryInstallationSettingsUrl = null;
       this.folders = [];
       this.statusMessage =
         'Sync disconnected. Local books and reading progress are unchanged.';

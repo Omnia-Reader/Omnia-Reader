@@ -5,6 +5,7 @@ import {
   GatewayHttpError,
   type CredentialAuthorizationPage,
   type CredentialSyncGatewayAdapter,
+  type DestinationCreatingSyncGatewayAdapter,
   type DocumentWriteRequest,
   type RemoteDocument,
   type RemoteObject,
@@ -69,6 +70,29 @@ describe('sync gateway', () => {
     expect(callback.statusCode).toBe(302);
     expect(callback.headers.location).toBe('/settings/sync');
     expect(callback.cookies[0].value).not.toBe(originalCookie.value);
+    await app.close();
+  });
+
+  it('creates a provider destination through a same-origin mutation', async () => {
+    const github = new CreatingMemoryAdapter();
+    const app = gateway(github);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sync/github/repository',
+      headers: {
+        ...MUTATION_HEADERS,
+        'content-type': 'application/json',
+      },
+      payload: { name: 'omnia-reader-library' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(github.createdRequest).toEqual({ name: 'omnia-reader-library' });
+    expect(response.json()).toMatchObject({
+      repository: { fullName: 'reader/omnia-reader-library' },
+      selected: true,
+    });
     await app.close();
   });
 
@@ -483,5 +507,36 @@ class CredentialMemoryAdapter
     void replacementSessionId;
     this.completedParameters = parameters;
     return '/settings/sync';
+  }
+}
+
+class CreatingMemoryAdapter
+  extends MemoryGatewayAdapter
+  implements DestinationCreatingSyncGatewayAdapter
+{
+  createdRequest: unknown;
+
+  constructor() {
+    super('github');
+  }
+
+  async createDestination(
+    sessionId: string,
+    request: unknown,
+  ): Promise<unknown> {
+    void sessionId;
+    this.createdRequest = request;
+    return {
+      repository: {
+        id: 7,
+        fullName: 'reader/omnia-reader-library',
+        private: true,
+        defaultBranch: 'main',
+        canPush: true,
+      },
+      selected: true,
+      session: await this.session(),
+      installationSettingsUrl: null,
+    };
   }
 }

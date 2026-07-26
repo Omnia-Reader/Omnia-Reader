@@ -9,6 +9,35 @@ import { createBookSyncManifest } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 
+export interface PublicationImportResult {
+  books: readonly BookRecord[];
+  added: readonly BookRecord[];
+  duplicates: readonly BookRecord[];
+  failures: readonly PublicationImportFailure[];
+}
+
+export interface PublicationImportFailure {
+  sourceName: string;
+  message: string;
+}
+
+export function describePublicationImportFailures(
+  result: PublicationImportResult,
+): string | null {
+  if (result.failures.length === 0) {
+    return null;
+  }
+  const visible = result.failures
+    .slice(0, 3)
+    .map((failure) => `“${failure.sourceName}”: ${failure.message}`)
+    .join(' ');
+  const remaining = result.failures.length - 3;
+  return (
+    `${result.failures.length === 1 ? 'Could not import' : 'Could not import selected publications:'} ${visible}` +
+    (remaining > 0 ? ` And ${remaining} more.` : '')
+  );
+}
+
 @Injectable({ providedIn: 'root' })
 export class PublicationImportService {
   private readonly repository = inject(LIBRARY_REPOSITORY);
@@ -23,8 +52,11 @@ export class PublicationImportService {
 
   async importPublications(
     sources: readonly BookSource[],
-  ): Promise<readonly BookRecord[]> {
+  ): Promise<PublicationImportResult> {
     const books: BookRecord[] = [];
+    const added: BookRecord[] = [];
+    const duplicates: BookRecord[] = [];
+    const failures: PublicationImportFailure[] = [];
     const existingBookIds = new Set(
       (await this.repository.listBooks()).map((book) => book.id),
     );
@@ -32,8 +64,10 @@ export class PublicationImportService {
       let imported: BookRecord | null = null;
       try {
         imported = await this.repository.importBook(source);
+        const isDuplicate = existingBookIds.has(imported.id);
         const book = await this.enrichment.validateAndEnrich(imported);
         books.push(book);
+        (isDuplicate ? duplicates : added).push(book);
         existingBookIds.add(book.id);
         await this.appendJournalEntry({
           entity: 'book',
@@ -50,7 +84,13 @@ export class PublicationImportService {
             // quarantine any incomplete record left by failed cleanup.
           }
         }
-        throw error;
+        failures.push({
+          sourceName: source.name,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'The publication could not be imported',
+        });
       }
     }
     if (books.length > 0) {
@@ -58,7 +98,7 @@ export class PublicationImportService {
         listener(books);
       }
     }
-    return books;
+    return { books, added, duplicates, failures };
   }
 
   onImported(listener: (books: readonly BookRecord[]) => void): () => void {

@@ -12,6 +12,7 @@ import { NgClass } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { ScrollingModule } from '@angular/cdk/scrolling';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -38,6 +39,7 @@ import {
   ReaderNavigationDirection,
   ReaderPageStatus,
   ReaderPreferences,
+  ReaderZoomDirection,
   ReadingProgress,
   SearchResult,
   selectionHasText,
@@ -48,11 +50,20 @@ import {
   touchEventNavigationDirection,
   touchNavigationDirection,
   wheelNavigationDirection,
+  wheelZoomDirection,
 } from '@omnia-reader/reader/domain';
 import { createBookSyncManifest } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { BackNavigationService } from '../../back-navigation.service';
 import { PdfThumbnailComponent } from './pdf-thumbnail.component';
+
+type ReaderPanel =
+  | 'toc'
+  | 'search'
+  | 'settings'
+  | 'thumbnails'
+  | 'bookmarks'
+  | 'annotations';
 
 @Component({
   selector: 'omnia-reader-page',
@@ -67,6 +78,7 @@ import { PdfThumbnailComponent } from './pdf-thumbnail.component';
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
+    CdkTrapFocus,
     NgClass,
     ScrollingModule,
     FormsModule,
@@ -80,6 +92,45 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   @ViewChild('viewport', { static: true })
   private viewport!: ElementRef<HTMLElement>;
+
+  @ViewChild('tocTrigger')
+  private tocTrigger?: ElementRef<HTMLButtonElement>;
+
+  @ViewChild('searchTrigger')
+  private searchTrigger?: ElementRef<HTMLButtonElement>;
+
+  @ViewChild('settingsTrigger')
+  private settingsTrigger?: ElementRef<HTMLButtonElement>;
+
+  @ViewChild('thumbnailsTrigger')
+  private thumbnailsTrigger?: ElementRef<HTMLButtonElement>;
+
+  @ViewChild('bookmarksTrigger')
+  private bookmarksTrigger?: ElementRef<HTMLButtonElement>;
+
+  @ViewChild('annotationsTrigger')
+  private annotationsTrigger?: ElementRef<HTMLButtonElement>;
+
+  @ViewChild('tocPanel')
+  private tocPanel?: ElementRef<HTMLElement>;
+
+  @ViewChild('searchPanel')
+  private searchPanel?: ElementRef<HTMLElement>;
+
+  @ViewChild('searchInput')
+  private searchInput?: ElementRef<HTMLInputElement>;
+
+  @ViewChild('settingsPanel')
+  private settingsPanel?: ElementRef<HTMLElement>;
+
+  @ViewChild('thumbnailsPanel')
+  private thumbnailsPanel?: ElementRef<HTMLElement>;
+
+  @ViewChild('bookmarksPanel')
+  private bookmarksPanel?: ElementRef<HTMLElement>;
+
+  @ViewChild('annotationsPanel')
+  private annotationsPanel?: ElementRef<HTMLElement>;
 
   private readonly repository = inject(LIBRARY_REPOSITORY);
   private readonly engines = inject(ReaderEngineRegistry);
@@ -119,6 +170,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   annotationNote = '';
   navigationBusy = false;
   navigationError: string | null = null;
+  private navigationLoopActive = false;
+  private pendingNavigationDirection: ReaderNavigationDirection | null = null;
   pendingExternalUrl: string | null = null;
   externalLinkError: string | null = null;
   pageNavigation: PageNavigation | null = null;
@@ -149,6 +202,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private removePasswordListener: (() => void) | null = null;
   private removeAnnotationActivationListener: (() => void) | null = null;
   private removeNavigationRequestListener: (() => void) | null = null;
+  private removeZoomRequestListener: (() => void) | null = null;
   private removeExternalLinkRequestListener: (() => void) | null = null;
   private lastWheelNavigationAt = Number.NEGATIVE_INFINITY;
   private touchNavigationGesture: TouchNavigationGesture | null = null;
@@ -217,6 +271,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.removeNavigationRequestListener =
         this.engine.onNavigationRequested?.((direction) => {
           void this.navigate(direction);
+        }) ?? null;
+      this.removeZoomRequestListener =
+        this.engine.onZoomRequested?.((direction) => {
+          this.requestZoom(direction);
         }) ?? null;
       this.removeExternalLinkRequestListener =
         this.engine.onExternalLinkRequested?.((url) => {
@@ -309,7 +367,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.loading ||
       this.errorMessage ||
       this.passwordChallenge ||
-      this.pendingSelection
+      this.pendingExternalUrl ||
+      this.pendingSelection ||
+      this.readerPanelOpen
     ) {
       return;
     }
@@ -418,6 +478,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     );
   }
 
+  get readerPanelOpen(): boolean {
+    return this.activeReaderPanel !== null;
+  }
+
   async seekToProgress(event: Event): Promise<void> {
     const input = event.currentTarget;
     const engine = this.engine;
@@ -453,12 +517,22 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   onPublicationWheel(event: WheelEvent): void {
     if (
-      this.book?.format !== 'pdf' ||
+      !this.book ||
       this.loading ||
       this.errorMessage ||
       this.passwordChallenge ||
-      this.pendingSelection
+      this.pendingSelection ||
+      this.readerPanelOpen
     ) {
+      return;
+    }
+    const zoomDirection = wheelZoomDirection(event);
+    if (zoomDirection) {
+      event.preventDefault();
+      this.requestZoom(zoomDirection);
+      return;
+    }
+    if (this.book.format !== 'pdf') {
       return;
     }
     const direction = wheelNavigationDirection(event);
@@ -467,10 +541,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
     event.preventDefault();
     const now = Date.now();
-    if (
-      this.navigationBusy ||
-      now - this.lastWheelNavigationAt < WHEEL_NAVIGATION_INTERVAL_MS
-    ) {
+    if (now - this.lastWheelNavigationAt < WHEEL_NAVIGATION_INTERVAL_MS) {
       return;
     }
     this.lastWheelNavigationAt = now;
@@ -484,6 +555,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.errorMessage ||
       this.passwordChallenge ||
       this.pendingSelection ||
+      this.readerPanelOpen ||
       this.navigationBusy
     ) {
       this.touchNavigationGesture = null;
@@ -502,6 +574,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.errorMessage ||
       this.passwordChallenge ||
       this.pendingSelection ||
+      this.readerPanelOpen ||
       this.navigationBusy ||
       selectionHasText(this.viewport.nativeElement.ownerDocument.getSelection())
     ) {
@@ -533,6 +606,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.errorMessage ||
       this.passwordChallenge ||
       this.pendingSelection ||
+      this.readerPanelOpen ||
       this.navigationBusy
     ) {
       this.touchEventNavigationGesture = null;
@@ -551,6 +625,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.errorMessage ||
       this.passwordChallenge ||
       this.pendingSelection ||
+      this.readerPanelOpen ||
       this.navigationBusy ||
       selectionHasText(this.viewport.nativeElement.ownerDocument.getSelection())
     ) {
@@ -582,7 +657,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.changeDetector.markForCheck();
     try {
       await this.engine.goTo(entry.locator);
-      this.tocOpen = false;
+      this.closeReaderPanelsForReading();
     } catch (error) {
       this.navigationError =
         error instanceof Error
@@ -595,12 +670,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   toggleToc(): void {
-    this.tocOpen = !this.tocOpen;
-    this.searchOpen = false;
-    this.settingsOpen = false;
-    this.thumbnailsOpen = false;
-    this.bookmarksOpen = false;
-    this.annotationsOpen = false;
+    this.toggleReaderPanel('toc');
   }
 
   toggleTocItem(item: FlattenedTocEntry): void {
@@ -621,49 +691,24 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   toggleSearch(): void {
-    this.searchOpen = !this.searchOpen;
-    this.tocOpen = false;
-    this.settingsOpen = false;
-    this.thumbnailsOpen = false;
-    this.bookmarksOpen = false;
-    this.annotationsOpen = false;
+    this.toggleReaderPanel('search');
   }
 
   toggleSettings(): void {
-    this.settingsOpen = !this.settingsOpen;
-    this.tocOpen = false;
-    this.searchOpen = false;
-    this.thumbnailsOpen = false;
-    this.bookmarksOpen = false;
-    this.annotationsOpen = false;
+    this.toggleReaderPanel('settings');
   }
 
   toggleThumbnails(): void {
-    this.thumbnailsOpen = !this.thumbnailsOpen;
-    this.tocOpen = false;
-    this.searchOpen = false;
-    this.settingsOpen = false;
-    this.bookmarksOpen = false;
-    this.annotationsOpen = false;
+    this.toggleReaderPanel('thumbnails');
   }
 
   toggleBookmarks(): void {
-    this.bookmarksOpen = !this.bookmarksOpen;
-    this.tocOpen = false;
-    this.searchOpen = false;
-    this.settingsOpen = false;
-    this.thumbnailsOpen = false;
-    this.annotationsOpen = false;
+    this.toggleReaderPanel('bookmarks');
     this.bookmarkError = null;
   }
 
   toggleAnnotations(): void {
-    this.annotationsOpen = !this.annotationsOpen;
-    this.tocOpen = false;
-    this.searchOpen = false;
-    this.settingsOpen = false;
-    this.thumbnailsOpen = false;
-    this.bookmarksOpen = false;
+    this.toggleReaderPanel('annotations');
     this.annotationError = null;
   }
 
@@ -757,7 +802,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   async goToBookmark(bookmark: PublicationBookmark): Promise<void> {
     await this.engine?.goTo(bookmark.locator);
-    this.bookmarksOpen = false;
+    this.closeReaderPanelsForReading();
   }
 
   beginEditAnnotation(annotation: PublicationAnnotation): void {
@@ -866,7 +911,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   async goToAnnotation(annotation: PublicationAnnotation): Promise<void> {
     await this.engine?.goTo(annotation.locator);
-    this.annotationsOpen = false;
+    this.closeReaderPanelsForReading();
   }
 
   async goToPdfPage(pageNumber: number): Promise<void> {
@@ -879,7 +924,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         position: pageNumber,
       },
     });
-    this.thumbnailsOpen = false;
+    this.closeReaderPanelsForReading();
   }
 
   submitPdfPassword(event: Event): void {
@@ -938,6 +983,42 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     await this.persistPreferences(this.pdfPreferences);
   }
 
+  private requestZoom(direction: ReaderZoomDirection): void {
+    void this.zoomPublication(direction).catch((error) => {
+      this.navigationError =
+        error instanceof Error ? error.message : 'Unable to change zoom';
+      this.changeDetector.markForCheck();
+    });
+  }
+
+  private async zoomPublication(direction: ReaderZoomDirection): Promise<void> {
+    const delta =
+      direction === 'in' ? WHEEL_ZOOM_STEP_PERCENT : -WHEEL_ZOOM_STEP_PERCENT;
+    if (this.book?.format === 'epub') {
+      const fontSizePercent = clamp(
+        this.epubPreferences.fontSizePercent + delta,
+        EPUB_MINIMUM_ZOOM_PERCENT,
+        EPUB_MAXIMUM_ZOOM_PERCENT,
+      );
+      if (fontSizePercent !== this.epubPreferences.fontSizePercent) {
+        await this.updateEpubPreferences({ fontSizePercent });
+      }
+      return;
+    }
+
+    const zoomPercent = clamp(
+      this.pdfPreferences.zoomPercent + delta,
+      PDF_MINIMUM_ZOOM_PERCENT,
+      PDF_MAXIMUM_ZOOM_PERCENT,
+    );
+    if (
+      zoomPercent !== this.pdfPreferences.zoomPercent ||
+      this.pdfPreferences.zoomMode !== 'custom'
+    ) {
+      await this.updatePdfPreferences({ zoomMode: 'custom', zoomPercent });
+    }
+  }
+
   async rotatePdf(delta: -90 | 90): Promise<void> {
     const rotation = ((this.pdfPreferences.rotation + delta + 360) %
       360) as PdfRotation;
@@ -977,7 +1058,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   async goToSearchResult(result: SearchResult): Promise<void> {
     await this.engine?.goTo(result.locator);
-    this.searchOpen = false;
+    this.closeReaderPanelsForReading();
   }
 
   ngOnDestroy(): void {
@@ -991,6 +1072,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.removeSelectionListener?.();
     this.removeAnnotationActivationListener?.();
     this.removeNavigationRequestListener?.();
+    this.removeZoomRequestListener?.();
     this.removeExternalLinkRequestListener?.();
     this.passwordChallenge?.cancel();
     this.removePasswordListener?.();
@@ -1002,6 +1084,144 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     // for IndexedDB would leave EPUB resize observers attached to a detached
     // container and can surface an undelivered ResizeObserver notification.
     void engine?.close().catch(() => undefined);
+  }
+
+  private get activeReaderPanel(): ReaderPanel | null {
+    if (this.tocOpen) {
+      return 'toc';
+    }
+    if (this.searchOpen) {
+      return 'search';
+    }
+    if (this.settingsOpen) {
+      return 'settings';
+    }
+    if (this.thumbnailsOpen) {
+      return 'thumbnails';
+    }
+    if (this.bookmarksOpen) {
+      return 'bookmarks';
+    }
+    if (this.annotationsOpen) {
+      return 'annotations';
+    }
+    return null;
+  }
+
+  private toggleReaderPanel(panel: ReaderPanel): void {
+    const opening = this.activeReaderPanel !== panel;
+    const returningFocusTarget = opening
+      ? undefined
+      : this.readerPanelTriggerElement(panel);
+    this.closeReaderPanels();
+    if (opening) {
+      this.setReaderPanelOpen(panel, true);
+    }
+    this.changeDetector.detectChanges();
+
+    const focusTarget = opening
+      ? panel === 'search'
+        ? this.searchInput?.nativeElement
+        : this.readerPanelElement(panel)
+      : returningFocusTarget;
+    this.queueFocus(focusTarget);
+  }
+
+  private closeReaderPanels(): void {
+    this.tocOpen = false;
+    this.searchOpen = false;
+    this.settingsOpen = false;
+    this.thumbnailsOpen = false;
+    this.bookmarksOpen = false;
+    this.annotationsOpen = false;
+  }
+
+  private closeReaderPanelsAndRestoreTrigger(): boolean {
+    const panel = this.activeReaderPanel;
+    if (!panel) {
+      return false;
+    }
+    const returningFocusTarget = this.readerPanelTriggerElement(panel);
+    this.closeReaderPanels();
+    this.changeDetector.detectChanges();
+    this.queueFocus(returningFocusTarget);
+    return true;
+  }
+
+  private closeReaderPanelsForReading(): void {
+    this.closeReaderPanels();
+    this.changeDetector.detectChanges();
+    this.queueFocus(this.readerRoot.nativeElement);
+  }
+
+  private setReaderPanelOpen(panel: ReaderPanel, open: boolean): void {
+    switch (panel) {
+      case 'toc':
+        this.tocOpen = open;
+        break;
+      case 'search':
+        this.searchOpen = open;
+        break;
+      case 'settings':
+        this.settingsOpen = open;
+        break;
+      case 'thumbnails':
+        this.thumbnailsOpen = open;
+        break;
+      case 'bookmarks':
+        this.bookmarksOpen = open;
+        break;
+      case 'annotations':
+        this.annotationsOpen = open;
+        break;
+    }
+  }
+
+  private readerPanelElement(panel: ReaderPanel): HTMLElement | undefined {
+    switch (panel) {
+      case 'toc':
+        return this.tocPanel?.nativeElement;
+      case 'search':
+        return this.searchPanel?.nativeElement;
+      case 'settings':
+        return this.settingsPanel?.nativeElement;
+      case 'thumbnails':
+        return this.thumbnailsPanel?.nativeElement;
+      case 'bookmarks':
+        return this.bookmarksPanel?.nativeElement;
+      case 'annotations':
+        return this.annotationsPanel?.nativeElement;
+    }
+  }
+
+  private readerPanelTriggerElement(
+    panel: ReaderPanel,
+  ): HTMLButtonElement | undefined {
+    const queriedTrigger = this.readerRoot.nativeElement.querySelector(
+      `[aria-controls="reader-${panel}-panel"]`,
+    ) as HTMLButtonElement | null;
+    return (
+      queriedTrigger ??
+      {
+        toc: this.tocTrigger,
+        search: this.searchTrigger,
+        settings: this.settingsTrigger,
+        thumbnails: this.thumbnailsTrigger,
+        bookmarks: this.bookmarksTrigger,
+        annotations: this.annotationsTrigger,
+      }[panel]?.nativeElement
+    );
+  }
+
+  private queueFocus(element: HTMLElement | undefined): void {
+    if (!element) {
+      return;
+    }
+    setTimeout(() => {
+      if (element.isConnected) {
+        element.focus({ preventScroll: true });
+      }
+    }, 0);
   }
 
   private closeTransientReaderUi(): boolean {
@@ -1016,43 +1236,39 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       return true;
     }
 
-    if (
-      !this.tocOpen &&
-      !this.searchOpen &&
-      !this.settingsOpen &&
-      !this.thumbnailsOpen &&
-      !this.bookmarksOpen &&
-      !this.annotationsOpen &&
-      !this.pendingSelection
-    ) {
-      return false;
-    }
-
-    this.tocOpen = false;
-    this.searchOpen = false;
-    this.settingsOpen = false;
-    this.thumbnailsOpen = false;
-    this.bookmarksOpen = false;
-    this.annotationsOpen = false;
     if (this.pendingSelection) {
       this.cancelAnnotationEditor();
+      this.changeDetector.markForCheck();
+      return true;
     }
-    this.changeDetector.markForCheck();
-    return true;
+    return this.closeReaderPanelsAndRestoreTrigger();
   }
 
   private async navigate(direction: ReaderNavigationDirection): Promise<void> {
-    if (!this.engine || this.loading || this.navigationBusy) {
+    const engine = this.engine;
+    if (!engine || this.loading || this.readerPanelOpen) {
       return;
     }
+    if (this.navigationBusy) {
+      if (this.navigationLoopActive) {
+        this.pendingNavigationDirection = direction;
+      }
+      return;
+    }
+    this.navigationLoopActive = true;
     this.navigationBusy = true;
     this.navigationError = null;
     this.changeDetector.markForCheck();
     try {
-      if (direction === 'next') {
-        await this.engine.next();
-      } else {
-        await this.engine.previous();
+      let nextDirection: ReaderNavigationDirection | null = direction;
+      while (nextDirection) {
+        this.pendingNavigationDirection = null;
+        if (nextDirection === 'next') {
+          await engine.next();
+        } else {
+          await engine.previous();
+        }
+        nextDirection = this.pendingNavigationDirection;
       }
     } catch (error) {
       this.navigationError =
@@ -1060,6 +1276,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
           ? error.message
           : 'Unable to navigate this publication';
     } finally {
+      this.pendingNavigationDirection = null;
+      this.navigationLoopActive = false;
       this.navigationBusy = false;
       this.changeDetector.markForCheck();
     }
@@ -1111,8 +1329,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private async persistPreferences(
     preferences: ReaderPreferences,
   ): Promise<void> {
-    await this.repository.saveReaderPreferences(preferences);
     await this.engine?.applyPreferences(preferences);
+    // Persist only after the renderer has completed its preference lifecycle.
+    // This keeps rapid reader inputs from observing saved state while an EPUB
+    // iframe is still being replaced and its interaction handlers restored.
+    await this.repository.saveReaderPreferences(preferences);
   }
 
   private async saveProgress(
@@ -1247,7 +1468,7 @@ function flattenToc(
         entry,
         depth,
         number,
-        displayLabel: number ? `${number} ${entry.title}` : entry.title,
+        displayLabel: tocDisplayLabel(entry.title, number),
         key,
         parentKeys,
         hasChildren: children.length > 0,
@@ -1262,6 +1483,18 @@ function flattenToc(
       ),
     ];
   });
+}
+
+function tocDisplayLabel(title: string, number: string | null): string {
+  if (!number) {
+    return title;
+  }
+  const escapedNumber = number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const authoredPrefix = new RegExp(
+    `^\\s*${escapedNumber}(?:[.)]|\\s*[-–—:]\\s*|\\s+)`,
+  );
+  const titleWithoutDuplicateNumber = title.replace(authoredPrefix, '').trim();
+  return `${number} ${titleWithoutDuplicateNumber || title.trim()}`;
 }
 
 function shouldNumberTocEntry(entry: TocEntry, depth: number): boolean {
@@ -1283,6 +1516,15 @@ function normalizeTocTitle(title: string): string {
 }
 
 const WHEEL_NAVIGATION_INTERVAL_MS = 400;
+const WHEEL_ZOOM_STEP_PERCENT = 5;
+const EPUB_MINIMUM_ZOOM_PERCENT = 75;
+const EPUB_MAXIMUM_ZOOM_PERCENT = 200;
+const PDF_MINIMUM_ZOOM_PERCENT = 25;
+const PDF_MAXIMUM_ZOOM_PERCENT = 400;
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
 
 const UNNUMBERED_TOP_LEVEL_TOC_TITLES = new Set([
   'about the author',

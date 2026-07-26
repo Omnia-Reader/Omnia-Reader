@@ -7,6 +7,7 @@ const baseURL = process.env['BASE_URL'] || 'http://localhost:4200';
 const chromiumExecutablePath =
   process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'];
 const webkitExecutablePath = process.env['PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH'];
+const firefoxE2EEnabled = process.env['FIREFOX_E2E'] === '1';
 
 /**
  * Read environment variables from file.
@@ -19,12 +20,11 @@ const webkitExecutablePath = process.env['PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH'];
  */
 export default defineConfig({
   ...nxE2EPreset(__filename, { testDir: './src' }),
-  // Reader journeys intentionally perform CPU- and memory-heavy, stateful
-  // import/open/reopen flows. A single worker keeps PDF.js, EPUB iframes, and
-  // browser startup from starving one another on two-core CI and developer
-  // hosts; parallelism made otherwise passing setup hooks time out.
+  // Local Playwright and Nx runs use the four physical cores available on the
+  // development machine. CI overrides this with one worker per shard. Firefox
+  // is temporarily opt-in through FIREFOX_E2E=1.
   fullyParallel: false,
-  workers: 1,
+  workers: process.env['CI'] ? 1 : 4,
   timeout: 60_000,
   // PDF.js canvas work and EPUB iframe population can exceed Playwright's
   // five-second assertion default in WebKit when the full browser matrix is
@@ -57,10 +57,14 @@ export default defineConfig({
       },
     },
 
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
-    },
+    ...(firefoxE2EEnabled
+      ? [
+          {
+            name: 'firefox',
+            use: { ...devices['Desktop Firefox'] },
+          },
+        ]
+      : []),
 
     {
       name: 'webkit',

@@ -76,31 +76,3 @@ test('reports quota and lets the user protect the offline library', async ({
     storageCard.getByRole('button', { name: 'Protect offline library' }),
   ).toHaveCount(0);
 });
-
-test('keeps remote sync dormant when an old provider selection remains', async ({
-  page,
-}) => {
-  const syncRequests: string[] = [];
-  await page.route('**/api/sync/**', async (route) => {
-    syncRequests.push(route.request().url());
-    await route.abort();
-  });
-  await page.evaluate(() =>
-    localStorage.setItem('omnia-reader.sync-provider', 'git'),
-  );
-
-  await page.reload();
-  await expect(
-    page.getByRole('heading', { name: 'Settings', exact: true }),
-  ).toBeVisible();
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        globalThis.dispatchEvent(new Event('online'));
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      }),
-  );
-
-  expect(syncRequests).toEqual([]);
-  await expect(page.getByRole('link', { name: /sync/i })).toHaveCount(0);
-});

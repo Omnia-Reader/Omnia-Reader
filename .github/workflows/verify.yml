@@ -54,7 +54,51 @@ jobs:
         run: npm run release:verify -- --skip-build
 
   browser:
-    name: Browser compatibility
+    name: Browser compatibility (${{ matrix.browser }}, shard ${{ matrix.shard }})
+    needs: web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - chromium
+          - webkit
+        shard:
+          - 1/2
+          - 2/2
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install the Playwright browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Build the production web application
+        run: npx nx build omnia-reader --configuration production --skip-nx-cache
+
+      - name: Run active browser journeys
+        run: >-
+          PLAYWRIGHT_HTML_OPEN=never
+          npx playwright test
+          --config apps/omnia-reader-e2e/playwright.config.ts
+          --project=${{ matrix.browser }}
+          --workers=1
+          --shard=${{ matrix.shard }}
+
+  browser-specialized:
+    name: Browser PWA and performance budgets
     needs: web
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -73,17 +117,29 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
 
-      - name: Run active browser journeys
-        run: npx nx run omnia-reader-e2e:e2e
+      - name: Build the production web application
+        run: npx nx build omnia-reader --configuration production --skip-nx-cache
 
       - name: Run installed-PWA offline journey
-        run: PWA_E2E=1 npx nx run omnia-reader-e2e:e2e -- --project=chromium src/offline.spec.ts
+        run: >-
+          PLAYWRIGHT_HTML_OPEN=never PWA_E2E=1
+          npx playwright test
+          --config apps/omnia-reader-e2e/playwright.config.ts
+          --project=chromium
+          --workers=1
+          offline.spec.ts
 
       - name: Enforce large-publication performance and memory budgets
-        run: npx nx run omnia-reader-e2e:performance
+        run: >-
+          PLAYWRIGHT_HTML_OPEN=never PERFORMANCE_E2E=1
+          npx playwright test
+          --config apps/omnia-reader-e2e/playwright.config.ts
+          --project=chromium
+          --workers=1
+          performance.spec.ts
 
   desktop:
     name: Desktop bundle (${{ matrix.platform }})

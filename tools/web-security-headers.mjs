@@ -2,7 +2,7 @@ export const WEB_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "base-uri 'self'",
   "connect-src 'self' blob: data:",
-  "font-src 'self' data:",
+  "font-src 'self' data: blob:",
   "form-action 'none'",
   "frame-src 'self' blob:",
   "img-src 'self' data: blob:",

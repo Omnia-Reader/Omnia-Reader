@@ -87,8 +87,10 @@ TTL. After the maximum session TTL has elapsed across all replicas, remove the
 retired keys. Do not reuse the bridge token, Redis password, GitHub secret, or
 MEGA credentials as a session key.
 
-The GitHub App must be installed on the repositories a user may select and
-must have repository Contents read/write permission. The adapter:
+The GitHub App must be installed on the repositories a user may select. It
+needs repository Contents read/write permission for synchronization and
+Administration read/write permission if users may create a private sync
+repository from Omnia Reader. The adapter:
 
 1. Validates OAuth `state`, exchanges the callback code, and rotates the
    HttpOnly session.
@@ -99,6 +101,11 @@ must have repository Contents read/write permission. The adapter:
    and verifies the exact SHA-256 and length, invokes the LFS verification
    action when supplied, and only then commits `.gitattributes` and the
    canonical pointer.
+5. Can create an initialized private repository through `POST /user/repos`.
+   When the App installation covers all repositories, the new destination is
+   selected immediately. For installations limited to selected repositories,
+   the user is sent to GitHub installation settings to grant access before
+   refreshing the list.
 
 Live credentialed GitHub integration tests, Redis HA/backup monitoring, and
 provider quota/rate-limit deployment monitoring remain release gates.
@@ -218,19 +225,20 @@ restore obsolete user data.
 
 Base path: `/api/sync/github`
 
-| Method   | Path                                  | Result                                                                      |
-| -------- | ------------------------------------- | --------------------------------------------------------------------------- |
-| `GET`    | `/session`                            | Authenticated user and selected repository, or `{ "authenticated": false }` |
-| `GET`    | `/auth/start?returnTo=/settings/sync` | Starts GitHub App authorization                                             |
-| `DELETE` | `/session`                            | Revokes/deletes the gateway session                                         |
-| `GET`    | `/repositories`                       | `{ "repositories": GitHubRepository[] }`                                    |
-| `PUT`    | `/repository`                         | Selects `{ "repositoryId": number }`                                        |
-| `GET`    | `/files?prefix=...`                   | `{ "files": RemoteDocument[] }`                                             |
-| `GET`    | `/file?path=...`                      | A document; `404` if absent                                                 |
-| `PUT`    | `/file`                               | Creates/replaces a document; `409` on revision mismatch                     |
-| `GET`    | `/lfs/object/metadata?path=...`       | Object metadata; `404` if absent                                            |
-| `GET`    | `/lfs/object?path=...`                | Verified publication bytes                                                  |
-| `PUT`    | `/lfs/object?path=...`                | Uploads/verifies a Git LFS object                                           |
+| Method   | Path                                  | Result                                                                       |
+| -------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| `GET`    | `/session`                            | Authenticated user and selected repository, or `{ "authenticated": false }`  |
+| `GET`    | `/auth/start?returnTo=/settings/sync` | Starts GitHub App authorization                                              |
+| `DELETE` | `/session`                            | Revokes/deletes the gateway session                                          |
+| `GET`    | `/repositories`                       | `{ "repositories": GitHubRepository[] }`                                     |
+| `PUT`    | `/repository`                         | Selects `{ "repositoryId": number }`                                         |
+| `POST`   | `/repository`                         | Creates private `{ "name": string }`, then selects it when App access exists |
+| `GET`    | `/files?prefix=...`                   | `{ "files": RemoteDocument[] }`                                              |
+| `GET`    | `/file?path=...`                      | A document; `404` if absent                                                  |
+| `PUT`    | `/file`                               | Creates/replaces a document; `409` on revision mismatch                      |
+| `GET`    | `/lfs/object/metadata?path=...`       | Object metadata; `404` if absent                                             |
+| `GET`    | `/lfs/object?path=...`                | Verified publication bytes                                                   |
+| `PUT`    | `/lfs/object?path=...`                | Uploads/verifies a Git LFS object                                            |
 
 The gateway owns `.gitattributes` with:
 

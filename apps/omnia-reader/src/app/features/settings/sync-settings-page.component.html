@@ -170,6 +170,72 @@
             </select>
           </label>
 
+          <section
+            class="rounded-xl border border-stone-200 bg-stone-50 p-4"
+            aria-labelledby="create-github-repository-heading"
+          >
+            <h2
+              id="create-github-repository-heading"
+              class="m-0 text-base font-semibold"
+            >
+              Create a sync repository
+            </h2>
+            <p
+              id="create-github-repository-help"
+              class="mt-1 text-sm text-stone-600"
+            >
+              Omnia Reader creates a private repository initialized for Git LFS.
+              It never exposes a personal access token to this browser.
+            </p>
+            <form
+              class="flex flex-col gap-3 sm:flex-row sm:items-end"
+              (submit)="
+                createRepository(newRepositoryName.value);
+                $event.preventDefault()
+              "
+            >
+              <label class="min-w-0 flex-1">
+                <span class="mb-1 block text-sm font-semibold">
+                  Repository name
+                </span>
+                <input
+                  #newRepositoryName
+                  class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+                  name="repositoryName"
+                  value="omnia-reader-library"
+                  maxlength="100"
+                  pattern="[A-Za-z0-9._-]+"
+                  aria-describedby="create-github-repository-help"
+                  [disabled]="busy"
+                  required
+                />
+              </label>
+              <button mat-stroked-button type="submit" [disabled]="busy">
+                Create private repository
+              </button>
+            </form>
+            <div class="mt-3 flex flex-wrap gap-3">
+              @if (repositoryInstallationSettingsUrl) {
+                <a
+                  mat-flat-button
+                  [href]="repositoryInstallationSettingsUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Grant repository access
+                </a>
+              }
+              <button
+                mat-button
+                type="button"
+                [disabled]="busy"
+                (click)="refreshRepositories()"
+              >
+                Refresh repositories
+              </button>
+            </div>
+          </section>
+
           <div class="flex flex-wrap gap-3">
             <button
               mat-flat-button

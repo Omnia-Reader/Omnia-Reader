@@ -2,7 +2,7 @@ import type { PublicationFormat } from './publication';
 
 export type ReaderTheme = 'light' | 'sepia' | 'dark';
 export type EpubFontFamily = 'serif' | 'sans-serif';
-export type EpubFlow = 'paginated' | 'scrolled';
+export type EpubFlow = 'auto' | 'paginated' | 'scrolled';
 export type EpubSpread = 'none' | 'auto';
 export type PdfZoomMode = 'fit-width' | 'fit-page' | 'custom';
 export type PdfRotation = 0 | 90 | 180 | 270;
@@ -39,7 +39,7 @@ export const DEFAULT_EPUB_READER_PREFERENCES: Readonly<EpubReaderPreferences> =
     paragraphSpacingRem: 0.75,
     marginPercent: 5,
     maxLineWidthRem: 44,
-    flow: 'paginated',
+    flow: 'auto',
     spread: 'auto',
   };
 

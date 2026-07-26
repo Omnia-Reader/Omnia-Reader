@@ -53,11 +53,18 @@ import {
   MegaGateway,
   MegaGatewayClient,
 } from '@omnia-reader/sync/mega';
-import { REMOTE_SYNC_ENABLED } from './app-capabilities';
+import {
+  clearUnavailableRemoteSyncSelection,
+  LocalOnlySyncOperationJournal,
+  REMOTE_SYNC_ENABLED,
+} from './app-capabilities';
 import { appRoutes } from './app.routes';
 import { BackNavigationService } from './back-navigation.service';
 import { BookDeepLinkService } from './book-deep-link.service';
-import { PublicationImportService } from './features/library/publication-import.service';
+import {
+  describePublicationImportFailures,
+  PublicationImportService,
+} from './features/library/publication-import.service';
 import { ReaderRouteReuseStrategy } from './reader-route-reuse-strategy';
 
 function createReaderEngineRegistry(): ReaderEngineRegistry {
@@ -135,7 +142,14 @@ async function initializePublicationIngress(): Promise<void> {
     async (sources) => {
       try {
         publicationImports.clearError();
-        const books = await publicationImports.importPublications(sources);
+        const result = await publicationImports.importPublications(sources);
+        const { books } = result;
+        const importError = describePublicationImportFailures(result);
+        if (importError) {
+          publicationImports.reportError(new Error(importError));
+          await router.navigate(['/library']);
+          return;
+        }
         if (books.length === 1) {
           await router.navigate(['/reader', books[0].id]);
         } else if (books.length > 1) {
@@ -194,46 +208,58 @@ export const appConfig: ApplicationConfig = {
       provide: ReaderEngineRegistry,
       useFactory: createReaderEngineRegistry,
     },
-    SyncActivityNotifier,
-    {
-      provide: SYNC_OPERATION_JOURNAL,
-      useFactory: createSyncJournal,
-      deps: [SyncActivityNotifier],
-    },
-    {
-      provide: GITHUB_GATEWAY,
-      useFactory: () => new GitHubGatewayClient(),
-    },
-    {
-      provide: MEGA_GATEWAY,
-      useFactory: () => new MegaGatewayClient(),
-    },
-    {
-      provide: SYNC_PROVIDER_SELECTION,
-      useFactory: () => new BrowserSyncProviderSelection(),
-    },
-    {
-      provide: ACTIVE_SYNC_TRANSPORT,
-      useFactory: createSelectedSyncTransport,
-      deps: [SYNC_PROVIDER_SELECTION, GITHUB_GATEWAY, MEGA_GATEWAY],
-    },
-    {
-      provide: LIBRARY_SYNC_SERVICE,
-      useFactory: createLibrarySyncService,
-      deps: [ACTIVE_SYNC_TRANSPORT, SYNC_OPERATION_JOURNAL, LIBRARY_REPOSITORY],
-    },
-    {
-      provide: AUTO_SYNC_SCHEDULER,
-      useFactory: createAutoSyncScheduler,
-      deps: [
-        LIBRARY_SYNC_SERVICE,
-        SYNC_PROVIDER_SELECTION,
-        SyncActivityNotifier,
-      ],
-    },
     ...(REMOTE_SYNC_ENABLED
-      ? [provideAppInitializer(initializeAutomaticSync)]
-      : []),
+      ? [
+          SyncActivityNotifier,
+          {
+            provide: SYNC_OPERATION_JOURNAL,
+            useFactory: createSyncJournal,
+            deps: [SyncActivityNotifier],
+          },
+          {
+            provide: GITHUB_GATEWAY,
+            useFactory: () => new GitHubGatewayClient(),
+          },
+          {
+            provide: MEGA_GATEWAY,
+            useFactory: () => new MegaGatewayClient(),
+          },
+          {
+            provide: SYNC_PROVIDER_SELECTION,
+            useFactory: () => new BrowserSyncProviderSelection(),
+          },
+          {
+            provide: ACTIVE_SYNC_TRANSPORT,
+            useFactory: createSelectedSyncTransport,
+            deps: [SYNC_PROVIDER_SELECTION, GITHUB_GATEWAY, MEGA_GATEWAY],
+          },
+          {
+            provide: LIBRARY_SYNC_SERVICE,
+            useFactory: createLibrarySyncService,
+            deps: [
+              ACTIVE_SYNC_TRANSPORT,
+              SYNC_OPERATION_JOURNAL,
+              LIBRARY_REPOSITORY,
+            ],
+          },
+          {
+            provide: AUTO_SYNC_SCHEDULER,
+            useFactory: createAutoSyncScheduler,
+            deps: [
+              LIBRARY_SYNC_SERVICE,
+              SYNC_PROVIDER_SELECTION,
+              SyncActivityNotifier,
+            ],
+          },
+          provideAppInitializer(initializeAutomaticSync),
+        ]
+      : [
+          {
+            provide: SYNC_OPERATION_JOURNAL,
+            useFactory: () => new LocalOnlySyncOperationJournal(),
+          },
+          provideAppInitializer(clearUnavailableRemoteSyncSelection),
+        ]),
     provideAppInitializer(initializePublicationIngress),
     provideAppInitializer(initializeBookDeepLinks),
     provideAppInitializer(initializeBackNavigation),

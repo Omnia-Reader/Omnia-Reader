@@ -18,6 +18,14 @@ interface SimulatedObject {
   content: Buffer;
 }
 
+interface SimulatedGitRepository {
+  id: number;
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+  canPush: boolean;
+}
+
 interface SimulatedSyncGatewayOptions {
   interruptFirstObjectUpload?: boolean;
   conflictFirstBookManifestWrite?: boolean;
@@ -36,6 +44,16 @@ export class SimulatedSyncGateway {
   private interruptNextObjectUpload: boolean;
   private conflictNextBookManifestWrite: boolean;
   private readonly expectedPublication?: Buffer;
+  private readonly gitRepositories: SimulatedGitRepository[] = [
+    {
+      id: 1,
+      fullName: 'omnia-reader/e2e-library',
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    },
+  ];
+  private selectedGitRepository = this.gitRepositories[0] ?? null;
 
   constructor(
     readonly provider: SimulatedSyncProvider,
@@ -83,15 +101,7 @@ export class SimulatedSyncGateway {
     }
     if (this.provider === 'git' && path === '/repositories') {
       await this.fulfillJson(route, {
-        repositories: [
-          {
-            id: 1,
-            fullName: 'omnia-reader/e2e-library',
-            private: true,
-            defaultBranch: 'main',
-            canPush: true,
-          },
-        ],
+        repositories: this.gitRepositories,
       });
       return;
     }
@@ -109,9 +119,51 @@ export class SimulatedSyncGateway {
       return;
     }
     if (
-      (this.provider === 'git' && path === '/repository') ||
+      this.provider === 'git' &&
+      path === '/repository' &&
+      method === 'POST'
+    ) {
+      const value: unknown = request.postDataJSON();
+      const name =
+        isRecord(value) && typeof value['name'] === 'string'
+          ? value['name']
+          : '';
+      if (!/^[a-z0-9._-]{1,100}$/i.test(name)) {
+        await this.fulfillJson(route, { message: 'Invalid repository' }, 400);
+        return;
+      }
+      const repository: SimulatedGitRepository = {
+        id: 2,
+        fullName: `omnia-e2e/${name}`,
+        private: true,
+        defaultBranch: 'main',
+        canPush: true,
+      };
+      this.gitRepositories.push(repository);
+      this.selectedGitRepository = repository;
+      await this.fulfillJson(route, {
+        repository,
+        selected: true,
+        session: this.session(),
+        installationSettingsUrl: null,
+      });
+      return;
+    }
+    if (
+      (this.provider === 'git' && path === '/repository' && method === 'PUT') ||
       (this.provider === 'mega' && path === '/folder')
     ) {
+      if (this.provider === 'git') {
+        const value: unknown = request.postDataJSON();
+        const repositoryId =
+          isRecord(value) && typeof value['repositoryId'] === 'number'
+            ? value['repositoryId']
+            : 0;
+        this.selectedGitRepository =
+          this.gitRepositories.find(
+            (repository) => repository.id === repositoryId,
+          ) ?? this.selectedGitRepository;
+      }
       await this.fulfillJson(route, this.session());
       return;
     }
@@ -190,13 +242,7 @@ export class SimulatedSyncGateway {
       return {
         authenticated: true,
         user: { id: 1, login: 'omnia-e2e', avatarUrl: '' },
-        repository: {
-          id: 1,
-          fullName: 'omnia-reader/e2e-library',
-          private: true,
-          defaultBranch: 'main',
-          canPush: true,
-        },
+        repository: this.selectedGitRepository,
       };
     }
     return {

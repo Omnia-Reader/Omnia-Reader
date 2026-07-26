@@ -1,6 +1,7 @@
 import type {
   Book,
   Contents,
+  GlobalLayout,
   LandmarkItem,
   NavItem,
   Rendition,
@@ -21,6 +22,7 @@ import {
   ReaderNavigationDirection,
   ReaderPageStatus,
   ReaderPreferences,
+  ReaderZoomDirection,
   SearchResult,
   selectionHasText,
   startTouchEventNavigationGesture,
@@ -30,6 +32,7 @@ import {
   touchEventNavigationDirection,
   touchNavigationDirection,
   wheelNavigationDirection,
+  wheelZoomDirection,
 } from '@omnia-reader/reader/domain';
 import {
   epubLocationToLocator,
@@ -42,6 +45,20 @@ export type EpubRuntimeLoader = () => Promise<
 
 const WHEEL_NAVIGATION_INTERVAL_MS = 400;
 const EPUB_LOCATION_BREAK_SIZE = 1_600;
+const EPUB_READER_THEME_STYLE_ID = 'epubjs-inserted-css-omnia-reader';
+type AuthoredEpubFlow = 'paginated' | 'scrolled';
+
+class InvalidEpubError extends Error {
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super(
+      'This EPUB is damaged or unsupported. Verify the file in another reader or import a repaired copy.',
+    );
+    this.name = 'InvalidEpubError';
+    this.cause = cause;
+  }
+}
 
 export class EpubReaderEngine implements ReaderEngine {
   private book: Book | null = null;
@@ -49,10 +66,22 @@ export class EpubReaderEngine implements ReaderEngine {
   private viewport: HTMLElement | null = null;
   private toc: readonly TocEntry[] = [];
   private locator: PublicationLocator | null = null;
+  private lastNotifiedLocator = '';
+  private pendingExpectedSection: {
+    readonly href: string;
+    readonly index?: number;
+  } | null = null;
   private currentPageStatus: ReaderPageStatus | null = null;
   private readingDirection: PublicationReadingDirection = 'ltr';
   private publicationLayout: PublicationLayout = 'reflowable';
   private publicationSpread: EpubReaderPreferences['spread'] = 'auto';
+  private publicationOrientation = 'auto';
+  private publicationFlow: AuthoredEpubFlow = 'paginated';
+  private currentSectionLayout: PublicationLayout = 'reflowable';
+  private currentSectionSpread: EpubReaderPreferences['spread'] = 'auto';
+  private currentSectionOrientation = 'auto';
+  private currentSectionFlow: AuthoredEpubFlow = 'paginated';
+  private readerThemeCss = '';
   private preferences: EpubReaderPreferences = {
     ...DEFAULT_EPUB_READER_PREFERENCES,
   };
@@ -67,7 +96,13 @@ export class EpubReaderEngine implements ReaderEngine {
   private monitoredSelectionKey: string | null = null;
   private monitoredSelectionSince = 0;
   private lastWheelNavigationAt = Number.NEGATIVE_INFINITY;
+  private sectionPresentationFrame: number | null = null;
+  private pendingSectionPresentation: {
+    readonly section: Section;
+    readonly rendition: Rendition;
+  } | null = null;
   private readonly handledWheelEvents = new WeakSet<Event>();
+  private readonly handledKeyboardEvents = new WeakSet<Event>();
   private readonly relocationListeners = new Set<
     (locator: PublicationLocator) => void
   >();
@@ -76,6 +111,9 @@ export class EpubReaderEngine implements ReaderEngine {
   >();
   private readonly navigationRequestListeners = new Set<
     (direction: ReaderNavigationDirection) => void
+  >();
+  private readonly zoomRequestListeners = new Set<
+    (direction: ReaderZoomDirection) => void
   >();
   private readonly annotationActivationListeners = new Set<
     (annotationId: string) => void
@@ -142,6 +180,10 @@ export class EpubReaderEngine implements ReaderEngine {
     // A rendition may recycle an iframe and its Document wrapper between
     // spine items. Refresh listeners whenever epub.ts reports new Contents,
     // because WebKit clears listeners while repopulating the reused document.
+    this.applyReaderThemeToDocument(
+      contents.document,
+      this.currentSectionLayout !== 'pre-paginated',
+    );
     this.attachContentDocument(contents.document, contents, true);
   };
   private readonly attachContentDocument = (
@@ -174,6 +216,10 @@ export class EpubReaderEngine implements ReaderEngine {
       (anchor as HTMLElement).onclick = null;
     }
     document.addEventListener('keydown', this.handleContentKeydown);
+    document.defaultView?.addEventListener(
+      'keydown',
+      this.handleContentKeydown,
+    );
     for (const target of this.selectionActionTargets(document)) {
       target.addEventListener('wheel', this.handleContentWheel, {
         passive: false,
@@ -333,6 +379,10 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentDocuments.add(document);
   };
   private readonly handleContentKeydown = (event: KeyboardEvent): void => {
+    if (this.handledKeyboardEvents.has(event)) {
+      return;
+    }
+    this.handledKeyboardEvents.add(event);
     const direction = keyboardNavigationDirection(event, this.readingDirection);
     if (!direction) {
       return;
@@ -354,10 +404,15 @@ export class EpubReaderEngine implements ReaderEngine {
     ) {
       return;
     }
-    if (
-      this.publicationLayout !== 'pre-paginated' &&
-      this.preferences.flow !== 'paginated'
-    ) {
+    const zoomDirection = wheelZoomDirection(wheelEvent);
+    if (zoomDirection) {
+      event.preventDefault();
+      for (const listener of this.zoomRequestListeners) {
+        listener(zoomDirection);
+      }
+      return;
+    }
+    if (this.effectiveFlow() === 'scrolled-doc') {
       return;
     }
     const direction = wheelNavigationDirection(wheelEvent);
@@ -375,6 +430,11 @@ export class EpubReaderEngine implements ReaderEngine {
     }
   };
   private readonly handleRelocated = (location: unknown): void => {
+    if (this.rendition) {
+      const section = this.currentSection(location);
+      this.prepareSectionTheme(section);
+      this.scheduleSectionPresentation(section, this.rendition);
+    }
     this.updateLocator(location, true);
   };
   private readonly handleSelected = (
@@ -439,36 +499,60 @@ export class EpubReaderEngine implements ReaderEngine {
     const bytes =
       opened instanceof Blob ? await opened.arrayBuffer() : opened.slice(0);
     const { default: ePub } = await this.runtimeLoader();
-    this.book = ePub(bytes);
-    this.book.spine.hooks.content.register(this.sanitizeContent);
+    try {
+      this.book = ePub(bytes);
+      // epub.ts rejects every deferred `loaded` promise when opening fails.
+      // Observe the complete startup set immediately so one malformed package
+      // does not leak sibling unhandled rejections after the caller catches
+      // the primary failure.
+      for (const startup of [
+        this.book.opened,
+        this.book.ready,
+        ...Object.values(this.book.loaded),
+      ]) {
+        void startup?.catch(() => undefined);
+      }
+      this.book.spine.hooks.content.register(this.sanitizeContent);
 
-    const [metadata, navigation] = await Promise.all([
-      this.book.loaded.metadata,
-      this.book.loaded.navigation,
-      this.book.ready,
-    ]);
-    this.readingDirection = metadata.direction === 'rtl' ? 'rtl' : 'ltr';
-    this.publicationLayout =
-      metadata.layout === 'pre-paginated' ? 'pre-paginated' : 'reflowable';
-    this.publicationSpread = metadata.spread === 'none' ? 'none' : 'auto';
-    const unnumberedTargets = this.unnumberedNavigationTargets(
-      navigation.landmarks ?? [],
-    );
-    this.toc = navigation.toc.map((item) =>
-      this.mapTocEntry(item, '', unnumberedTargets),
-    );
-    const cover = await this.loadCover();
+      const [metadata, navigation] = await Promise.all([
+        this.book.loaded.metadata,
+        this.book.loaded.navigation,
+        this.book.ready,
+      ]);
+      // epub.ts deliberately starts archived asset and CSS URL replacement
+      // outside `Book.ready`. Rendering or destroying the book before this
+      // promise settles can omit embedded fonts and races `Book.destroy()` in
+      // slower WebKit environments.
+      await this.book.replacementsReady;
+      this.readingDirection = metadata.direction === 'rtl' ? 'rtl' : 'ltr';
+      this.publicationLayout =
+        metadata.layout === 'pre-paginated' ? 'pre-paginated' : 'reflowable';
+      this.publicationSpread = metadata.spread === 'none' ? 'none' : 'auto';
+      this.publicationOrientation = metadata.orientation || 'auto';
+      this.publicationFlow = authoredEpubFlow(metadata.flow);
+      this.setCurrentSectionPresentation();
+      const unnumberedTargets = this.unnumberedNavigationTargets(
+        navigation.landmarks ?? [],
+      );
+      this.toc = navigation.toc.map((item) =>
+        this.mapTocEntry(item, '', unnumberedTargets),
+      );
+      const cover = await this.loadCover();
 
-    return {
-      title: metadata.title || source.name,
-      authors: metadata.creator ? [metadata.creator] : [],
-      language: metadata.language || undefined,
-      publisher: metadata.publisher || undefined,
-      identifier: metadata.identifier || undefined,
-      readingDirection: this.readingDirection,
-      layout: this.publicationLayout,
-      cover,
-    };
+      return {
+        title: metadata.title || source.name,
+        authors: metadata.creator ? [metadata.creator] : [],
+        language: metadata.language || undefined,
+        publisher: metadata.publisher || undefined,
+        identifier: metadata.identifier || undefined,
+        readingDirection: this.readingDirection,
+        layout: this.publicationLayout,
+        cover,
+      };
+    } catch (cause) {
+      await this.close().catch(() => undefined);
+      throw new InvalidEpubError(cause);
+    }
   }
 
   async mount(viewport: HTMLElement): Promise<void> {
@@ -483,7 +567,8 @@ export class EpubReaderEngine implements ReaderEngine {
     viewport.setAttribute('aria-label', 'EPUB publication');
     viewport.dataset['publicationLayout'] = this.publicationLayout;
     viewport.setAttribute('dir', this.readingDirection);
-    const fixedLayout = this.publicationLayout === 'pre-paginated';
+    this.setCurrentSectionPresentation(this.book.spine.get?.() ?? undefined);
+    const fixedLayout = this.currentSectionLayout === 'pre-paginated';
     // `method` is supported by epub.ts at runtime but is missing from its
     // public RenditionOptions declaration.
     const renditionOptions = {
@@ -491,13 +576,10 @@ export class EpubReaderEngine implements ReaderEngine {
       height: '100%',
       manager: 'default',
       method: 'write',
-      layout: this.publicationLayout,
-      flow: fixedLayout
-        ? 'paginated'
-        : this.preferences.flow === 'scrolled'
-          ? 'scrolled-doc'
-          : 'paginated',
+      layout: this.currentSectionLayout,
+      flow: this.effectiveFlow(),
       spread: this.effectiveSpread(),
+      orientation: this.currentSectionOrientation,
       direction: this.readingDirection,
       defaultDirection: this.readingDirection,
       gap: fixedLayout
@@ -531,6 +613,12 @@ export class EpubReaderEngine implements ReaderEngine {
   }
 
   async close(): Promise<void> {
+    const view = this.viewport?.ownerDocument.defaultView;
+    if (this.sectionPresentationFrame !== null && view) {
+      view.cancelAnimationFrame(this.sectionPresentationFrame);
+    }
+    this.sectionPresentationFrame = null;
+    this.pendingSectionPresentation = null;
     if (this.selectionMonitor) {
       clearInterval(this.selectionMonitor);
       this.selectionMonitor = null;
@@ -572,6 +660,8 @@ export class EpubReaderEngine implements ReaderEngine {
     this.viewport?.removeAttribute('role');
     this.viewport?.removeAttribute('aria-label');
     this.viewport?.removeAttribute('data-publication-layout');
+    this.viewport?.removeAttribute('data-current-section-layout');
+    this.viewport?.removeAttribute('data-current-section-flow');
     this.viewport?.removeAttribute('dir');
     this.viewport?.replaceChildren();
     this.rendition = null;
@@ -579,10 +669,19 @@ export class EpubReaderEngine implements ReaderEngine {
     this.viewport = null;
     this.toc = [];
     this.locator = null;
+    this.lastNotifiedLocator = '';
+    this.pendingExpectedSection = null;
     this.currentPageStatus = null;
     this.readingDirection = 'ltr';
     this.publicationLayout = 'reflowable';
     this.publicationSpread = 'auto';
+    this.publicationOrientation = 'auto';
+    this.publicationFlow = 'paginated';
+    this.currentSectionLayout = 'reflowable';
+    this.currentSectionSpread = 'auto';
+    this.currentSectionOrientation = 'auto';
+    this.currentSectionFlow = 'paginated';
+    this.readerThemeCss = '';
     this.annotations = [];
     this.appliedAnnotationCfis.clear();
     this.selectedDocument = null;
@@ -605,10 +704,7 @@ export class EpubReaderEngine implements ReaderEngine {
 
   pageStatus(): ReaderPageStatus | null {
     this.updateLocator(this.rendition?.currentLocation(), false);
-    if (
-      this.publicationLayout !== 'pre-paginated' &&
-      this.preferences.flow === 'scrolled'
-    ) {
+    if (this.effectiveFlow() === 'scrolled-doc') {
       return null;
     }
     return this.currentPageStatus;
@@ -636,6 +732,13 @@ export class EpubReaderEngine implements ReaderEngine {
   ): () => void {
     this.navigationRequestListeners.add(listener);
     return () => this.navigationRequestListeners.delete(listener);
+  }
+
+  onZoomRequested(
+    listener: (direction: ReaderZoomDirection) => void,
+  ): () => void {
+    this.zoomRequestListeners.add(listener);
+    return () => this.zoomRequestListeners.delete(listener);
   }
 
   onExternalLinkRequested(listener: (url: string) => void): () => void {
@@ -671,17 +774,19 @@ export class EpubReaderEngine implements ReaderEngine {
 
     this.preferences = { ...preferences };
     if (this.rendition) {
-      this.rendition.flow(
-        this.publicationLayout === 'pre-paginated'
-          ? 'paginated'
-          : preferences.flow === 'scrolled'
-            ? 'scrolled-doc'
-            : 'paginated',
-      );
-      this.rendition.spread(this.effectiveSpread());
-      this.rendition.direction(this.readingDirection);
+      const rendition = this.rendition;
+      rendition.flow(this.effectiveFlow());
+      this.updateCurrentSectionFlowDataset();
+      rendition.spread(this.effectiveSpread());
+      rendition.direction(this.readingDirection);
       this.applyPreferencesToRendition();
-      await this.rendition.reportLocation();
+      await this.refreshRenditionLocation(rendition, false);
+      // epub.ts can repopulate a reused iframe while applying flow/theme
+      // changes. Reinstall document handlers after that lifecycle completes so
+      // keyboard, wheel, selection, and link behavior survive reader zoom.
+      if (this.rendition === rendition) {
+        this.attachRenditionContentHandlers(true);
+      }
     }
   }
 
@@ -700,9 +805,12 @@ export class EpubReaderEngine implements ReaderEngine {
       }
       target = fragment ? `${section.href}#${fragment}` : section.href;
     }
+    const targetSection = this.sectionForTarget(target);
+    this.prepareSectionTheme(targetSection);
     await rendition.display(target);
+    this.applySectionPresentation(targetSection, rendition);
     this.attachRenditionContentHandlers();
-    await this.refreshRenditionLocation(rendition);
+    await this.refreshRenditionLocation(rendition, true, targetSection);
   }
 
   async goToProgression(totalProgression: number): Promise<void> {
@@ -728,23 +836,51 @@ export class EpubReaderEngine implements ReaderEngine {
       throw new Error('The requested book position is not available');
     }
 
+    const targetSection = this.sectionForTarget(target);
+    this.prepareSectionTheme(targetSection);
     await rendition.display(target);
+    this.applySectionPresentation(targetSection, rendition);
     this.attachRenditionContentHandlers();
-    await this.refreshRenditionLocation(rendition);
+    await this.refreshRenditionLocation(rendition, true, targetSection);
   }
 
   async next(): Promise<void> {
     const rendition = this.requireRendition();
+    this.updateLocator(rendition.currentLocation(), false);
+    const targetSection =
+      this.currentPageStatus &&
+      this.currentPageStatus.current >= this.currentPageStatus.total
+        ? this.currentSection()?.next?.()
+        : undefined;
+    this.prepareSectionTheme(targetSection);
     await rendition.next();
+    const renderedSection =
+      this.renderedSection(rendition, 'next') ?? targetSection;
+    this.applySectionPresentation(
+      renderedSection ?? this.currentSection(rendition.currentLocation()),
+      rendition,
+    );
     this.attachRenditionContentHandlers();
-    await this.refreshRenditionLocation(rendition);
+    await this.refreshRenditionLocation(rendition, true, renderedSection);
   }
 
   async previous(): Promise<void> {
     const rendition = this.requireRendition();
+    this.updateLocator(rendition.currentLocation(), false);
+    const targetSection =
+      this.currentPageStatus && this.currentPageStatus.current <= 1
+        ? this.currentSection()?.prev?.()
+        : undefined;
+    this.prepareSectionTheme(targetSection);
     await rendition.prev();
+    const renderedSection =
+      this.renderedSection(rendition, 'previous') ?? targetSection;
+    this.applySectionPresentation(
+      renderedSection ?? this.currentSection(rendition.currentLocation()),
+      rendition,
+    );
     this.attachRenditionContentHandlers();
-    await this.refreshRenditionLocation(rendition);
+    await this.refreshRenditionLocation(rendition, true, renderedSection);
   }
 
   async *search(query: string): AsyncIterable<SearchResult> {
@@ -913,6 +1049,10 @@ export class EpubReaderEngine implements ReaderEngine {
 
   private detachContentDocument(document: Document): void {
     document.removeEventListener('keydown', this.handleContentKeydown);
+    document.defaultView?.removeEventListener(
+      'keydown',
+      this.handleContentKeydown,
+    );
     for (const target of this.selectionActionTargets(document)) {
       target.removeEventListener('wheel', this.handleContentWheel);
     }
@@ -1011,12 +1151,15 @@ export class EpubReaderEngine implements ReaderEngine {
         : href
       : (this.book?.path?.relative(resolvedHref) ?? href);
     const rendition = this.rendition;
+    const targetSection = this.sectionForTarget(target);
+    this.prepareSectionTheme(targetSection);
     void rendition
       .display(target)
       .then(async () => {
         if (this.rendition !== rendition) {
           return;
         }
+        this.applySectionPresentation(targetSection, rendition);
         this.attachRenditionContentHandlers();
         await this.refreshRenditionLocation(rendition);
       })
@@ -1026,23 +1169,56 @@ export class EpubReaderEngine implements ReaderEngine {
   private async refreshRenditionLocation(
     rendition: Rendition,
     notify = true,
+    expectedSection?: Section,
   ): Promise<void> {
-    // epub.ts deliberately calculates locations asynchronously. `display()`
-    // can resolve once a new spine document is visible while `currentLocation`
-    // still describes the previous document (observed in Firefox). Its
-    // documented reportLocation() contract completes the calculation and
-    // emits `relocated`; the explicit read also covers runtimes that suppress
-    // a duplicate event.
+    // epub.ts resolves reportLocation() after queueing its requestAnimationFrame,
+    // not after updating Rendition.location. `display()` can therefore resolve
+    // once a new spine document is visible while currentLocation() still
+    // describes the previous document (observed in Firefox). Queue one frame
+    // behind epub.ts before reading, while the explicit read still covers
+    // runtimes that suppress a duplicate relocated event.
     await rendition.reportLocation();
+    const view = this.viewport?.ownerDocument.defaultView;
+    if (view) {
+      await new Promise<void>((resolve) =>
+        view.requestAnimationFrame(() => resolve()),
+      );
+    }
     if (this.rendition === rendition) {
-      this.updateLocator(rendition.currentLocation(), notify);
+      this.updateLocator(rendition.currentLocation(), notify, expectedSection);
     }
   }
 
-  private updateLocator(location: unknown, notify: boolean): void {
+  private updateLocator(
+    location: unknown,
+    notify: boolean,
+    expectedSection?: Section,
+  ): void {
     const locator = epubLocationToLocator(location);
     if (!locator) {
       return;
+    }
+    if (expectedSection?.href) {
+      this.pendingExpectedSection = {
+        href: expectedSection.href,
+        ...(expectedSection.index !== undefined
+          ? { index: expectedSection.index }
+          : {}),
+      };
+    }
+    const expected = this.pendingExpectedSection;
+    if (expected && locator.href === expected.href) {
+      this.pendingExpectedSection = null;
+    } else if (expected) {
+      locator.href = expected.href;
+      locator.locations = {
+        ...(expected.index !== undefined
+          ? { position: expected.index + 1 }
+          : {}),
+        ...(locator.locations?.totalProgression !== undefined
+          ? { totalProgression: locator.locations.totalProgression }
+          : {}),
+      };
     }
 
     const cfi = locator.locations?.fragments?.[0];
@@ -1067,11 +1243,12 @@ export class EpubReaderEngine implements ReaderEngine {
       }
     }
     this.currentPageStatus = epubLocationToPageStatus(location);
-    const changed = JSON.stringify(locator) !== JSON.stringify(this.locator);
+    const serializedLocator = JSON.stringify(locator);
     this.locator = locator;
-    if (!notify || !changed) {
+    if (!notify || serializedLocator === this.lastNotifiedLocator) {
       return;
     }
+    this.lastNotifiedLocator = serializedLocator;
     for (const listener of this.relocationListeners) {
       listener(locator);
     }
@@ -1140,7 +1317,10 @@ export class EpubReaderEngine implements ReaderEngine {
         href.startsWith('#') && this.locator?.href
           ? `${this.locator.href}${href}`
           : href;
+      const targetSection = this.sectionForTarget(target);
+      this.prepareSectionTheme(targetSection);
       await rendition.display(target);
+      this.applySectionPresentation(targetSection, rendition);
     } else {
       if (this.locator?.href) {
         await rendition.display(this.locator.href);
@@ -1154,12 +1334,186 @@ export class EpubReaderEngine implements ReaderEngine {
     this.attachRenditionContentHandlers();
   }
 
+  private currentSection(location?: unknown): Section | undefined {
+    if (!this.book) {
+      return undefined;
+    }
+    const sectionIndex = epubLocationSectionIndex(
+      location ?? this.rendition?.currentLocation(),
+    );
+    if (sectionIndex !== undefined) {
+      const indexedSection = this.book.spine.get?.(sectionIndex);
+      if (indexedSection) {
+        return indexedSection;
+      }
+    }
+    return this.book.spine.get?.(this.locator?.href) ?? undefined;
+  }
+
+  private renderedSection(
+    rendition: Rendition,
+    direction: ReaderNavigationDirection,
+  ): Section | undefined {
+    const contents = rendition.getContents();
+    const rendered =
+      direction === 'next' ? contents[contents.length - 1] : contents[0];
+    return rendered && Number.isInteger(rendered.sectionIndex)
+      ? (this.book?.spine.get?.(rendered.sectionIndex) ?? undefined)
+      : undefined;
+  }
+
+  private sectionForTarget(target: string): Section | undefined {
+    return this.book?.spine.get?.(target) ?? undefined;
+  }
+
+  private sectionPresentation(section?: Section): {
+    readonly layout: PublicationLayout;
+    readonly spread: EpubReaderPreferences['spread'];
+    readonly orientation: string;
+    readonly flow: AuthoredEpubFlow;
+  } {
+    const properties = section?.properties ?? [];
+    const layoutProperty = renditionProperty(properties, 'layout');
+    const spreadProperty = renditionProperty(properties, 'spread');
+    const flowProperty = renditionProperty(properties, 'flow');
+    return {
+      layout:
+        layoutProperty === 'pre-paginated'
+          ? 'pre-paginated'
+          : layoutProperty === 'reflowable'
+            ? 'reflowable'
+            : this.publicationLayout,
+      spread:
+        spreadProperty === 'none'
+          ? 'none'
+          : spreadProperty
+            ? 'auto'
+            : this.publicationSpread,
+      orientation:
+        renditionProperty(properties, 'orientation') ??
+        this.publicationOrientation,
+      flow: flowProperty
+        ? authoredEpubFlow(flowProperty)
+        : this.publicationFlow,
+    };
+  }
+
+  private setCurrentSectionPresentation(section?: Section): void {
+    const presentation = this.sectionPresentation(section);
+    this.currentSectionLayout = presentation.layout;
+    this.currentSectionSpread = presentation.spread;
+    this.currentSectionOrientation = presentation.orientation;
+    this.currentSectionFlow = presentation.flow;
+    if (this.viewport) {
+      this.viewport.dataset['currentSectionLayout'] = presentation.layout;
+      this.updateCurrentSectionFlowDataset();
+    }
+  }
+
+  private updateCurrentSectionFlowDataset(): void {
+    if (this.viewport) {
+      this.viewport.dataset['currentSectionFlow'] =
+        this.effectiveFlow() === 'scrolled-doc' ? 'scrolled' : 'paginated';
+    }
+  }
+
+  private prepareSectionTheme(section?: Section): void {
+    if (!this.rendition || !section) {
+      return;
+    }
+    const nextLayout = this.sectionPresentation(section).layout;
+    if (nextLayout === this.currentSectionLayout) {
+      return;
+    }
+    if (nextLayout === 'pre-paginated') {
+      this.rendition.themes.select('default');
+      this.setReaderThemeEnabled(false);
+    } else {
+      this.applyReaderTheme();
+    }
+  }
+
+  private scheduleSectionPresentation(
+    section: Section | undefined,
+    rendition: Rendition,
+  ): void {
+    if (!section) {
+      return;
+    }
+    this.pendingSectionPresentation = { section, rendition };
+    if (this.sectionPresentationFrame !== null) {
+      return;
+    }
+    const view = this.viewport?.ownerDocument.defaultView;
+    if (!view) {
+      this.pendingSectionPresentation = null;
+      this.applySectionPresentation(section, rendition);
+      return;
+    }
+    this.sectionPresentationFrame = view.requestAnimationFrame(() => {
+      this.sectionPresentationFrame = null;
+      const pending = this.pendingSectionPresentation;
+      this.pendingSectionPresentation = null;
+      if (!pending || this.rendition !== pending.rendition) {
+        return;
+      }
+      this.applySectionPresentation(pending.section, pending.rendition);
+    });
+  }
+
+  private applySectionPresentation(
+    section: Section | undefined,
+    rendition: Rendition,
+  ): void {
+    if (!section) {
+      return;
+    }
+    const presentation = this.sectionPresentation(section);
+    const changed =
+      presentation.layout !== this.currentSectionLayout ||
+      presentation.spread !== this.currentSectionSpread ||
+      presentation.orientation !== this.currentSectionOrientation ||
+      presentation.flow !== this.currentSectionFlow;
+    this.setCurrentSectionPresentation(section);
+    if (!changed) {
+      return;
+    }
+
+    const flow = this.effectiveFlow();
+    if (rendition.settings?.flow !== flow) {
+      rendition.flow(flow);
+    }
+    const defaults = rendition.settings?.globalLayoutProperties;
+    const layout: GlobalLayout = {
+      layout: presentation.layout,
+      spread: this.effectiveSpread(),
+      orientation: presentation.orientation,
+      flow,
+      viewport: defaults?.viewport ?? '',
+      minSpreadWidth: defaults?.minSpreadWidth ?? 800,
+      direction: this.readingDirection,
+    };
+    rendition.layout(layout);
+  }
+
   private effectiveSpread(): EpubReaderPreferences['spread'] {
     return this.preferences.spread === 'none' ||
-      (this.publicationLayout === 'pre-paginated' &&
-        this.publicationSpread === 'none')
+      (this.currentSectionLayout === 'pre-paginated' &&
+        this.currentSectionSpread === 'none')
       ? 'none'
       : 'auto';
+  }
+
+  private effectiveFlow(): 'paginated' | 'scrolled-doc' {
+    if (this.preferences.flow === 'paginated') {
+      return 'paginated';
+    }
+    if (this.preferences.flow === 'scrolled') {
+      return 'scrolled-doc';
+    }
+    return this.currentSectionFlow === 'scrolled'
+      ? 'scrolled-doc'
+      : 'paginated';
   }
 
   private applyPreferencesToRendition(): void {
@@ -1167,51 +1521,93 @@ export class EpubReaderEngine implements ReaderEngine {
       return;
     }
     this.rendition.direction(this.readingDirection);
-    if (this.publicationLayout === 'pre-paginated') {
+    if (this.currentSectionLayout === 'pre-paginated') {
       return;
     }
+    this.applyReaderTheme();
+  }
 
+  private applyReaderTheme(): void {
+    if (!this.rendition) {
+      return;
+    }
     const palette = EPUB_THEME_PALETTES[this.preferences.theme];
-    const paginated = this.preferences.flow === 'paginated';
+    const paginated = this.effectiveFlow() === 'paginated';
     const fontFamily =
       this.preferences.fontFamily === 'sans-serif'
         ? 'system-ui, sans-serif'
         : 'Georgia, serif';
-    this.rendition.themes.registerRules('omnia-reader', {
-      'html, body': {
-        color: `${palette.foreground} !important`,
-        'background-color': `${palette.background} !important`,
-      },
-      html: {
-        'box-sizing': 'border-box',
-      },
-      body: {
-        'box-sizing': 'border-box',
-        margin: paginated ? '0 !important' : '0 auto !important',
-        padding: paginated
-          ? '0 !important'
-          : `1.25rem ${this.preferences.marginPercent}% 2rem !important`,
-        'max-width': paginated
-          ? 'none !important'
-          : `${this.preferences.maxLineWidthRem}rem !important`,
-        'font-family': `${fontFamily} !important`,
-        'font-size': `${this.preferences.fontSizePercent}% !important`,
-        'line-height': `${this.preferences.lineHeight} !important`,
-        'overflow-wrap': 'break-word',
-      },
-      p: {
-        'margin-bottom': `${this.preferences.paragraphSpacingRem}rem !important`,
-      },
-      'img, svg, video': {
-        'max-width': '100% !important',
-        height: 'auto !important',
-      },
-      'table, pre': {
-        'max-width': '100% !important',
-        overflow: 'auto',
-      },
-    });
+    this.readerThemeCss = `
+        body {
+          color: ${palette.foreground} !important;
+          background-color: ${palette.background} !important;
+          box-sizing: border-box;
+          margin: ${paginated ? '0' : '0 auto'} !important;
+          padding: ${
+            paginated ? '0' : `1.25rem ${this.preferences.marginPercent}% 2rem`
+          } !important;
+          max-width: ${
+            paginated ? 'none' : `${this.preferences.maxLineWidthRem}rem`
+          } !important;
+          font-family: ${fontFamily} !important;
+          font-size: ${this.preferences.fontSizePercent}% !important;
+          line-height: ${this.preferences.lineHeight} !important;
+          overflow-wrap: break-word;
+        }
+        body p {
+          margin-bottom: ${this.preferences.paragraphSpacingRem}rem !important;
+        }
+        body img,
+        body svg,
+        body video {
+          max-width: 100% !important;
+          height: auto !important;
+        }
+        body table,
+        body pre {
+          max-width: 100% !important;
+          overflow: auto;
+        }
+      `;
+    this.rendition.themes.registerCss('omnia-reader', this.readerThemeCss);
     this.rendition.themes.select('omnia-reader');
+    this.setReaderThemeEnabled(true);
+  }
+
+  private setReaderThemeEnabled(enabled: boolean): void {
+    const documents = new Set(this.contentDocuments);
+    for (const contents of this.rendition?.getContents() ?? []) {
+      documents.add(contents.document);
+    }
+    for (const frame of this.viewport?.querySelectorAll('iframe') ?? []) {
+      if (frame.contentDocument) {
+        documents.add(frame.contentDocument);
+      }
+    }
+    for (const document of documents) {
+      this.applyReaderThemeToDocument(document, enabled);
+    }
+  }
+
+  private applyReaderThemeToDocument(
+    document: Document,
+    enabled: boolean,
+  ): void {
+    const existing = document.getElementById(EPUB_READER_THEME_STYLE_ID);
+    if (!enabled) {
+      existing?.remove();
+      document.body?.classList.remove('omnia-reader');
+      return;
+    }
+    if (!document.head) {
+      return;
+    }
+    const style = existing ?? document.createElement('style');
+    style.id = EPUB_READER_THEME_STYLE_ID;
+    style.textContent = this.readerThemeCss;
+    if (!style.isConnected) {
+      document.head.append(style);
+    }
   }
 
   private applyAnnotationsToRendition(): void {
@@ -1396,14 +1792,17 @@ export class EpubReaderEngine implements ReaderEngine {
     );
   }
 
-  private attachRenditionContentHandlers(): void {
+  private attachRenditionContentHandlers(refreshFrameDocuments = false): void {
     for (const contents of this.rendition?.getContents() ?? []) {
       this.handleRenderedContent(contents);
     }
-    this.attachFrameHandlers();
+    this.attachFrameHandlers(false, refreshFrameDocuments);
   }
 
-  private attachFrameHandlers(captureSelection = false): void {
+  private attachFrameHandlers(
+    captureSelection = false,
+    refreshDocuments = false,
+  ): void {
     for (const frame of this.viewport?.querySelectorAll('iframe') ?? []) {
       if (!this.contentFrames.has(frame)) {
         const loadHandler = (): void => {
@@ -1445,7 +1844,11 @@ export class EpubReaderEngine implements ReaderEngine {
         continue;
       }
       if (frame.contentDocument) {
-        this.attachContentDocument(frame.contentDocument);
+        this.attachContentDocument(
+          frame.contentDocument,
+          undefined,
+          refreshDocuments,
+        );
         if (captureSelection) {
           this.refreshSelectionActionHandler(frame.contentDocument);
           this.monitorDocumentSelection(frame.contentDocument);
@@ -1576,6 +1979,36 @@ function epubPageGap(viewport: HTMLElement, marginPercent: number): number {
   return Math.round(
     Math.min(96, Math.max(24, (width * marginPercent * 2) / 100)),
   );
+}
+
+function renditionProperty(
+  properties: readonly string[],
+  name: 'flow' | 'layout' | 'orientation' | 'spread',
+): string | undefined {
+  const prefix = `rendition:${name}-`;
+  return properties
+    .find((property) => property.startsWith(prefix))
+    ?.slice(prefix.length);
+}
+
+function authoredEpubFlow(value: string | undefined): AuthoredEpubFlow {
+  return value === 'scrolled-doc' || value === 'scrolled-continuous'
+    ? 'scrolled'
+    : 'paginated';
+}
+
+function epubLocationSectionIndex(location: unknown): number | undefined {
+  if (!location || typeof location !== 'object') {
+    return undefined;
+  }
+  const start = (location as { start?: unknown }).start;
+  if (!start || typeof start !== 'object') {
+    return undefined;
+  }
+  const index = (start as { index?: unknown }).index;
+  return typeof index === 'number' && Number.isInteger(index) && index >= 0
+    ? index
+    : undefined;
 }
 
 function sanitizeEpubDocument(
