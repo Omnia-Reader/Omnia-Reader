@@ -46,6 +46,7 @@
     <button
       #tocTrigger
       mat-icon-button
+      matTooltip="Table of contents"
       type="button"
       aria-label="Toggle table of contents"
       aria-controls="reader-toc-panel"
@@ -70,6 +71,7 @@
     <button
       #actionsTrigger
       mat-icon-button
+      matTooltip="Reader actions"
       class="sm:!hidden"
       type="button"
       aria-label="Toggle reader actions"
@@ -82,6 +84,7 @@
     <button
       #searchTrigger
       mat-icon-button
+      matTooltip="Search publication"
       class="!hidden sm:!inline-flex"
       type="button"
       aria-label="Open publication search"
@@ -94,6 +97,7 @@
     <button
       #bookmarksTrigger
       mat-icon-button
+      matTooltip="Bookmarks"
       class="!hidden sm:!inline-flex"
       type="button"
       aria-label="Toggle bookmarks"
@@ -106,6 +110,7 @@
     <button
       #annotationsTrigger
       mat-icon-button
+      matTooltip="Highlights and notes"
       class="relative !hidden sm:!inline-flex"
       type="button"
       aria-label="Toggle highlights and notes"
@@ -116,7 +121,7 @@
       [attr.aria-expanded]="annotationsOpen"
       (click)="toggleAnnotations()"
     >
-      <mat-icon>ink_highlighter</mat-icon>
+      <mat-icon>highlight</mat-icon>
       @if (annotations.length > 0) {
         <span
           id="reader-annotation-count"
@@ -138,6 +143,7 @@
       <button
         #thumbnailsTrigger
         mat-icon-button
+        matTooltip="Page thumbnails"
         class="!hidden sm:!inline-flex"
         type="button"
         aria-label="Toggle PDF page thumbnails"
@@ -151,6 +157,7 @@
     <button
       #settingsTrigger
       mat-icon-button
+      matTooltip="Reader settings"
       class="!hidden sm:!inline-flex"
       type="button"
       aria-label="Open reader settings"
@@ -163,6 +170,7 @@
     <button
       #shortcutsTrigger
       mat-icon-button
+      matTooltip="Keyboard shortcuts"
       class="!hidden sm:!inline-flex"
       type="button"
       aria-label="Open keyboard shortcuts"
@@ -175,6 +183,11 @@
     </button>
     <button
       mat-icon-button
+      [matTooltip]="
+        immersiveMode
+          ? 'Exit immersive reading mode'
+          : 'Enter immersive reading mode'
+      "
       class="!hidden sm:!inline-flex"
       type="button"
       [attr.aria-label]="
@@ -191,6 +204,7 @@
     @if (immersiveMode) {
       <button
         mat-icon-button
+        matTooltip="Hide reader controls"
         type="button"
         aria-label="Hide reader controls"
         (click)="hideImmersiveToolbar()"
@@ -262,7 +276,7 @@
           type="button"
           (click)="openReaderPanelFromActions('annotations')"
         >
-          <mat-icon>ink_highlighter</mat-icon>
+          <mat-icon>highlight</mat-icon>
           Highlights and notes
           @if (annotations.length > 0) {
             <span class="ml-auto text-xs text-stone-500">
@@ -1232,7 +1246,7 @@
             [attr.aria-pressed]="annotationStyle === 'highlight'"
             (click)="annotationStyle = 'highlight'"
           >
-            <mat-icon>ink_highlighter</mat-icon>
+            <mat-icon>highlight</mat-icon>
             <span class="text-xs">Highlight</span>
           </button>
           <button

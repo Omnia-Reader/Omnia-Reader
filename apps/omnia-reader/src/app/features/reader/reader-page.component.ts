@@ -13,6 +13,7 @@ import { NgClass } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { ScrollingModule } from '@angular/cdk/scrolling';
 import { FormsModule } from '@angular/forms';
@@ -88,6 +89,7 @@ type AnnotationSort = 'reading-order' | 'updated-desc';
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
+    MatTooltipModule,
     CdkTrapFocus,
     NgClass,
     ScrollingModule,
@@ -1883,7 +1885,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       case 'strikethrough':
         return 'strikethrough_s';
       default:
-        return 'ink_highlighter';
+        return 'highlight';
     }
   }
 

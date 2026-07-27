@@ -1347,6 +1347,31 @@ test('loads EPUB chapters from a blob-backed sandbox document', async ({
   await expect(iframe).toHaveAttribute('src', /^blob:/);
   await expect(iframe).toHaveAttribute('sandbox', /allow-same-origin/);
   await expect(iframe).not.toHaveAttribute('sandbox', /allow-scripts/);
+
+  const highlightsButton = page.getByRole('button', {
+    name: 'Toggle highlights and notes',
+  });
+  const highlightsIcon = highlightsButton.locator('mat-icon');
+  await expect(highlightsIcon).toHaveText('highlight');
+  await page.evaluate(() => document.fonts.ready);
+  expect(
+    await highlightsIcon.evaluate((icon) => {
+      const range = document.createRange();
+      range.selectNodeContents(icon);
+      return range.getBoundingClientRect().width;
+    }),
+  ).toBeLessThanOrEqual(28);
+
+  for (const [buttonName, tooltip] of [
+    ['Toggle bookmarks', 'Bookmarks'],
+    ['Toggle highlights and notes', 'Highlights and notes'],
+    ['Open reader settings', 'Reader settings'],
+  ] as const) {
+    await page.getByRole('button', { name: buttonName }).hover();
+    await expect(
+      page.locator('.mat-mdc-tooltip').filter({ hasText: tooltip }),
+    ).toBeVisible();
+  }
 });
 
 test('imports an EPUB, navigates chapters, and blocks publication scripts', async ({

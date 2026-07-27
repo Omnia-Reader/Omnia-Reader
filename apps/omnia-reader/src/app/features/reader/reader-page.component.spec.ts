@@ -1,4 +1,6 @@
 import { TestBed } from '@angular/core/testing';
+import { MatTooltip } from '@angular/material/tooltip';
+import { By } from '@angular/platform-browser';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
@@ -275,6 +277,29 @@ describe('ReaderPageComponent annotations', () => {
     await fixture.whenStable();
     await vi.waitFor(() => expect(callbacks.selection).toBeTypeOf('function'));
     fixture.detectChanges();
+
+    const annotationsTrigger = fixture.nativeElement.querySelector(
+      '[aria-label="Toggle highlights and notes"]',
+    ) as HTMLButtonElement;
+    expect(annotationsTrigger.querySelector('mat-icon')?.textContent).toBe(
+      'highlight',
+    );
+    expect(fixture.componentInstance.annotationStyleIcon('highlight')).toBe(
+      'highlight',
+    );
+    const toolbarTooltips = fixture.debugElement
+      .queryAll(By.directive(MatTooltip))
+      .map((element) => element.injector.get(MatTooltip).message);
+    expect(toolbarTooltips).toEqual([
+      'Table of contents',
+      'Reader actions',
+      'Search publication',
+      'Bookmarks',
+      'Highlights and notes',
+      'Reader settings',
+      'Keyboard shortcuts',
+      'Enter immersive reading mode',
+    ]);
 
     expect(
       fixture.nativeElement.querySelector('[data-testid="reader-page-status"]')
