@@ -230,14 +230,17 @@ export async function createLargeEpubFixture(
     <nav epub:type="toc" xmlns:epub="http://www.idpf.org/2007/ops">
       <ol>
         ${chapters
-          .map(({ href, title }) => `<li><a href="${href}">${title}</a></li>`)
+          .map(
+            ({ id, href, title }) =>
+              `<li><a href="${href}#${id}">${title}</a></li>`,
+          )
           .join('\n        ')}
       </ol>
     </nav>
   </body>
 </html>`,
   );
-  for (const { href, title } of chapters) {
+  for (const { id, href, title } of chapters) {
     const paragraphs = Array.from(
       { length: paragraphsPerChapter },
       (_, index) =>
@@ -252,7 +255,7 @@ export async function createLargeEpubFixture(
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head><title>${title}</title></head>
   <body>
-    <h1>${title}</h1>
+    <h1 id="${id}">${title}</h1>
     ${paragraphs}
   </body>
 </html>`,

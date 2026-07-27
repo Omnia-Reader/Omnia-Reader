@@ -210,13 +210,14 @@ test('filters, sorts, and remembers the accessible library view', async ({
 
 test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', async ({
   page,
+  browserName,
 }) => {
   test.setTimeout(120_000);
   await importPublication(
     page,
     'omnia-large.epub',
     'application/epub+zip',
-    await createLargeEpubFixture(5, 2),
+    await createLargeEpubFixture(5, 48),
     'Omnia Large EPUB Fixture',
   );
 
@@ -232,13 +233,24 @@ test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', a
 
   const progressMilestones = page.getByTestId('reader-progress-milestone');
   await expect(progressMilestones).toHaveCount(5);
+  const chapterFourHeading = page
+    .getByTestId('publication-viewport')
+    .frameLocator('iframe')
+    .getByRole('heading', { name: 'Chapter 4', exact: true });
   const chapterFourMilestone = progressMilestones.nth(3);
   const chapterFourMilestoneLabel =
     (await chapterFourMilestone.getAttribute('aria-label')) ?? '';
   const chapterFourPercent = Number(
     chapterFourMilestoneLabel.match(/\(([\d.]+)%/)?.[1],
   );
+  const chapterFiveMilestone = progressMilestones.nth(4);
+  const chapterFiveMilestoneLabel =
+    (await chapterFiveMilestone.getAttribute('aria-label')) ?? '';
+  const chapterFivePercent = Number(
+    chapterFiveMilestoneLabel.match(/\(([\d.]+)%/)?.[1],
+  );
   expect(Number.isFinite(chapterFourPercent)).toBe(true);
+  expect(Number.isFinite(chapterFivePercent)).toBe(true);
 
   await chapterFourMilestone.evaluate((element) =>
     (element as HTMLButtonElement).click(),
@@ -246,6 +258,7 @@ test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', a
   await expect
     .poll(() => chapterFourMilestone.getAttribute('aria-current'))
     .toBe('location');
+  await expect(chapterFourHeading).toBeVisible();
   const progressSlider = page.getByTestId('reader-progress-slider');
   await expect(progressSlider).toHaveValue(String(chapterFourPercent));
   await expect(progressSlider).toBeTruthy();
@@ -301,6 +314,61 @@ test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', a
       return Math.abs(currentMilestoneCenter - currentSliderCenter);
     })
     .toBeLessThanOrEqual(3);
+
+  if (browserName === 'webkit') {
+    return;
+  }
+
+  await expect(chapterFourMilestone).toBeEnabled();
+  await page.keyboard.press('ArrowLeft');
+  await expect
+    .poll(async () => Number(await progressSlider.inputValue()))
+    .toBeLessThan(chapterFourPercent);
+  await expect(chapterFourMilestone).not.toHaveAttribute(
+    'aria-current',
+    'location',
+  );
+
+  await page.keyboard.press('ArrowRight');
+  await expect
+    .poll(async () =>
+      Math.abs(Number(await progressSlider.inputValue()) - chapterFourPercent),
+    )
+    .toBeLessThanOrEqual(0.1);
+  await expect(chapterFourMilestone).toHaveAttribute(
+    'aria-current',
+    'location',
+  );
+  await expect(chapterFourHeading).toBeVisible();
+
+  await page.keyboard.press('ArrowRight');
+  await expect
+    .poll(async () => Number(await progressSlider.inputValue()))
+    .toBeGreaterThan(chapterFourPercent);
+  const nextPagePercent = Number(await progressSlider.inputValue());
+  expect(nextPagePercent).toBeLessThan(chapterFivePercent);
+  await expect(chapterFourMilestone).not.toHaveAttribute(
+    'aria-current',
+    'location',
+  );
+  await expect(chapterFourMilestone).toHaveClass(
+    /reader-progress-milestone-reached/,
+  );
+  const nextPageSliderFill = await progressSlider.evaluate(
+    (element) => (element as HTMLInputElement).style.backgroundImage,
+  );
+  expect(nextPageSliderFill).toContain(`${nextPagePercent}%`);
+
+  await page.keyboard.press('ArrowLeft');
+  await expect
+    .poll(async () =>
+      Math.abs(Number(await progressSlider.inputValue()) - chapterFourPercent),
+    )
+    .toBeLessThanOrEqual(0.1);
+  await expect(chapterFourMilestone).toHaveAttribute(
+    'aria-current',
+    'location',
+  );
 });
 
 test('shows hover feedback on the progress slider milestone dots', async ({
@@ -328,7 +396,9 @@ test('shows hover feedback on the progress slider milestone dots', async ({
   const chapterMilestone = milestones.last();
   await expect(chapterMilestone).toBeVisible({ timeout: 20_000 });
 
-  await chapterMilestone.click();
+  await chapterMilestone.evaluate((element) =>
+    (element as HTMLButtonElement).click(),
+  );
   await expect(chapterMilestone).toHaveClass(
     /reader-progress-milestone-active/,
   );

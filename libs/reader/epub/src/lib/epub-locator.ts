@@ -76,6 +76,33 @@ export function epubLocationToPageStatus(
   };
 }
 
+export function epubLocationEndsSection(location: unknown): boolean | null {
+  if (!isRecord(location)) {
+    return null;
+  }
+  const displayedLocation = isRecord(location['end'])
+    ? location['end']
+    : isRecord(location['start'])
+      ? location['start']
+      : location;
+  const displayed = displayedLocation['displayed'];
+  if (!isRecord(displayed)) {
+    return null;
+  }
+  const page = displayed['page'];
+  const total = displayed['total'];
+  if (
+    !Number.isSafeInteger(page) ||
+    !Number.isSafeInteger(total) ||
+    Number(page) < 1 ||
+    Number(total) < 1 ||
+    Number(page) > Number(total)
+  ) {
+    return null;
+  }
+  return Number(page) === Number(total);
+}
+
 function isProgression(value: unknown): value is number {
   return (
     typeof value === 'number' &&

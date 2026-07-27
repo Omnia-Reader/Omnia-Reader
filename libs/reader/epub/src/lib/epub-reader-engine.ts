@@ -37,6 +37,7 @@ import {
   wheelZoomDirection,
 } from '@omnia-reader/reader/domain';
 import {
+  epubLocationEndsSection,
   epubLocationToLocator,
   epubLocationToPageStatus,
 } from './epub-locator';
@@ -48,7 +49,7 @@ export type EpubRuntimeLoader = () => Promise<
 type EpubAnnotationType = 'highlight' | 'underline';
 
 const WHEEL_NAVIGATION_INTERVAL_MS = 400;
-const EPUB_LOCATION_BREAK_SIZE = 1_600;
+const EPUB_LOCATION_BREAK_SIZE = 150;
 const EPUB_READER_THEME_STYLE_ID = 'epubjs-inserted-css-omnia-reader';
 type AuthoredEpubFlow = 'paginated' | 'scrolled';
 
@@ -896,9 +897,17 @@ export class EpubReaderEngine implements ReaderEngine {
         ? this.currentSection()?.next?.()
         : undefined;
     this.prepareSectionTheme(targetSection);
-    await rendition.next();
+    if (targetSection?.href) {
+      // After moving back from the first page of a spine item, epub.ts can
+      // retain the former anchor offset and make next() consume an invisible
+      // boundary step. Display the known next spine item directly so one
+      // forward action always restores its first page.
+      await rendition.display(targetSection.href);
+    } else {
+      await rendition.next();
+    }
     const renderedSection =
-      this.renderedSection(rendition, 'next') ?? targetSection;
+      targetSection ?? this.renderedSection(rendition, 'next');
     this.applySectionPresentation(
       renderedSection ?? this.currentSection(rendition.currentLocation()),
       rendition,
@@ -917,13 +926,31 @@ export class EpubReaderEngine implements ReaderEngine {
     this.prepareSectionTheme(targetSection);
     await rendition.prev();
     const renderedSection =
-      this.renderedSection(rendition, 'previous') ?? targetSection;
+      targetSection ?? this.renderedSection(rendition, 'previous');
     this.applySectionPresentation(
       renderedSection ?? this.currentSection(rendition.currentLocation()),
       rendition,
     );
     this.attachRenditionContentHandlers();
-    await this.refreshRenditionLocation(rendition, true, renderedSection);
+    await this.refreshRenditionLocation(
+      rendition,
+      targetSection === undefined,
+      renderedSection,
+    );
+    if (
+      targetSection &&
+      epubLocationEndsSection(rendition.currentLocation()) === false
+    ) {
+      // Some reflowable sections settle one page before their final visible
+      // page when prev() crosses a spine boundary. Correct that overshoot once;
+      // the end locator keeps legitimate two-page final spreads unchanged.
+      await rendition.next();
+      this.applySectionPresentation(targetSection, rendition);
+      this.attachRenditionContentHandlers();
+      await this.refreshRenditionLocation(rendition, true, targetSection);
+    } else if (targetSection) {
+      this.updateLocator(rendition.currentLocation(), true, targetSection);
+    }
   }
 
   async *search(query: string): AsyncIterable<SearchResult> {
@@ -1309,8 +1336,69 @@ export class EpubReaderEngine implements ReaderEngine {
     } catch {
       return;
     }
+    this.enrichTableOfContentsProgressions(book);
     if (this.book === book && this.rendition) {
       await this.refreshRenditionLocation(this.rendition);
+    }
+  }
+
+  private enrichTableOfContentsProgressions(book: Book): void {
+    const locations = book.locations;
+    if (
+      this.book !== book ||
+      !locations ||
+      typeof locations.percentageFromCfi !== 'function' ||
+      typeof locations.total !== 'number' ||
+      locations.total <= 0
+    ) {
+      return;
+    }
+
+    const enrich = (entry: TocEntry): TocEntry => {
+      const section = book.spine.get(entry.locator.href);
+      const fragment = entry.locator.locations?.fragments?.[0];
+      // `locations.generate()` already loaded and unloaded every section.
+      // Loading an ID fragment again would replay epub.ts spine hooks without
+      // a rendition view, so keep the fragment for navigation and use the
+      // section's stable CFI base only for its book-wide milestone position.
+      const cfi =
+        fragment?.startsWith('epubcfi(') === true
+          ? fragment
+          : sectionStartCfi(section);
+      let totalProgression: number | null = null;
+      if (cfi) {
+        try {
+          const generatedProgression = locations.percentageFromCfi(cfi);
+          if (
+            typeof generatedProgression === 'number' &&
+            Number.isFinite(generatedProgression) &&
+            generatedProgression >= 0 &&
+            generatedProgression <= 1
+          ) {
+            totalProgression = generatedProgression;
+          }
+        } catch {
+          // Retain the original locator when generated locations reject a CFI.
+        }
+      }
+      return {
+        ...entry,
+        locator:
+          totalProgression === null
+            ? entry.locator
+            : {
+                ...entry.locator,
+                locations: {
+                  ...entry.locator.locations,
+                  totalProgression,
+                },
+              },
+        children: entry.children?.map(enrich),
+      };
+    };
+
+    if (this.book === book) {
+      this.toc = this.toc.map(enrich);
     }
   }
 
@@ -2444,6 +2532,11 @@ function isDocument(value: unknown): value is Document {
     'documentElement' in value &&
     typeof (value as { documentElement?: unknown }).documentElement === 'object'
   );
+}
+
+function sectionStartCfi(section: Section | null | undefined): string | null {
+  const cfiBase = section?.cfiBase;
+  return cfiBase ? `epubcfi(${cfiBase}!/)` : null;
 }
 
 const URL_ATTRIBUTES = new Set([

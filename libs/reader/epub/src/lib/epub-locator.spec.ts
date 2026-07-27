@@ -1,4 +1,5 @@
 import {
+  epubLocationEndsSection,
   epubLocationToLocator,
   epubLocationToPageStatus,
 } from './epub-locator';
@@ -92,5 +93,25 @@ describe('epubLocationToPageStatus', () => {
     { displayed: { page: 6, total: 5 } },
   ])('rejects invalid or unavailable layout page data', (location) => {
     expect(epubLocationToPageStatus(location)).toBeNull();
+  });
+});
+
+describe('epubLocationEndsSection', () => {
+  it('uses the end of the visible range for a final two-page spread', () => {
+    expect(
+      epubLocationEndsSection({
+        start: { displayed: { page: 9, total: 10 } },
+        end: { displayed: { page: 10, total: 10 } },
+      }),
+    ).toBe(true);
+  });
+
+  it('detects when boundary navigation stopped before the final visible page', () => {
+    expect(
+      epubLocationEndsSection({
+        start: { displayed: { page: 8, total: 10 } },
+        end: { displayed: { page: 9, total: 10 } },
+      }),
+    ).toBe(false);
   });
 });

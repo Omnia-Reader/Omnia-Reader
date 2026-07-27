@@ -103,7 +103,7 @@ describe('ReaderPageComponent annotations', () => {
             type: 'application/pdf',
             locations: {
               fragments: ['chapter-two'],
-              totalProgression: 0.5,
+              totalProgression: 0.37,
               position: 2,
             },
           },
@@ -557,6 +557,26 @@ describe('ReaderPageComponent annotations', () => {
         '[data-testid="reader-progress-milestone"][aria-current="location"]',
       ),
     ).toBeNull();
+    expect(
+      progressMilestones
+        .item(1)
+        ?.classList.contains('reader-progress-milestone-active'),
+    ).toBe(false);
+    expect(
+      progressMilestones
+        .item(1)
+        ?.classList.contains('reader-progress-milestone-reached'),
+    ).toBe(true);
+    const chapterTwoProgress = component.chapterProgressMilestones[1]?.value;
+    expect(chapterTwoProgress).toBe(37);
+    expect(fixture.componentInstance.displayedProgressPercent).toBe(49.6);
+    expect(Number(progressSlider.value)).toBe(49.6);
+    expect(Number(progressSlider.value)).toBeGreaterThan(
+      chapterTwoProgress ?? Number.POSITIVE_INFINITY,
+    );
+    expect(fixture.componentInstance.progressSliderTrackBackground).toContain(
+      '49.6%',
+    );
 
     currentPageStatus = {
       current: 1,

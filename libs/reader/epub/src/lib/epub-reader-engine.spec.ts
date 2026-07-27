@@ -205,7 +205,7 @@ describe('EpubReaderEngine annotations', () => {
       total: 10,
       scope: 'section',
     });
-    expect(locations.generate).toHaveBeenCalledWith(1_600);
+    expect(locations.generate).toHaveBeenCalledWith(150);
     expect(engine.currentLocator()?.locations?.totalProgression).toBe(0.42);
     await engine.goToProgression(0.75);
     expect(locations.cfiFromPercentage).toHaveBeenCalledWith(0.75);
@@ -629,6 +629,8 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       renditionSettings.flow = value;
       renditionSettings.globalLayoutProperties.flow = value;
     });
+    const next = vi.fn().mockResolvedValue(undefined);
+    const previous = vi.fn().mockResolvedValue(undefined);
     const rendition = {
       settings: renditionSettings,
       on: vi.fn((name: string, listener: (...args: unknown[]) => void) =>
@@ -636,7 +638,8 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       ),
       off: vi.fn((name: string) => listeners.delete(name)),
       display: vi.fn().mockResolvedValue(undefined),
-      next: vi.fn().mockResolvedValue(undefined),
+      next,
+      prev: previous,
       currentLocation: vi.fn(() => locationState.current),
       annotations: { highlight: vi.fn(), remove: vi.fn() },
       getContents: vi.fn(() => [contents]),
@@ -726,13 +729,38 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       }),
     );
 
+    previous.mockImplementationOnce(async () => {
+      locationState.current = sectionLocation(0, 'text.xhtml', 3, 4, 3);
+      contents.sectionIndex = 0;
+    });
+    next.mockImplementationOnce(async () => {
+      locationState.current = sectionLocation(0, 'text.xhtml', 4, 4, 4);
+    });
+    await engine.previous();
+    expect(previous).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(engine.currentLocator()).toMatchObject({
+      href: 'text.xhtml',
+      locations: { progression: 1 },
+    });
+
+    locationState.current = sectionLocation(1, 'painting.xhtml');
+    contents.sectionIndex = 1;
+    listeners.get('relocated')?.(locationState.current);
+    await vi.waitFor(() =>
+      expect(viewport.dataset['currentSectionLayout']).toBe('pre-paginated'),
+    );
+    next.mockClear();
+    relocations.length = 0;
     contents.sectionIndex = 2;
     await engine.next();
+    expect(rendition.display).toHaveBeenLastCalledWith('next-text.xhtml');
+    expect(next).not.toHaveBeenCalled();
     expect(engine.currentLocator()).toMatchObject({
       href: 'next-text.xhtml',
       locations: { position: 3 },
     });
-    expect(relocations).toEqual(['painting.xhtml', 'next-text.xhtml']);
+    expect(relocations).toEqual(['next-text.xhtml']);
     await vi.waitFor(() =>
       expect(viewport.dataset['currentSectionLayout']).toBe('reflowable'),
     );
@@ -982,7 +1010,7 @@ describe('EpubReaderEngine publication compatibility', () => {
 });
 
 describe('EpubReaderEngine table of contents navigation', () => {
-  it('resolves NAV-relative and fragment-only targets to canonical spine hrefs', async () => {
+  it('resolves fragment targets and maps their progress without reloading sections', async () => {
     const display = vi.fn().mockResolvedValue(undefined);
     const rendition = {
       on: vi.fn(),
@@ -1002,11 +1030,35 @@ describe('EpubReaderEngine table of contents navigation', () => {
       _disconnectContainerObserver: vi.fn(),
       destroy: vi.fn(),
     } as unknown as Rendition;
+    const createSection = (href: string, cfiBase: string): Section => {
+      return {
+        href,
+        cfiBase,
+        load: vi.fn(),
+        cfiFromElement: vi.fn(),
+        unload: vi.fn(),
+      } as unknown as Section;
+    };
     const sections = [
-      { href: 'Text/chapter-1.xhtml' },
-      { href: 'Text/chapter-2.xhtml' },
-      { href: 'OPS/Text/chapter-3.xhtml' },
-    ] as Section[];
+      createSection('Text/chapter-1.xhtml', '/6/2[chapter-1]'),
+      createSection('Text/chapter-2.xhtml', '/6/4[chapter-2]'),
+      createSection('OPS/Text/chapter-3.xhtml', '/6/6[chapter-3]'),
+    ];
+    const progressionByCfiBase = new Map([
+      ['/6/2[chapter-1]', 0.02],
+      ['/6/4[chapter-2]', 0.42],
+      ['/6/6[chapter-3]', 0.81],
+    ]);
+    const locations = {
+      total: 100,
+      generate: vi.fn().mockResolvedValue([]),
+      percentageFromCfi: vi.fn((cfi: string) => {
+        const cfiBase = [...progressionByCfiBase.keys()].find((candidate) =>
+          cfi.includes(candidate),
+        );
+        return cfiBase ? (progressionByCfiBase.get(cfiBase) ?? null) : null;
+      }),
+    };
     const spine = {
       get: vi.fn((target?: string | number) => {
         if (target === undefined) {
@@ -1081,6 +1133,7 @@ describe('EpubReaderEngine table of contents navigation', () => {
         navPath: 'Navigation/toc.xhtml',
         ncxPath: '',
       },
+      locations,
       spine,
       renderTo: vi.fn(() => rendition),
       coverUrl: vi.fn().mockResolvedValue(null),
@@ -1124,9 +1177,31 @@ describe('EpubReaderEngine table of contents navigation', () => {
     const viewport = globalThis.document.createElement('div');
     globalThis.document.body.append(viewport);
     await engine.mount(viewport);
-    await engine.goTo(chapterOne.children?.[0].locator ?? chapterOne.locator);
-    await engine.goTo(chapterTwo.locator);
-    await engine.goTo(chapterThree.locator);
+    expect(locations.generate).toHaveBeenCalledWith(150);
+    for (const section of sections) {
+      expect(section.load).not.toHaveBeenCalled();
+      expect(section.cfiFromElement).not.toHaveBeenCalled();
+      expect(section.unload).not.toHaveBeenCalled();
+    }
+    const [
+      enrichedPreface,
+      enrichedChapterOne,
+      enrichedChapterTwo,
+      enrichedChapterThree,
+    ] = engine.tableOfContents();
+    expect(enrichedPreface.locator.locations?.totalProgression).toBe(0.02);
+    expect(enrichedChapterOne.locator.locations?.totalProgression).toBe(0.02);
+    expect(
+      enrichedChapterOne.children?.[0].locator.locations?.totalProgression,
+    ).toBe(0.02);
+    expect(enrichedChapterTwo.locator.locations?.totalProgression).toBe(0.42);
+    expect(enrichedChapterThree.locator.locations?.totalProgression).toBe(0.81);
+
+    await engine.goTo(
+      enrichedChapterOne.children?.[0].locator ?? enrichedChapterOne.locator,
+    );
+    await engine.goTo(enrichedChapterTwo.locator);
+    await engine.goTo(enrichedChapterThree.locator);
 
     expect(display).toHaveBeenNthCalledWith(2, 'Text/chapter-1.xhtml#details');
     expect(display).toHaveBeenNthCalledWith(3, 'Text/chapter-2.xhtml#part-two');
@@ -1246,19 +1321,25 @@ function fallbackLocator() {
   };
 }
 
-function sectionLocation(index: number, href: string) {
+function sectionLocation(
+  index: number,
+  href: string,
+  page = 1,
+  total = 1,
+  endPage = page,
+) {
   return {
     start: {
       index,
       href,
       cfi: `epubcfi(/6/${index * 2 + 2}!/4/2)`,
-      displayed: { page: 1, total: 1 },
+      displayed: { page, total },
     },
     end: {
       index,
       href,
       cfi: `epubcfi(/6/${index * 2 + 2}!/4/4)`,
-      displayed: { page: 1, total: 1 },
+      displayed: { page: endPage, total },
     },
   };
 }

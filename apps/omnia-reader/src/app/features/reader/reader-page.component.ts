@@ -634,7 +634,20 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   isProgressMilestoneReached(milestone: ReaderProgressMilestone): boolean {
     const percent = this.displayedProgressPercent;
-    return percent !== null && milestone.value <= percent;
+    if (percent !== null && milestone.value <= percent) {
+      return true;
+    }
+    if (
+      this.manualProgressPercent !== null ||
+      this.pageStatus?.scope !== 'section' ||
+      !this.currentLocator
+    ) {
+      return false;
+    }
+    return (
+      this.findProgressMilestoneForCurrentSection(this.currentLocator)?.key ===
+      milestone.key
+    );
   }
 
   get activeProgressMilestoneKey(): string | null {
@@ -696,6 +709,12 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (this.pageStatus?.scope !== 'section' || this.pageStatus.current !== 1) {
       return null;
     }
+    return this.findProgressMilestoneForCurrentSection(locator);
+  }
+
+  private findProgressMilestoneForCurrentSection(
+    locator: PublicationLocator,
+  ): ReaderProgressMilestone | null {
     const sectionHref = locator.href.split('#', 1)[0];
     if (!sectionHref) {
       return null;
