@@ -7,6 +7,7 @@ import {
 } from '@omnia-reader/reader/domain';
 import {
   BOOK_SYNC_EXCLUSIONS,
+  createBookSyncDeletionTombstone,
   createBookSyncManifest,
 } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
@@ -104,6 +105,25 @@ export class PublicationImportService {
       }
     }
     return { books, added, duplicates, failures };
+  }
+
+  async removePublication(book: BookRecord): Promise<void> {
+    const wasExcluded = this.syncExclusions.isExcluded(book.id);
+    this.syncExclusions.exclude(book.id);
+    try {
+      await this.repository.removeBook(book.id);
+    } catch (error) {
+      if (!wasExcluded) {
+        this.syncExclusions.include(book.id);
+      }
+      throw error;
+    }
+    await this.appendJournalEntry({
+      entity: 'book',
+      entityId: book.id,
+      operation: 'delete',
+      payload: createBookSyncDeletionTombstone(book),
+    });
   }
 
   onImported(listener: (books: readonly BookRecord[]) => void): () => void {

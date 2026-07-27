@@ -2,6 +2,7 @@ import {
   BrowserObjectUploadRequester,
   browserObjectDownloadBlob,
   browserObjectUploadRequest,
+  DocumentDeleteRequest,
   LibrarySyncTransport,
   ObjectDeleteRequest,
   ObjectDownloadOptions,
@@ -223,6 +224,22 @@ export class GitHubGatewayClient implements GitHubGateway {
       throw new GitHubGatewayProtocolError();
     }
     return value;
+  }
+
+  async deleteDocument(request: DocumentDeleteRequest): Promise<void> {
+    const parameters = new URLSearchParams({ path: request.path });
+    if (request.expectedRevision) {
+      parameters.set('expectedRevision', request.expectedRevision);
+    }
+    parameters.set('message', request.message);
+    const response = await this.request(
+      `/file?${parameters.toString()}`,
+      { method: 'DELETE' },
+      [404, 409],
+    );
+    if (response.status === 409) {
+      throw new GitConflictError();
+    }
   }
 
   async headObject(path: string): Promise<RemoteObject | null> {

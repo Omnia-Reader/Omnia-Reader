@@ -1220,7 +1220,9 @@ test('exports and restores a complete portable library backup', async ({
   });
   await removalDialog.getByRole('button', { name: 'Remove book' }).click();
   await expect(
-    page.getByText('“Omnia PDF Fixture” removed from this device.'),
+    page.getByText(
+      '“Omnia PDF Fixture” removed and queued for synchronization.',
+    ),
   ).toBeVisible();
   await expect(page.getByText('Your library is empty')).toBeVisible();
 

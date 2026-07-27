@@ -420,7 +420,7 @@ test('cancels an automatic publication upload without losing queued local work',
   }
 });
 
-test('keeps a remotely backed-up publication removed from this device', async ({
+test('deletes a synchronized publication locally and remotely', async ({
   context,
   page,
 }) => {
@@ -447,18 +447,20 @@ test('keeps a remotely backed-up publication removed from this device', async ({
   await expect(page.getByRole('status')).toContainText('Sync complete:', {
     timeout: 30_000,
   });
-  const remoteDocuments = gateway.documentPaths();
-  const remoteObjects = gateway.objectPaths();
-  expect(remoteDocuments.some((path) => path.endsWith('/book.json'))).toBe(
-    true,
-  );
-  expect(remoteObjects.some((path) => path.endsWith('.pdf'))).toBe(true);
+  const manifestPath = gateway
+    .documentPaths()
+    .find((path) => path.endsWith('/book.json'));
+  const objectPath = gateway
+    .objectPaths()
+    .find((path) => path.endsWith('.pdf'));
+  expect(manifestPath).toBeDefined();
+  expect(objectPath).toBeDefined();
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Remove Omnia PDF Fixture' }).click();
   const confirmation = page.getByRole('dialog');
   await expect(confirmation).toContainText(
-    'A synchronized copy stays in your selected remote backup',
+    'its remote publication file is deleted during the next synchronization',
   );
   await confirmation.getByRole('button', { name: 'Remove book' }).click();
   await expect(
@@ -483,8 +485,25 @@ test('keeps a remotely backed-up publication removed from this device', async ({
   await expect(
     page.getByText('Omnia PDF Fixture', { exact: true }),
   ).toHaveCount(0);
-  expect(gateway.documentPaths()).toEqual(remoteDocuments);
-  expect(gateway.objectPaths()).toEqual(remoteObjects);
+  expect(gateway.documentPaths()).not.toContain(manifestPath);
+  expect(gateway.objectPaths()).not.toContain(objectPath);
+  const deletionPath = gateway
+    .documentPaths()
+    .find((path) => path.includes('/.deletions/books/'));
+  expect(deletionPath).toBeDefined();
+  expect(
+    JSON.parse(gateway.documentContent(deletionPath as string) ?? '{}'),
+  ).toMatchObject({
+    schemaVersion: 2,
+    deleted: true,
+  });
+  const readmePath = gateway
+    .documentPaths()
+    .find((path) => path.endsWith('/README.md'));
+  expect(readmePath).toBeDefined();
+  expect(gateway.documentContent(readmePath as string)).not.toContain(
+    'Omnia PDF Fixture',
+  );
   expect(browserFailures()).toEqual([]);
 });
 
@@ -546,10 +565,15 @@ test('deletes a remote publication backup without deleting the local copy', asyn
     page.getByText('No publication files are stored in this sync destination'),
   ).toBeVisible();
   expect(gateway.objectPaths()).toEqual([]);
+  expect(gateway.documentContent(manifestPath as string)).toBeNull();
+  const deletionPath = gateway
+    .documentPaths()
+    .find((path) => path.includes('/.deletions/books/'));
+  expect(deletionPath).toBeDefined();
   expect(
-    JSON.parse(gateway.documentContent(manifestPath as string) ?? '{}'),
+    JSON.parse(gateway.documentContent(deletionPath as string) ?? '{}'),
   ).toMatchObject({
-    schemaVersion: 1,
+    schemaVersion: 2,
     deleted: true,
   });
 

@@ -275,6 +275,26 @@ describe('GitHubGatewayClient', () => {
     ).rejects.toBeInstanceOf(GitConflictError);
   });
 
+  it('revision-deletes a document with a bounded commit message', async () => {
+    const fetcher = mockFetch(new Response(null, { status: 204 }));
+    const client = new GitHubGatewayClient({ fetcher });
+    const path = '.omnia-reader/v1/library/A--aaaaaaaaaaaa/book.json';
+
+    await client.deleteDocument({
+      path,
+      expectedRevision: 'document-revision',
+      message: 'Delete A',
+    });
+
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(url).toContain('/file?');
+    expect(url).toContain(`path=${encodeURIComponent(path)}`);
+    expect(url).toContain('expectedRevision=document-revision');
+    expect(url).toContain('message=Delete+A');
+    expect(init?.method).toBe('DELETE');
+    expect(new Headers(init?.headers).get('X-Omnia-CSRF')).toBe('1');
+  });
+
   it('declares and uploads Git LFS publication objects through the gateway', async () => {
     const object = {
       path: '.omnia-reader/v1/books/id/publication.pdf',

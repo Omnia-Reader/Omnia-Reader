@@ -1,6 +1,7 @@
 import { BookRecord } from '@omnia-reader/reader/domain';
 import { describe, expect, it } from 'vitest';
 import {
+  bookDeletionPath,
   bookManifestPath,
   bookObjectPath,
   createBookSyncDeletionTombstone,
@@ -33,8 +34,14 @@ describe('book sync manifest', () => {
       '1.0.0',
     );
 
-    expect(manifest.objectPath).toBe(bookObjectPath(book.id, 'epub'));
-    expect(bookManifestPath(book.id)).toContain('sha256%3A');
+    expect(manifest.schemaVersion).toBe(2);
+    expect(manifest.objectPath).toBe(bookObjectPath(book));
+    expect(manifest.objectPath).toBe(
+      `.omnia-reader/v1/library/A Book--${'a'.repeat(12)}/A Book.epub`,
+    );
+    expect(bookManifestPath(book)).toBe(
+      `.omnia-reader/v1/library/A Book--${'a'.repeat(12)}/book.json`,
+    );
     expect(isBookSyncManifest(manifest)).toBe(true);
     expect(manifestBookRecord(manifest)).toEqual(book);
   });
@@ -47,17 +54,47 @@ describe('book sync manifest', () => {
     );
 
     expect(tombstone).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       deleted: true,
       bookId: book.id,
       format: 'epub',
-      objectPath: bookObjectPath(book.id, 'epub'),
+      fileName: book.fileName,
+      objectPath: bookObjectPath(book),
       deletedAt: '2026-07-25T02:00:00.000Z',
       appVersion: '1.0.0',
     });
     expect(isBookSyncDeletionTombstone(tombstone)).toBe(true);
     expect(isBookSyncDocument(tombstone)).toBe(true);
     expect(isBookSyncManifest(tombstone)).toBe(false);
+  });
+
+  it('rejects obsolete schema-v1 records', () => {
+    const manifest = {
+      ...createBookSyncManifest(book),
+      schemaVersion: 1,
+    };
+    const tombstone = {
+      ...createBookSyncDeletionTombstone(book, '2026-07-25T02:00:00.000Z'),
+      schemaVersion: 1,
+    };
+
+    expect(isBookSyncManifest(manifest)).toBe(false);
+    expect(isBookSyncDeletionTombstone(tombstone)).toBe(false);
+    expect(bookDeletionPath(book.id)).toBe(
+      `.omnia-reader/v1/.deletions/books/${'a'.repeat(64)}.json`,
+    );
+  });
+
+  it('confines unsafe source names while keeping the path recognizable', () => {
+    const manifest = createBookSyncManifest({
+      ...book,
+      fileName: '../A: Book?.epub',
+    });
+
+    expect(manifest.objectPath).toBe(
+      `.omnia-reader/v1/library/-A- Book---${'a'.repeat(12)}/-A- Book-.epub`,
+    );
+    expect(isBookSyncManifest(manifest)).toBe(true);
   });
 
   it.each([

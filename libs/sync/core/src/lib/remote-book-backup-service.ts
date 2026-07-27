@@ -3,11 +3,13 @@ import {
   BOOKS_ROOT,
   BookSyncDeletionTombstone,
   BookSyncManifest,
+  bookDeletionPath,
   bookManifestPath,
   createBookSyncDeletionTombstone,
   isBookSyncDeletionTombstone,
   isBookSyncManifest,
 } from './book-sync-manifest';
+import { updateBookSyncCatalog } from './book-sync-catalog';
 import { BookSyncExclusions } from './book-sync-exclusions';
 import { parseBookSyncDocument } from './book-sync-service';
 import {
@@ -64,7 +66,7 @@ export class RemoteBookBackupService {
         continue;
       }
       const record = parseBookSyncDocument(document);
-      if (!record || document.path !== bookManifestPath(record.bookId)) {
+      if (!record || document.path !== bookManifestPath(record)) {
         throw new RemoteBookBackupProtocolError();
       }
       if (isBookSyncManifest(record)) {
@@ -80,9 +82,10 @@ export class RemoteBookBackupService {
     bookId: string,
   ): Promise<BookSyncDeletionTombstone | null> {
     const deleteObject = this.remote.deleteObject?.bind(this.remote);
-    if (!deleteObject) {
+    const deleteDocument = this.remote.deleteDocument?.bind(this.remote);
+    if (!deleteObject || !deleteDocument) {
       throw new Error(
-        'The selected synchronization provider cannot delete remote publications',
+        'The selected synchronization provider cannot delete remote publications and records',
       );
     }
 
@@ -90,55 +93,109 @@ export class RemoteBookBackupService {
     this.exclusions.exclude(bookId);
     let tombstoneCommitted = false;
     try {
+      const backup = (await this.list()).find(
+        (candidate) => candidate.manifest.bookId === bookId,
+      );
+      const existingDeletion = await this.remote.read(bookDeletionPath(bookId));
+      const deletionRecord = existingDeletion
+        ? parseBookSyncDocument(existingDeletion)
+        : null;
+      if (
+        existingDeletion &&
+        (!deletionRecord ||
+          !isBookSyncDeletionTombstone(deletionRecord) ||
+          deletionRecord.bookId !== bookId)
+      ) {
+        throw new RemoteBookBackupProtocolError();
+      }
+      const existingTombstone =
+        deletionRecord && isBookSyncDeletionTombstone(deletionRecord)
+          ? deletionRecord
+          : null;
+      if (!backup && !existingTombstone) {
+        await this.acknowledgePendingBookWrites(bookId);
+        return null;
+      }
+      let tombstone: BookSyncDeletionTombstone;
+      if (existingTombstone) {
+        tombstone = existingTombstone;
+      } else if (backup) {
+        tombstone = createBookSyncDeletionTombstone(
+          {
+            id: backup.manifest.bookId,
+            format: backup.manifest.format,
+            fileName: backup.manifest.fileName,
+          },
+          this.now(),
+        );
+      } else {
+        await this.acknowledgePendingBookWrites(bookId);
+        return null;
+      }
       for (let attempt = 0; ; attempt += 1) {
-        const path = bookManifestPath(bookId);
-        const current = await this.remote.read(path);
-        if (!current) {
-          await this.acknowledgePendingBookWrites(bookId);
-          return null;
-        }
-        const record = parseBookSyncDocument(current);
-        if (!record || record.bookId !== bookId) {
+        const manifestPath = bookManifestPath(backup?.manifest ?? tombstone);
+        const currentManifest = await this.remote.read(manifestPath);
+        const record = currentManifest
+          ? parseBookSyncDocument(currentManifest)
+          : null;
+        if (
+          currentManifest &&
+          (!record || !isBookSyncManifest(record) || record.bookId !== bookId)
+        ) {
           throw new RemoteBookBackupProtocolError();
         }
-
-        const tombstone = isBookSyncDeletionTombstone(record)
-          ? record
-          : createBookSyncDeletionTombstone(
-              { id: record.bookId, format: record.format },
-              this.now(),
-            );
-        if (!isBookSyncDeletionTombstone(record)) {
-          try {
+        try {
+          const deletionPath = bookDeletionPath(bookId);
+          const currentDeletion = await this.remote.read(deletionPath);
+          if (currentDeletion) {
+            const deletion = parseBookSyncDocument(currentDeletion);
+            if (
+              !deletion ||
+              !isBookSyncDeletionTombstone(deletion) ||
+              deletion.bookId !== bookId
+            ) {
+              throw new RemoteBookBackupProtocolError();
+            }
+          }
+          if (currentDeletion?.content !== serializeTombstone(tombstone)) {
             await this.remote.write({
-              path,
+              path: deletionPath,
               content: serializeTombstone(tombstone),
-              expectedRevision: current.revision,
+              expectedRevision: currentDeletion?.revision,
               message: `Delete remote book backup ${bookId}`,
             });
-            tombstoneCommitted = true;
-          } catch (error) {
-            if (
-              !(error instanceof SyncConflictError) ||
-              attempt >= this.maxConflictRetries
-            ) {
-              throw error;
-            }
-            await this.wait(this.retryDelayMs * 2 ** attempt);
-            continue;
           }
-        } else {
           tombstoneCommitted = true;
+          if (currentManifest) {
+            await deleteDocument({
+              path: manifestPath,
+              expectedRevision: currentManifest.revision,
+              message: `Delete remote book backup ${bookId}`,
+            });
+          }
+          const object = await this.remote.headObject(tombstone.objectPath);
+          if (object) {
+            await deleteObject({
+              path: tombstone.objectPath,
+              expectedRevision: object.revision,
+            });
+          }
+        } catch (error) {
+          if (
+            !(error instanceof SyncConflictError) ||
+            attempt >= this.maxConflictRetries
+          ) {
+            throw error;
+          }
+          await this.wait(this.retryDelayMs * 2 ** attempt);
+          continue;
         }
-
         await this.acknowledgePendingBookWrites(bookId);
-        const object = await this.remote.headObject(tombstone.objectPath);
-        if (object) {
-          await deleteObject({
-            path: tombstone.objectPath,
-            expectedRevision: object.revision,
-          });
-        }
+        await updateBookSyncCatalog(this.remote, {
+          maxConflictRetries: this.maxConflictRetries,
+          retryDelayMs: this.retryDelayMs,
+          wait: this.wait,
+        });
         return tombstone;
       }
     } catch (error) {

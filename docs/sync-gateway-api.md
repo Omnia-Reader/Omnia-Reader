@@ -349,13 +349,22 @@ The document/object endpoints expose one provider-neutral logical tree:
 
 ```text
 .omnia-reader/v1/
+├── README.md
 ├── manifest.json
-├── books/<bookId>/book.json
-├── books/<bookId>/publication.epub|publication.pdf
+├── library/<readable-name>--<short-id>/book.json
+├── library/<readable-name>--<short-id>/<original-name>.epub|pdf
+├── .deletions/books/<sha256>.json
 ├── progress/<bookId>/<deviceId>.json
 ├── bookmarks/<bookId>/<bookmarkId>.json
 └── annotations/<bookId>/<annotationId>.json
 ```
+
+The readable library directory and generated `README.md` are for human
+browsing. The short suffix prevents ordinary name collisions; the manifest and
+object verification still use the complete SHA-256 edition identity. Removing
+a book commits its deletion marker before deleting the named manifest and
+publication. Synchronization removes the obsolete hash-addressed
+`.omnia-reader/v1/books/` layout.
 
 The client initializes `manifest.json` once and validates its application,
 schema version, SHA-256 publication identity, and required feature set before
@@ -372,22 +381,23 @@ restore obsolete user data.
 
 Base path: `/api/sync/github`
 
-| Method   | Path                                  | Result                                                                       |
-| -------- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| `GET`    | `/session`                            | Provider configuration, authenticated user, and selected repository          |
-| `GET`    | `/auth/start?returnTo=/settings/sync` | Starts GitHub App authorization                                              |
-| `GET`    | `/auth/callback`                      | Validates GitHub state, rotates the session, and returns to Sync Settings    |
-| `POST`   | `/webhook`                            | Validates a signed revocation and invalidates that user's sessions           |
-| `DELETE` | `/session`                            | Deletes the local session and revokes its GitHub user token                  |
-| `GET`    | `/repositories`                       | `{ "repositories": GitHubRepository[] }`                                     |
-| `PUT`    | `/repository`                         | Selects `{ "repositoryId": number }`                                         |
-| `POST`   | `/repository`                         | Creates private `{ "name": string }`, then selects it when App access exists |
-| `GET`    | `/files?prefix=...`                   | `{ "files": RemoteDocument[] }`                                              |
-| `GET`    | `/file?path=...`                      | A document; `404` if absent                                                  |
-| `PUT`    | `/file`                               | Creates/replaces a document; `409` on revision mismatch                      |
-| `GET`    | `/lfs/object/metadata?path=...`       | Object metadata; `404` if absent                                             |
-| `GET`    | `/lfs/object?path=...`                | Verified publication bytes                                                   |
-| `PUT`    | `/lfs/object?path=...`                | Uploads/verifies a Git LFS object                                            |
+| Method   | Path                                              | Result                                                                       |
+| -------- | ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `GET`    | `/session`                                        | Provider configuration, authenticated user, and selected repository          |
+| `GET`    | `/auth/start?returnTo=/settings/sync`             | Starts GitHub App authorization                                              |
+| `GET`    | `/auth/callback`                                  | Validates GitHub state, rotates the session, and returns to Sync Settings    |
+| `POST`   | `/webhook`                                        | Validates a signed revocation and invalidates that user's sessions           |
+| `DELETE` | `/session`                                        | Deletes the local session and revokes its GitHub user token                  |
+| `GET`    | `/repositories`                                   | `{ "repositories": GitHubRepository[] }`                                     |
+| `PUT`    | `/repository`                                     | Selects `{ "repositoryId": number }`                                         |
+| `POST`   | `/repository`                                     | Creates private `{ "name": string }`, then selects it when App access exists |
+| `GET`    | `/files?prefix=...`                               | `{ "files": RemoteDocument[] }`                                              |
+| `GET`    | `/file?path=...`                                  | A document; `404` if absent                                                  |
+| `PUT`    | `/file`                                           | Creates/replaces a document; `409` on revision mismatch                      |
+| `DELETE` | `/file?path=...&expectedRevision=...&message=...` | Deletes a document; `409` on revision mismatch                               |
+| `GET`    | `/lfs/object/metadata?path=...`                   | Object metadata; `404` if absent                                             |
+| `GET`    | `/lfs/object?path=...`                            | Verified publication bytes                                                   |
+| `PUT`    | `/lfs/object?path=...`                            | Uploads/verifies a Git LFS object                                            |
 
 OAuth callback failures never render provider responses directly. The gateway
 validates `state`, discards provider-controlled error descriptions, clears the
@@ -401,8 +411,8 @@ S256 challenge and no provider token or verifier.
 The gateway owns `.gitattributes` with:
 
 ```gitattributes
-.omnia-reader/v1/books/**/*.epub filter=lfs diff=lfs merge=lfs -text
-.omnia-reader/v1/books/**/*.pdf filter=lfs diff=lfs merge=lfs -text
+.omnia-reader/v1/library/**/*.epub filter=lfs diff=lfs merge=lfs -text
+.omnia-reader/v1/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text
 ```
 
 For an upload it must:
@@ -419,19 +429,20 @@ For an upload it must:
 
 Base path: `/api/sync/mega`
 
-| Method   | Path                                  | Result                                                             |
-| -------- | ------------------------------------- | ------------------------------------------------------------------ |
-| `GET`    | `/session`                            | Account label and selected folder, or `{ "authenticated": false }` |
-| `GET`    | `/auth/start?returnTo=/settings/sync` | Opens a gateway-owned MEGA login flow                              |
-| `DELETE` | `/session`                            | Logs out and deletes the reusable SDK session                      |
-| `GET`    | `/folders`                            | `{ "folders": MegaFolder[] }`                                      |
-| `PUT`    | `/folder`                             | Selects `{ "handle": string }` after server-side authorization     |
-| `GET`    | `/documents?prefix=...`               | `{ "documents": RemoteDocument[] }`                                |
-| `GET`    | `/document?path=...`                  | A small JSON document; `404` if absent                             |
-| `PUT`    | `/document`                           | Creates/replaces a document; `409` on revision mismatch            |
-| `GET`    | `/object/metadata?path=...`           | Publication metadata; `404` if absent                              |
-| `GET`    | `/object?path=...`                    | Verified publication bytes                                         |
-| `PUT`    | `/object?path=...`                    | Uploads/verifies an encrypted MEGA file                            |
+| Method   | Path                                                  | Result                                                             |
+| -------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
+| `GET`    | `/session`                                            | Account label and selected folder, or `{ "authenticated": false }` |
+| `GET`    | `/auth/start?returnTo=/settings/sync`                 | Opens a gateway-owned MEGA login flow                              |
+| `DELETE` | `/session`                                            | Logs out and deletes the reusable SDK session                      |
+| `GET`    | `/folders`                                            | `{ "folders": MegaFolder[] }`                                      |
+| `PUT`    | `/folder`                                             | Selects `{ "handle": string }` after server-side authorization     |
+| `GET`    | `/documents?prefix=...`                               | `{ "documents": RemoteDocument[] }`                                |
+| `GET`    | `/document?path=...`                                  | A small JSON document; `404` if absent                             |
+| `PUT`    | `/document`                                           | Creates/replaces a document; `409` on revision mismatch            |
+| `DELETE` | `/document?path=...&expectedRevision=...&message=...` | Deletes a document; `409` on revision mismatch                     |
+| `GET`    | `/object/metadata?path=...`                           | Publication metadata; `404` if absent                              |
+| `GET`    | `/object?path=...`                                    | Verified publication bytes                                         |
+| `PUT`    | `/object?path=...`                                    | Uploads/verifies an encrypted MEGA file                            |
 
 Use the official MEGA SDK in the gateway. MEGA permits duplicate names and
 does not offer cross-client sync locking, so the gateway must resolve nodes by

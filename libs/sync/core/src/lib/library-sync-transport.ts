@@ -11,6 +11,12 @@ export interface DocumentWriteRequest {
   message: string;
 }
 
+export interface DocumentDeleteRequest {
+  path: string;
+  expectedRevision?: string;
+  message: string;
+}
+
 export interface RemoteObject {
   path: string;
   revision: string;
@@ -57,6 +63,7 @@ export interface LibrarySyncTransport {
   list(prefix: string): Promise<readonly RemoteDocument[]>;
   read(path: string): Promise<RemoteDocument | null>;
   write(request: DocumentWriteRequest): Promise<RemoteDocument>;
+  deleteDocument?(request: DocumentDeleteRequest): Promise<void>;
   headObject(path: string): Promise<RemoteObject | null>;
   downloadObject(path: string, options?: ObjectDownloadOptions): Promise<Blob>;
   uploadObject(request: ObjectUploadRequest): Promise<RemoteObject>;

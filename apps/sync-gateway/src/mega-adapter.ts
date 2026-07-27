@@ -5,6 +5,7 @@ import {
   GatewayHttpError,
   type CredentialAuthorizationPage,
   type CredentialSyncGatewayAdapter,
+  type DocumentDeleteRequest,
   type DocumentWriteRequest,
   type RemoteDocument,
   type RemoteObject,
@@ -223,6 +224,7 @@ export class MegaSyncGatewayAdapter implements CredentialSyncGatewayAdapter {
         (file) =>
           file.path !== STAGING_ROOT &&
           !file.path.startsWith(`${STAGING_ROOT}/`) &&
+          (file.path.endsWith('.json') || file.path.endsWith('.md')) &&
           (file.path === prefix || file.path.startsWith(`${prefix}/`)),
       ),
     );
@@ -383,6 +385,30 @@ export class MegaSyncGatewayAdapter implements CredentialSyncGatewayAdapter {
         await this.safeRemove(context, backup.handle);
       }
       throw mapWriteRace(error);
+    }
+  }
+
+  async deleteDocument(
+    sessionId: string,
+    request: DocumentDeleteRequest,
+  ): Promise<void> {
+    const context = await this.context(sessionId);
+    const current = await this.resolveDocument(
+      sessionId,
+      context,
+      request.path,
+    );
+    if (!current) {
+      return;
+    }
+    if (
+      request.expectedRevision !== undefined &&
+      request.expectedRevision !== current.node.revision
+    ) {
+      throw documentConflict();
+    }
+    for (const candidate of [current.node, ...current.duplicates]) {
+      await this.safeRemove(context, candidate.handle);
     }
   }
 

@@ -9,10 +9,6 @@ import {
   ReadingProgress,
 } from '@omnia-reader/reader/domain';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  BOOK_SYNC_EXCLUSIONS,
-  BookSyncExclusions,
-} from '@omnia-reader/sync/core';
 import { LibraryPageComponent } from './library-page.component';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 import { PublicationExportService } from './publication-export.service';
@@ -44,6 +40,7 @@ describe('LibraryPageComponent', () => {
   const publicationImports = {
     onImported: vi.fn(),
     importPublications: vi.fn(),
+    removePublication: vi.fn(),
   };
   const enrichment = {
     enrich: vi.fn(),
@@ -51,12 +48,6 @@ describe('LibraryPageComponent', () => {
   const exporter = {
     exportPublication: vi.fn(),
   };
-  const syncExclusions = {
-    exclude: vi.fn(),
-    include: vi.fn(),
-    isExcluded: vi.fn(),
-  };
-
   beforeEach(async () => {
     vi.clearAllMocks();
     repository.listBooks.mockResolvedValue([book]);
@@ -70,6 +61,7 @@ describe('LibraryPageComponent', () => {
       duplicates: [],
       failures: [],
     });
+    publicationImports.removePublication.mockResolvedValue(undefined);
     platform.pickPublications.mockResolvedValue([]);
     exporter.exportPublication.mockResolvedValue('saved');
     await TestBed.configureTestingModule({
@@ -95,10 +87,6 @@ describe('LibraryPageComponent', () => {
         {
           provide: PublicationExportService,
           useValue: exporter,
-        },
-        {
-          provide: BOOK_SYNC_EXCLUSIONS,
-          useValue: syncExclusions as unknown as BookSyncExclusions,
         },
       ],
     }).compileComponents();
@@ -147,7 +135,7 @@ describe('LibraryPageComponent', () => {
     await fixture.componentInstance.exportBook(book);
     fixture.detectChanges();
 
-    expect(repository.removeBook).not.toHaveBeenCalled();
+    expect(publicationImports.removePublication).not.toHaveBeenCalled();
     expect(
       fixture.nativeElement.querySelector('[role="alert"]').textContent,
     ).toContain('The stored publication failed its size validation');
@@ -186,11 +174,11 @@ describe('LibraryPageComponent', () => {
       expect(document.querySelector('[role="dialog"]')).toBeNull();
       expect(document.activeElement).toBe(removeButton);
     });
-    expect(repository.removeBook).not.toHaveBeenCalled();
+    expect(publicationImports.removePublication).not.toHaveBeenCalled();
   });
 
   it('removes a confirmed publication and announces completion', async () => {
-    repository.removeBook.mockImplementationOnce(async () => {
+    publicationImports.removePublication.mockImplementationOnce(async () => {
       repository.listBooks.mockResolvedValue([]);
     });
     const fixture = TestBed.createComponent(LibraryPageComponent);
@@ -220,11 +208,9 @@ describe('LibraryPageComponent', () => {
       expect(fixture.componentInstance.books).toEqual([]);
     });
 
-    expect(repository.removeBook).toHaveBeenCalledWith(book.id);
-    expect(syncExclusions.exclude).toHaveBeenCalledWith(book.id);
-    expect(syncExclusions.include).not.toHaveBeenCalled();
+    expect(publicationImports.removePublication).toHaveBeenCalledWith(book);
     expect(fixture.nativeElement.textContent).toContain(
-      '“Owned book” removed from this device.',
+      '“Owned book” removed and queued for synchronization.',
     );
     expect(fixture.nativeElement.textContent).toContain(
       'Your library is empty',
@@ -232,7 +218,7 @@ describe('LibraryPageComponent', () => {
   });
 
   it('keeps a publication available and reports storage removal failures', async () => {
-    repository.removeBook.mockRejectedValueOnce(
+    publicationImports.removePublication.mockRejectedValueOnce(
       new Error('Offline storage is read-only'),
     );
     const fixture = TestBed.createComponent(LibraryPageComponent);
@@ -257,7 +243,7 @@ describe('LibraryPageComponent', () => {
 
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(repository.removeBook).toHaveBeenCalledWith(book.id);
+      expect(publicationImports.removePublication).toHaveBeenCalledWith(book);
       expect(fixture.componentInstance.removingBookId).toBeNull();
       expect(fixture.componentInstance.errorMessage).toBe(
         'Unable to remove “Owned book”: Offline storage is read-only',
@@ -265,8 +251,6 @@ describe('LibraryPageComponent', () => {
     });
 
     expect(fixture.componentInstance.books).toEqual([book]);
-    expect(syncExclusions.exclude).toHaveBeenCalledWith(book.id);
-    expect(syncExclusions.include).toHaveBeenCalledWith(book.id);
     expect(
       fixture.nativeElement.querySelector('[role="alert"]').textContent,
     ).toContain('Unable to remove “Owned book”: Offline storage is read-only');

@@ -1,10 +1,12 @@
 import { BookRecord, PublicationFormat } from '@omnia-reader/reader/domain';
 import { SYNC_ROOT } from './library-sync-manifest';
 
-export const BOOKS_ROOT = `${SYNC_ROOT}/books`;
+export const LEGACY_BOOKS_ROOT = `${SYNC_ROOT}/books`;
+export const BOOKS_ROOT = `${SYNC_ROOT}/library`;
+export const BOOK_DELETIONS_ROOT = `${SYNC_ROOT}/.deletions/books`;
 
 export interface BookSyncManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   bookId: string;
   format: PublicationFormat;
   fileName: string;
@@ -23,16 +25,22 @@ export interface BookSyncManifest {
 }
 
 export interface BookSyncDeletionTombstone {
-  schemaVersion: 1;
+  schemaVersion: 2;
   deleted: true;
   bookId: string;
   format: PublicationFormat;
+  fileName: string;
   objectPath: string;
   deletedAt: string;
   appVersion: string;
 }
 
 export type BookSyncDocument = BookSyncManifest | BookSyncDeletionTombstone;
+
+type BookPathRecord = Pick<BookRecord, 'format' | 'fileName'> & {
+  id?: string;
+  bookId?: string;
+};
 
 export function createBookSyncManifest(
   book: BookRecord,
@@ -44,14 +52,14 @@ export function createBookSyncManifest(
     throw new TypeError('Book IDs must be SHA-256 fingerprints');
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     bookId: book.id,
     format: book.format,
     fileName: book.fileName,
     mediaType: book.mediaType,
     size: book.size,
     sha256,
-    objectPath: bookObjectPath(book.id, book.format),
+    objectPath: bookObjectPath(book),
     title: book.title,
     authors: [...book.authors],
     ...(book.language ? { language: book.language } : {}),
@@ -64,7 +72,7 @@ export function createBookSyncManifest(
 }
 
 export function createBookSyncDeletionTombstone(
-  book: Pick<BookRecord, 'id' | 'format'>,
+  book: Pick<BookRecord, 'id' | 'format' | 'fileName'>,
   deletedAt = new Date().toISOString(),
   appVersion = '0.0.0',
 ): BookSyncDeletionTombstone {
@@ -72,25 +80,52 @@ export function createBookSyncDeletionTombstone(
     throw new TypeError('Book IDs must be SHA-256 fingerprints');
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     deleted: true,
     bookId: book.id,
     format: book.format,
-    objectPath: bookObjectPath(book.id, book.format),
+    fileName: book.fileName,
+    objectPath: bookObjectPath(book),
     deletedAt,
     appVersion,
   };
 }
 
-export function bookManifestPath(bookId: string): string {
-  return `${BOOKS_ROOT}/${pathSegment(bookId)}/book.json`;
+export function bookManifestPath(book: BookPathRecord): string {
+  return `${bookDirectoryPath(book)}/book.json`;
 }
 
-export function bookObjectPath(
+export function bookDeletionPath(bookId: string): string {
+  const sha256 = bookIdSha256(bookId);
+  if (!sha256) {
+    throw new TypeError('Book IDs must be SHA-256 fingerprints');
+  }
+  return `${BOOK_DELETIONS_ROOT}/${sha256}.json`;
+}
+
+export function bookObjectPath(book: BookPathRecord): string {
+  return `${bookDirectoryPath(book)}/${readableFileName(book.fileName, book.format)}`;
+}
+
+export function legacyBookManifestPath(bookId: string): string {
+  return `${LEGACY_BOOKS_ROOT}/${pathSegment(bookId)}/book.json`;
+}
+
+export function legacyBookObjectPath(
   bookId: string,
   format: PublicationFormat,
 ): string {
-  return `${BOOKS_ROOT}/${pathSegment(bookId)}/publication.${format}`;
+  return `${LEGACY_BOOKS_ROOT}/${pathSegment(bookId)}/publication.${format}`;
+}
+
+function bookDirectoryPath(book: BookPathRecord): string {
+  const sha256 = bookIdSha256(book.id ?? book.bookId);
+  if (!sha256) {
+    throw new TypeError('Book IDs must be SHA-256 fingerprints');
+  }
+  const fileName = readableFileName(book.fileName, book.format);
+  const stem = fileName.replace(/\.(epub|pdf)$/i, '');
+  return `${BOOKS_ROOT}/${stem}--${sha256.slice(0, 12)}`;
 }
 
 export function isBookSyncManifest(value: unknown): value is BookSyncManifest {
@@ -101,7 +136,7 @@ export function isBookSyncManifest(value: unknown): value is BookSyncManifest {
   const format = value['format'];
   const sha256 = bookIdSha256(bookId);
   return (
-    value['schemaVersion'] === 1 &&
+    value['schemaVersion'] === 2 &&
     sha256 !== null &&
     (format === 'epub' || format === 'pdf') &&
     isBoundedString(value['fileName']) &&
@@ -109,7 +144,12 @@ export function isBookSyncManifest(value: unknown): value is BookSyncManifest {
     Number.isSafeInteger(value['size']) &&
     (value['size'] as number) > 0 &&
     value['sha256'] === sha256 &&
-    value['objectPath'] === bookObjectPath(bookId as string, format) &&
+    value['objectPath'] ===
+      bookObjectPath({
+        id: bookId as string,
+        format,
+        fileName: value['fileName'] as string,
+      }) &&
     isBoundedString(value['title']) &&
     Array.isArray(value['authors']) &&
     value['authors'].length <= 100 &&
@@ -132,11 +172,17 @@ export function isBookSyncDeletionTombstone(
   const bookId = value['bookId'];
   const format = value['format'];
   return (
-    value['schemaVersion'] === 1 &&
+    value['schemaVersion'] === 2 &&
     value['deleted'] === true &&
     bookIdSha256(bookId) !== null &&
     (format === 'epub' || format === 'pdf') &&
-    value['objectPath'] === bookObjectPath(bookId as string, format) &&
+    isBoundedString(value['fileName']) &&
+    value['objectPath'] ===
+      bookObjectPath({
+        id: bookId as string,
+        format,
+        fileName: value['fileName'],
+      }) &&
     isCanonicalTimestamp(value['deletedAt']) &&
     isBoundedString(value['appVersion'])
   );
@@ -172,6 +218,24 @@ function bookIdSha256(value: unknown): string | null {
 
 function pathSegment(value: string): string {
   return encodeURIComponent(value).replace(/%2F/gi, '%252F');
+}
+
+function readableFileName(value: string, format: PublicationFormat): string {
+  const extension = `.${format}`;
+  const normalized = [...value.normalize('NFKC')]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 31 || codePoint === 127 ? '-' : character;
+    })
+    .join('')
+    .replace(/[/\\<>:"|?*%]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/^[ .]+|[ .]+$/g, '');
+  const withExtension = normalized.toLowerCase().endsWith(extension)
+    ? normalized
+    : `${normalized || 'Untitled'}${extension}`;
+  const stem = withExtension.slice(0, -extension.length).slice(0, 120).trim();
+  return `${stem || 'Untitled'}${extension}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

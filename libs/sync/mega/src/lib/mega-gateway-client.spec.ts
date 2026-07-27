@@ -134,6 +134,26 @@ describe('MegaGatewayClient', () => {
     expect(new Headers(init?.headers).get('X-Omnia-CSRF')).toBe('1');
   });
 
+  it('revision-deletes a synchronization document', async () => {
+    const fetcher = mockFetch(new Response(null, { status: 204 }));
+    const client = new MegaGatewayClient({ fetcher });
+    const path = '.omnia-reader/v1/library/A--aaaaaaaaaaaa/book.json';
+
+    await client.deleteDocument({
+      path,
+      expectedRevision: 'node-revision',
+      message: 'Delete A',
+    });
+
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(url).toContain('/document?');
+    expect(url).toContain(`path=${encodeURIComponent(path)}`);
+    expect(url).toContain('expectedRevision=node-revision');
+    expect(url).toContain('message=Delete+A');
+    expect(init?.method).toBe('DELETE');
+    expect(new Headers(init?.headers).get('X-Omnia-CSRF')).toBe('1');
+  });
+
   it('treats a missing object as deleted and maps revision conflicts', async () => {
     const missingClient = new MegaGatewayClient({
       fetcher: mockFetch(new Response(null, { status: 404 })),

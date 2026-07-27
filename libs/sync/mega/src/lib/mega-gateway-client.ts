@@ -2,6 +2,7 @@ import {
   BrowserObjectUploadRequester,
   browserObjectDownloadBlob,
   browserObjectUploadRequest,
+  DocumentDeleteRequest,
   DocumentWriteRequest,
   LibrarySyncTransport,
   ObjectDeleteRequest,
@@ -170,6 +171,22 @@ export class MegaGatewayClient implements MegaGateway {
       throw new MegaGatewayProtocolError();
     }
     return value;
+  }
+
+  async deleteDocument(request: DocumentDeleteRequest): Promise<void> {
+    const parameters = new URLSearchParams({ path: request.path });
+    if (request.expectedRevision) {
+      parameters.set('expectedRevision', request.expectedRevision);
+    }
+    parameters.set('message', request.message);
+    const response = await this.request(
+      `/document?${parameters.toString()}`,
+      { method: 'DELETE' },
+      [404, 409],
+    );
+    if (response.status === 409) {
+      throw new SyncConflictError('The remote MEGA document changed');
+    }
   }
 
   async headObject(path: string): Promise<RemoteObject | null> {

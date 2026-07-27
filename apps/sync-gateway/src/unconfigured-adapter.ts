@@ -1,4 +1,5 @@
 import type {
+  DocumentDeleteRequest,
   DocumentWriteRequest,
   RemoteDocument,
   RemoteObject,
@@ -48,6 +49,15 @@ export class UnconfiguredSyncGatewayAdapter implements SyncGatewayAdapter {
     sessionId: string,
     request: DocumentWriteRequest,
   ): Promise<RemoteDocument> {
+    void sessionId;
+    void request;
+    return this.unavailable();
+  }
+
+  async deleteDocument(
+    sessionId: string,
+    request: DocumentDeleteRequest,
+  ): Promise<void> {
     void sessionId;
     void request;
     return this.unavailable();

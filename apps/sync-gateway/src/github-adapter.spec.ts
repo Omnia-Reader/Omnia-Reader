@@ -556,6 +556,15 @@ describe('GitHubSyncGatewayAdapter', () => {
         message: 'Stale progress',
       }),
     ).rejects.toMatchObject<Partial<GatewayHttpError>>({ statusCode: 409 });
+
+    await expect(
+      adapter.deleteDocument('session', {
+        path,
+        expectedRevision: created.revision,
+        message: 'Delete progress',
+      }),
+    ).resolves.toBeUndefined();
+    await expect(adapter.readDocument('session', path)).resolves.toBeNull();
   });
 
   it.each([404, 409])(
@@ -605,7 +614,7 @@ describe('GitHubSyncGatewayAdapter', () => {
     expect(provider.lfsUploadContentLength).toBe(String(content.byteLength));
     expect(provider.lfsVerifyAccept).toBe('application/vnd.git-lfs+json');
     expect(provider.files.get('.gitattributes')?.content).toContain(
-      '.omnia-reader/v1/books/**/*.pdf filter=lfs',
+      '.omnia-reader/v1/library/**/*.pdf filter=lfs',
     );
     expect(provider.files.get(path)?.content).toBe(
       `version https://git-lfs.github.com/spec/v1\noid sha256:${sha256}\nsize ${content.byteLength}\n`,

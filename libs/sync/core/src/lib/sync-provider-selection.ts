@@ -1,5 +1,6 @@
 import {
   DocumentWriteRequest,
+  DocumentDeleteRequest,
   LibrarySyncTransport,
   ObjectDeleteRequest,
   ObjectDownloadOptions,
@@ -84,6 +85,16 @@ export class SelectedLibrarySyncTransport implements LibrarySyncTransport {
 
   write(request: DocumentWriteRequest) {
     return this.active().write(request);
+  }
+
+  deleteDocument(request: DocumentDeleteRequest) {
+    const active = this.active();
+    if (!active.deleteDocument) {
+      throw new Error(
+        'The selected synchronization provider cannot delete remote documents',
+      );
+    }
+    return active.deleteDocument(request);
   }
 
   headObject(path: string) {

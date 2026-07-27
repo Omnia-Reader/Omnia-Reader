@@ -265,6 +265,22 @@ export class SimulatedSyncGateway {
       await this.writeDocument(route);
       return;
     }
+    if (path === documentPath && method === 'DELETE') {
+      const remotePath = url.searchParams.get('path') ?? '';
+      const expectedRevision = url.searchParams.get('expectedRevision');
+      const document = this.documents.get(remotePath);
+      if (!document) {
+        await this.fulfillJson(route, { message: 'Not found' }, 404);
+        return;
+      }
+      if (expectedRevision !== null && expectedRevision !== document.revision) {
+        await this.fulfillJson(route, { message: 'Revision changed' }, 409);
+        return;
+      }
+      this.documents.delete(remotePath);
+      await route.fulfill({ status: 204 });
+      return;
+    }
 
     const metadataPath =
       this.provider === 'git' ? '/lfs/object/metadata' : '/object/metadata';

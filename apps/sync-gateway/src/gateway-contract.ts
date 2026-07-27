@@ -15,6 +15,12 @@ export interface DocumentWriteRequest {
   message: string;
 }
 
+export interface DocumentDeleteRequest {
+  path: string;
+  expectedRevision?: string;
+  message: string;
+}
+
 export interface RemoteObject {
   path: string;
   revision: string;
@@ -69,6 +75,10 @@ export interface SyncGatewayAdapter {
     sessionId: string,
     request: DocumentWriteRequest,
   ): Promise<RemoteDocument>;
+  deleteDocument(
+    sessionId: string,
+    request: DocumentDeleteRequest,
+  ): Promise<void>;
   headObject(sessionId: string, path: string): Promise<RemoteObject | null>;
   downloadObject(
     sessionId: string,

@@ -230,6 +230,26 @@ export async function registerProviderRoutes(
     return options.adapter.writeDocument(sessionId, write);
   });
 
+  app.delete<{
+    Querystring: {
+      path?: string;
+      expectedRevision?: string;
+      message?: string;
+    };
+  }>(names.documentPath, async (request, reply) => {
+    requireSameOriginMutation(request);
+    const path = logicalSyncPath(request.query.path);
+    const expectedRevision = optionalRevision(request.query.expectedRevision);
+    const message = documentMessage(request.query.message);
+    const sessionId = session(request, reply, cookieName, options);
+    await options.adapter.deleteDocument(sessionId, {
+      path,
+      message,
+      ...(expectedRevision ? { expectedRevision } : {}),
+    });
+    return reply.code(204).send();
+  });
+
   app.get<{ Querystring: { path?: string } }>(
     `${names.objectPath}/metadata`,
     async (request, reply) => {
@@ -491,6 +511,13 @@ function documentWrite(value: unknown): DocumentWriteRequest {
     message,
     ...(typeof expectedRevision === 'string' ? { expectedRevision } : {}),
   };
+}
+
+function documentMessage(value: string | undefined): string {
+  if (!value || value.length > 512 || value.includes('\0')) {
+    throw new GatewayHttpError(400, 'Invalid document deletion message');
+  }
+  return value;
 }
 
 function publicationMediaType(

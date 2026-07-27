@@ -5,6 +5,7 @@ import { Readable, Transform } from 'node:stream';
 import {
   AuthorizationHttpError,
   GatewayHttpError,
+  type DocumentDeleteRequest,
   type DocumentWriteRequest,
   type RemoteDocument,
   type RemoteObject,
@@ -100,6 +101,10 @@ interface LfsObjectResponse {
 }
 
 const GIT_ATTRIBUTES = [
+  '.omnia-reader/v1/library/**/*.epub filter=lfs diff=lfs merge=lfs -text',
+  '.omnia-reader/v1/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
+];
+const LEGACY_GIT_ATTRIBUTES = [
   '.omnia-reader/v1/books/**/*.epub filter=lfs diff=lfs merge=lfs -text',
   '.omnia-reader/v1/books/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
 ];
@@ -393,6 +398,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         typeof entry['path'] === 'string' &&
         (entry['path'] === prefix ||
           (entry['path'] as string).startsWith(`${prefix}/`)) &&
+        isDocumentPath(entry['path']) &&
         isGitSha(entry['sha']),
     );
     if (blobs.length > MAX_REMOTE_DOCUMENTS) {
@@ -431,6 +437,34 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
   ): Promise<RemoteDocument> {
     const context = await this.repositoryContext(sessionId);
     return this.writeFile(context.repository, context.token, request);
+  }
+
+  async deleteDocument(
+    sessionId: string,
+    request: DocumentDeleteRequest,
+  ): Promise<void> {
+    const context = await this.repositoryContext(sessionId);
+    const current = await this.readFile(
+      context.repository,
+      context.token,
+      request.path,
+    );
+    if (!current) {
+      return;
+    }
+    if (
+      request.expectedRevision !== undefined &&
+      request.expectedRevision !== current.revision
+    ) {
+      throw new GatewayHttpError(409, 'The remote document changed');
+    }
+    await this.deleteFile(
+      context.repository,
+      context.token,
+      request.path,
+      current.revision,
+      request.message,
+    );
   }
 
   async headObject(
@@ -1265,6 +1299,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     token: string,
     path: string,
     revision: string,
+    message = `Omnia Reader: delete publication ${path}`,
   ): Promise<void> {
     await this.githubJson<unknown>(
       `/repos/${encodeFullName(repository.fullName)}/contents/${encodePath(path)}`,
@@ -1272,7 +1307,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         method: 'DELETE',
         token,
         body: {
-          message: `Omnia Reader: delete publication ${path}`,
+          message,
           sha: revision,
           branch: repository.defaultBranch,
         },
@@ -1293,6 +1328,11 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
           .filter(Boolean),
       );
       let changed = false;
+      for (const line of LEGACY_GIT_ATTRIBUTES) {
+        if (lines.delete(line)) {
+          changed = true;
+        }
+      }
       for (const line of GIT_ATTRIBUTES) {
         if (!lines.has(line)) {
           lines.add(line);
@@ -1879,6 +1919,13 @@ function encodeFullName(value: string): string {
     throw providerProtocolError();
   }
   return parts.map(encodeURIComponent).join('/');
+}
+
+function isDocumentPath(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    (value.endsWith('.json') || value.endsWith('.md'))
+  );
 }
 
 function encodePath(value: string): string {

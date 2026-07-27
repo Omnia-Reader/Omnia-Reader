@@ -1,6 +1,7 @@
 export * from './lib/annotation-sync-service';
 export * from './lib/auto-sync-scheduler';
 export * from './lib/book-sync-manifest';
+export * from './lib/book-sync-catalog';
 export * from './lib/book-sync-exclusions';
 export * from './lib/book-sync-service';
 export * from './lib/browser-object-transfer';

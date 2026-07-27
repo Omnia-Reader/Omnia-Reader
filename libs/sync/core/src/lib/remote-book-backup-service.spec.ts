@@ -1,16 +1,19 @@
 import {
+  BookRecord,
   SyncOperation,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import { describe, expect, it } from 'vitest';
 import {
   BookSyncManifest,
+  bookDeletionPath,
   bookManifestPath,
   bookObjectPath,
   createBookSyncDeletionTombstone,
 } from './book-sync-manifest';
 import { BookSyncExclusions } from './book-sync-exclusions';
 import {
+  DocumentDeleteRequest,
   DocumentWriteRequest,
   LibrarySyncTransport,
   ObjectDeleteRequest,
@@ -21,9 +24,19 @@ import {
 import { RemoteBookBackupService } from './remote-book-backup-service';
 
 const BOOK_ID = `sha256:${'a'.repeat(64)}`;
-const OBJECT_PATH = bookObjectPath(BOOK_ID, 'epub');
+const BOOK: BookRecord = {
+  id: BOOK_ID,
+  format: 'epub',
+  fileName: 'remote.epub',
+  mediaType: 'application/epub+zip',
+  size: 12,
+  title: 'Remote publication',
+  authors: ['Reader Example'],
+  importedAt: '2026-07-25T10:00:00.000Z',
+};
+const OBJECT_PATH = bookObjectPath(BOOK);
 const MANIFEST: BookSyncManifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   bookId: BOOK_ID,
   format: 'epub',
   fileName: 'remote.epub',
@@ -41,12 +54,12 @@ const MANIFEST: BookSyncManifest = {
 describe('RemoteBookBackupService', () => {
   it('lists only active publication manifests', async () => {
     const remote = new MemoryRemote();
-    remote.seedDocument(bookManifestPath(BOOK_ID), MANIFEST);
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
     const deletedId = `sha256:${'b'.repeat(64)}`;
     remote.seedDocument(
-      bookManifestPath(deletedId),
+      bookDeletionPath(deletedId),
       createBookSyncDeletionTombstone(
-        { id: deletedId, format: 'pdf' },
+        { id: deletedId, format: 'pdf', fileName: 'deleted.pdf' },
         '2026-07-26T10:00:00.000Z',
       ),
     );
@@ -67,7 +80,7 @@ describe('RemoteBookBackupService', () => {
 
   it('commits a tombstone before deleting the publication object', async () => {
     const remote = new MemoryRemote();
-    remote.seedDocument(bookManifestPath(BOOK_ID), MANIFEST);
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
     remote.seedObject({
       path: OBJECT_PATH,
       revision: 'object-revision-1',
@@ -95,12 +108,17 @@ describe('RemoteBookBackupService', () => {
         expectedRevision: 'object-revision-1',
       },
     ]);
-    expect(remote.events).toEqual(['write-tombstone', 'delete-object']);
+    expect(remote.events).toEqual([
+      'write-tombstone',
+      'delete-document',
+      'delete-object',
+      'write-catalog',
+    ]);
   });
 
   it('retries a conflicting tombstone write against the latest revision', async () => {
     const remote = new MemoryRemote();
-    remote.seedDocument(bookManifestPath(BOOK_ID), MANIFEST);
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
     remote.conflictWrites = 1;
     const service = new RemoteBookBackupService(
       remote,
@@ -115,12 +133,16 @@ describe('RemoteBookBackupService', () => {
 
     await service.deleteBackup(BOOK_ID);
 
-    expect(remote.writeAttempts).toBe(2);
+    expect(remote.events).toEqual([
+      'write-tombstone',
+      'delete-document',
+      'write-catalog',
+    ]);
   });
 
   it('keeps the tombstone and exclusion when object cleanup must be retried', async () => {
     const remote = new MemoryRemote();
-    remote.seedDocument(bookManifestPath(BOOK_ID), MANIFEST);
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
     remote.seedObject({
       path: OBJECT_PATH,
       revision: 'object-revision-1',
@@ -142,7 +164,7 @@ describe('RemoteBookBackupService', () => {
     expect(exclusions.isExcluded(BOOK_ID)).toBe(true);
     expect(
       JSON.parse(
-        (await remote.read(bookManifestPath(BOOK_ID)))?.content ?? '{}',
+        (await remote.read(bookDeletionPath(BOOK_ID)))?.content ?? '{}',
       ),
     ).toMatchObject({ deleted: true, bookId: BOOK_ID });
 
@@ -154,7 +176,7 @@ describe('RemoteBookBackupService', () => {
 
   it('rolls back a new exclusion when no tombstone was committed', async () => {
     const remote = new MemoryRemote();
-    remote.seedDocument(bookManifestPath(BOOK_ID), MANIFEST);
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
     remote.failWrites = 1;
     const exclusions = new MemoryExclusions();
     const service = new RemoteBookBackupService(
@@ -221,8 +243,23 @@ class MemoryRemote implements LibrarySyncTransport {
       revision: `revision-${++this.revision}`,
     };
     this.documents.set(request.path, document);
-    this.events.push('write-tombstone');
+    this.events.push(
+      request.path.endsWith('/README.md') ? 'write-catalog' : 'write-tombstone',
+    );
     return document;
+  }
+
+  async deleteDocument(request: DocumentDeleteRequest): Promise<void> {
+    const current = this.documents.get(request.path);
+    if (
+      current &&
+      request.expectedRevision !== undefined &&
+      request.expectedRevision !== current.revision
+    ) {
+      throw new SyncConflictError();
+    }
+    this.documents.delete(request.path);
+    this.events.push('delete-document');
   }
 
   async headObject(path: string): Promise<RemoteObject | null> {

@@ -47,7 +47,7 @@ describe('SyncSettingsPageComponent', () => {
   };
   const remoteBackup: RemoteBookBackup = {
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       bookId: 'sha256:remote-book',
       format: 'epub',
       fileName: 'remote-book.epub',
@@ -56,7 +56,8 @@ describe('SyncSettingsPageComponent', () => {
       authors: ['Reader Example'],
       size: 2048,
       sha256: 'a'.repeat(64),
-      objectPath: '.omnia-reader/v1/books/sha256:remote-book/publication.epub',
+      objectPath:
+        '.omnia-reader/v1/library/remote-book--aaaaaaaaaaaa/remote-book.epub',
       importedAt: '2026-07-26T12:00:00.000Z',
       updatedAt: '2026-07-26T12:00:00.000Z',
       appVersion: '1.0.0',

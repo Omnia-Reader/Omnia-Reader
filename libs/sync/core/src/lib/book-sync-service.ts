@@ -5,17 +5,24 @@ import {
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import {
+  BOOK_DELETIONS_ROOT,
   BOOKS_ROOT,
+  LEGACY_BOOKS_ROOT,
   BookSyncDeletionTombstone,
   BookSyncDocument,
   BookSyncManifest,
+  bookDeletionPath,
   bookManifestPath,
+  bookObjectPath,
+  createBookSyncDeletionTombstone,
   createBookSyncManifest,
   isBookSyncDeletionTombstone,
   isBookSyncDocument,
   isBookSyncManifest,
+  legacyBookObjectPath,
   manifestBookRecord,
 } from './book-sync-manifest';
+import { updateBookSyncCatalog } from './book-sync-catalog';
 import {
   LibrarySyncTransport,
   RemoteDocument,
@@ -46,10 +53,20 @@ export interface BookSyncOptions {
 }
 
 interface PendingBookWrite {
+  kind: 'upsert';
   manifest: BookSyncManifest;
   operationIds: string[];
   latestOperation: SyncOperation;
 }
+
+interface PendingBookDeletion {
+  kind: 'delete';
+  tombstone: BookSyncDeletionTombstone;
+  operationIds: string[];
+  latestOperation: SyncOperation;
+}
+
+type PendingBookChange = PendingBookWrite | PendingBookDeletion;
 
 const DEFAULT_MAX_CONFLICT_RETRIES = 3;
 const DEFAULT_RETRY_DELAY_MS = 100;
@@ -85,33 +102,39 @@ export class BookSyncService {
 
   async pull(options: SyncWorkerOptions = {}): Promise<BookSyncResult> {
     throwIfSyncAborted(options.signal);
-    const [documents, pending] = await Promise.all([
+    const [deletions, books, pending] = await Promise.all([
+      this.remote.list(BOOK_DELETIONS_ROOT),
       this.remote.list(BOOKS_ROOT),
       this.journal.pending(),
     ]);
-    const localIntents = coalesceBookOperations(pending).documents;
+    const documents = [...deletions, ...books];
+    const localIntents = coalesceBookOperations(pending).changes;
     let pulled = 0;
     let rejected = 0;
 
     for (const document of documents) {
       throwIfSyncAborted(options.signal);
-      if (!document.path.endsWith('/book.json')) {
-        continue;
-      }
       const remoteBook = parseBookSyncDocument(document);
       if (
         !remoteBook ||
-        document.path !== bookManifestPath(remoteBook.bookId)
+        document.path !==
+          (isBookSyncDeletionTombstone(remoteBook)
+            ? bookDeletionPath(remoteBook.bookId)
+            : bookManifestPath(remoteBook))
       ) {
         rejected += 1;
         continue;
       }
       if (isBookSyncDeletionTombstone(remoteBook)) {
         const localIntent = localIntents.get(remoteBook.bookId);
-        if (!localIntent || !isNewerThanDeletion(localIntent, remoteBook)) {
+        if (
+          !localIntent ||
+          localIntent.kind === 'delete' ||
+          !isNewerThanDeletion(localIntent, remoteBook)
+        ) {
           const wasExcluded = this.exclusions.isExcluded(remoteBook.bookId);
           this.exclusions.exclude(remoteBook.bookId);
-          await this.discardDeletedObject(remoteBook.objectPath);
+          await this.discardDeletedObjects(remoteBook, remoteBook);
           pulled += wasExcluded ? 0 : 1;
         }
         continue;
@@ -163,12 +186,64 @@ export class BookSyncService {
   async push(options: SyncWorkerOptions = {}): Promise<BookSyncResult> {
     throwIfSyncAborted(options.signal);
     const pending = await this.journal.pending();
-    const writes = coalesceBookOperations(pending);
+    const changes = coalesceBookOperations(pending);
+    const remoteDocuments = await this.remote.list(BOOKS_ROOT);
+    const excludedRemoteBooks = new Map<string, BookSyncManifest>();
+    for (const document of remoteDocuments) {
+      if (!document.path.endsWith('/book.json')) {
+        continue;
+      }
+      const record = parseBookSyncDocument(document);
+      if (
+        record &&
+        isBookSyncManifest(record) &&
+        document.path === bookManifestPath(record) &&
+        this.exclusions.isExcluded(record.bookId)
+      ) {
+        excludedRemoteBooks.set(record.bookId, record);
+      }
+    }
     const discardedOperationIds: string[] = [];
-    for (const [bookId, write] of writes.documents) {
-      if (this.exclusions.isExcluded(bookId)) {
-        discardedOperationIds.push(...write.operationIds);
-        writes.documents.delete(bookId);
+    for (const [bookId, change] of changes.changes) {
+      if (!this.exclusions.isExcluded(bookId) || change.kind === 'delete') {
+        continue;
+      }
+      const remoteBook = excludedRemoteBooks.get(bookId);
+      if (remoteBook) {
+        changes.changes.set(
+          bookId,
+          pendingDeletion(
+            createBookSyncDeletionTombstone(
+              {
+                id: remoteBook.bookId,
+                format: remoteBook.format,
+                fileName: remoteBook.fileName,
+              },
+              change.latestOperation.createdAt,
+            ),
+            change.operationIds,
+            change.latestOperation,
+          ),
+        );
+      } else {
+        discardedOperationIds.push(...change.operationIds);
+        changes.changes.delete(bookId);
+      }
+    }
+    for (const [bookId, remoteBook] of excludedRemoteBooks) {
+      if (!changes.changes.has(bookId)) {
+        const tombstone = createBookSyncDeletionTombstone(
+          {
+            id: remoteBook.bookId,
+            format: remoteBook.format,
+            fileName: remoteBook.fileName,
+          },
+          new Date().toISOString(),
+        );
+        changes.changes.set(
+          bookId,
+          pendingDeletion(tombstone, [], syntheticBookDeletion(tombstone)),
+        );
       }
     }
     if (discardedOperationIds.length > 0) {
@@ -178,10 +253,11 @@ export class BookSyncService {
       throwIfSyncAborted(options.signal);
       if (
         !this.exclusions.isExcluded(book.id) &&
-        !writes.documents.has(book.id)
+        !changes.changes.has(book.id)
       ) {
         const manifest = createBookSyncManifest(book);
-        writes.documents.set(book.id, {
+        changes.changes.set(book.id, {
+          kind: 'upsert',
           manifest,
           operationIds: [],
           latestOperation: syntheticBookOperation(manifest),
@@ -192,11 +268,14 @@ export class BookSyncService {
     let conflicts = 0;
     let rejected =
       pending.filter((operation) => operation.entity === 'book').length -
-      writes.acceptedOperationCount;
+      changes.acceptedOperationCount;
 
-    for (const write of writes.documents.values()) {
+    for (const change of changes.changes.values()) {
       throwIfSyncAborted(options.signal);
-      const result = await this.pushBook(write, options);
+      const result =
+        change.kind === 'upsert'
+          ? await this.pushBook(change, options)
+          : await this.pushDeletion(change, options);
       pushed += result.pushed ? 1 : 0;
       conflicts += result.conflicts;
       rejected += result.rejected;
@@ -211,6 +290,12 @@ export class BookSyncService {
     const pulled = await this.pull(options);
     throwIfSyncAborted(options.signal);
     const pushed = await this.push(options);
+    await this.cleanupLegacyRemoteLayout();
+    await updateBookSyncCatalog(this.remote, {
+      maxConflictRetries: this.maxConflictRetries,
+      retryDelayMs: this.retryDelayMs,
+      wait: this.wait,
+    });
     return {
       pulled: pulled.pulled,
       pushed: pushed.pushed,
@@ -224,9 +309,21 @@ export class BookSyncService {
     options: SyncWorkerOptions,
   ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
     throwIfSyncAborted(options.signal);
-    const current = await this.remote.read(
-      bookManifestPath(pending.manifest.bookId),
+    const deletion = await this.remote.read(
+      bookDeletionPath(pending.manifest.bookId),
     );
+    const remoteDeletion = deletion ? parseBookSyncDocument(deletion) : null;
+    if (
+      remoteDeletion &&
+      isBookSyncDeletionTombstone(remoteDeletion) &&
+      !isNewerThanDeletion(pending, remoteDeletion)
+    ) {
+      this.exclusions.exclude(pending.manifest.bookId);
+      await this.discardDeletedObjects(remoteDeletion, pending.manifest);
+      await this.journal.acknowledge(pending.operationIds);
+      return { pushed: false, conflicts: 0, rejected: 0 };
+    }
+    const current = await this.remote.read(bookManifestPath(pending.manifest));
     const remoteBook = current ? parseBookSyncDocument(current) : null;
     if (
       remoteBook &&
@@ -234,7 +331,7 @@ export class BookSyncService {
       !isNewerThanDeletion(pending, remoteBook)
     ) {
       this.exclusions.exclude(pending.manifest.bookId);
-      await this.discardDeletedObject(pending.manifest.objectPath);
+      await this.discardDeletedObjects(remoteBook, pending.manifest);
       await this.journal.acknowledge(pending.operationIds);
       return { pushed: false, conflicts: 0, rejected: 0 };
     }
@@ -295,14 +392,97 @@ export class BookSyncService {
       }
     }
 
-    return this.pushManifest(pending, options.signal);
+    const result = await this.pushManifest(pending, options.signal);
+    if (result.pushed && deletion) {
+      await this.deleteRemoteDocument({
+        path: deletion.path,
+        expectedRevision: deletion.revision,
+        message: `Restore book ${pending.manifest.title}`,
+      });
+      this.exclusions.include(pending.manifest.bookId);
+    }
+    return result;
+  }
+
+  private async pushDeletion(
+    pending: PendingBookDeletion,
+    options: SyncWorkerOptions,
+  ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
+    const path = bookDeletionPath(pending.tombstone.bookId);
+    let conflicts = 0;
+
+    for (let attempt = 0; ; attempt += 1) {
+      throwIfSyncAborted(options.signal);
+      const current = await this.remote.read(path);
+      const remoteBook = current ? parseBookSyncDocument(current) : null;
+      if (
+        current &&
+        (!remoteBook || remoteBook.bookId !== pending.tombstone.bookId)
+      ) {
+        return {
+          pushed: false,
+          conflicts,
+          rejected: pending.operationIds.length,
+        };
+      }
+      const tombstone =
+        remoteBook &&
+        isBookSyncDeletionTombstone(remoteBook) &&
+        remoteBook.deletedAt > pending.tombstone.deletedAt
+          ? remoteBook
+          : pending.tombstone;
+
+      try {
+        if (!current || current.content !== serializeTombstone(tombstone)) {
+          await this.remote.write({
+            path,
+            content: serializeTombstone(tombstone),
+            expectedRevision: current?.revision,
+            message: `Delete book ${tombstone.bookId}`,
+          });
+        }
+        const manifestPath = bookManifestPath(tombstone);
+        const manifest = await this.remote.read(manifestPath);
+        if (manifest) {
+          const active = parseBookSyncDocument(manifest);
+          if (
+            !active ||
+            !isBookSyncManifest(active) ||
+            active.bookId !== tombstone.bookId
+          ) {
+            return {
+              pushed: false,
+              conflicts,
+              rejected: pending.operationIds.length,
+            };
+          }
+          await this.deleteRemoteDocument({
+            path: manifestPath,
+            expectedRevision: manifest.revision,
+            message: `Delete book ${tombstone.bookId}`,
+          });
+        }
+        await this.discardDeletedObjects(tombstone, remoteBook);
+        await this.journal.acknowledge(pending.operationIds);
+        return { pushed: true, conflicts, rejected: 0 };
+      } catch (error) {
+        if (
+          !(error instanceof SyncConflictError) ||
+          attempt >= this.maxConflictRetries
+        ) {
+          throw error;
+        }
+        conflicts += 1;
+        await this.wait(this.retryDelayMs * 2 ** attempt);
+      }
+    }
   }
 
   private async pushManifest(
     pending: PendingBookWrite,
     signal?: AbortSignal,
   ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
-    const path = bookManifestPath(pending.manifest.bookId);
+    const path = bookManifestPath(pending.manifest);
     const content = serializeManifest(pending.manifest);
     let conflicts = 0;
 
@@ -310,6 +490,9 @@ export class BookSyncService {
       throwIfSyncAborted(signal);
       const current = await this.remote.read(path);
       if (current?.content === content) {
+        if (await this.discardManifestIfDeleted(pending, current)) {
+          return { pushed: false, conflicts, rejected: 0 };
+        }
         await this.journal.acknowledge(pending.operationIds);
         return { pushed: true, conflicts, rejected: 0 };
       }
@@ -321,7 +504,7 @@ export class BookSyncService {
           !isNewerThanDeletion(pending, currentBook)
         ) {
           this.exclusions.exclude(pending.manifest.bookId);
-          await this.discardDeletedObject(pending.manifest.objectPath);
+          await this.discardDeletedObjects(currentBook, pending.manifest);
           await this.journal.acknowledge(pending.operationIds);
           return { pushed: false, conflicts, rejected: 0 };
         }
@@ -347,13 +530,16 @@ export class BookSyncService {
 
       try {
         throwIfSyncAborted(signal);
-        await this.remote.write({
+        const written = await this.remote.write({
           path,
           content,
           expectedRevision: current?.revision,
           message: `Update book manifest for ${pending.manifest.bookId}`,
         });
         throwIfSyncAborted(signal);
+        if (await this.discardManifestIfDeleted(pending, written)) {
+          return { pushed: false, conflicts, rejected: 0 };
+        }
         await this.journal.acknowledge(pending.operationIds);
         return { pushed: true, conflicts, rejected: 0 };
       } catch (error) {
@@ -379,6 +565,75 @@ export class BookSyncService {
       await this.remote.deleteObject({
         path,
         expectedRevision: object.revision,
+      });
+    }
+  }
+
+  private async discardManifestIfDeleted(
+    pending: PendingBookWrite,
+    manifest: RemoteDocument,
+  ): Promise<boolean> {
+    const document = await this.remote.read(
+      bookDeletionPath(pending.manifest.bookId),
+    );
+    const deletion = document ? parseBookSyncDocument(document) : null;
+    if (
+      !deletion ||
+      !isBookSyncDeletionTombstone(deletion) ||
+      isNewerThanDeletion(pending, deletion)
+    ) {
+      return false;
+    }
+    this.exclusions.exclude(pending.manifest.bookId);
+    await this.deleteRemoteDocument({
+      path: manifest.path,
+      expectedRevision: manifest.revision,
+      message: `Honor deletion of ${pending.manifest.title}`,
+    });
+    await this.discardDeletedObjects(deletion, pending.manifest);
+    await this.journal.acknowledge(pending.operationIds);
+    return true;
+  }
+
+  private deleteRemoteDocument(
+    request: Parameters<NonNullable<LibrarySyncTransport['deleteDocument']>>[0],
+  ): Promise<void> {
+    if (!this.remote.deleteDocument) {
+      throw new Error(
+        'The selected synchronization provider cannot delete remote documents',
+      );
+    }
+    return this.remote.deleteDocument(request);
+  }
+
+  private async discardDeletedObjects(
+    tombstone: BookSyncDeletionTombstone,
+    remoteBook: BookSyncDocument | null,
+  ): Promise<void> {
+    const paths = new Set([
+      tombstone.objectPath,
+      bookObjectPath(tombstone),
+      legacyBookObjectPath(tombstone.bookId, tombstone.format),
+      ...(remoteBook ? [remoteBook.objectPath] : []),
+    ]);
+    for (const path of paths) {
+      await this.discardDeletedObject(path);
+    }
+  }
+
+  private async cleanupLegacyRemoteLayout(): Promise<void> {
+    for (const document of await this.remote.list(LEGACY_BOOKS_ROOT)) {
+      if (!document.path.endsWith('/book.json')) {
+        continue;
+      }
+      const directory = document.path.slice(0, -'/book.json'.length);
+      for (const format of ['epub', 'pdf'] as const) {
+        await this.discardDeletedObject(`${directory}/publication.${format}`);
+      }
+      await this.deleteRemoteDocument({
+        path: document.path,
+        expectedRevision: document.revision,
+        message: 'Remove obsolete hash-addressed book record',
       });
     }
   }
@@ -415,6 +670,10 @@ function serializeManifest(manifest: BookSyncManifest): string {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
+function serializeTombstone(tombstone: BookSyncDeletionTombstone): string {
+  return `${JSON.stringify(tombstone, null, 2)}\n`;
+}
+
 async function matchesManifest(
   blob: Blob,
   manifest: BookSyncManifest,
@@ -430,39 +689,62 @@ async function matchesManifest(
 }
 
 function coalesceBookOperations(operations: readonly SyncOperation[]): {
-  documents: Map<string, PendingBookWrite>;
+  changes: Map<string, PendingBookChange>;
   acceptedOperationCount: number;
 } {
-  const documents = new Map<string, PendingBookWrite>();
+  const changes = new Map<string, PendingBookChange>();
   let acceptedOperationCount = 0;
 
   for (const operation of operations) {
     if (
       operation.entity !== 'book' ||
-      operation.operation !== 'upsert' ||
-      !isBookSyncManifest(operation.payload) ||
-      operation.entityId !== operation.payload.bookId
+      operation.entityId !==
+        (isBookSyncManifest(operation.payload) ||
+        isBookSyncDeletionTombstone(operation.payload)
+          ? operation.payload.bookId
+          : null) ||
+      (operation.operation === 'upsert'
+        ? !isBookSyncManifest(operation.payload)
+        : operation.operation === 'delete'
+          ? !isBookSyncDeletionTombstone(operation.payload)
+          : true)
     ) {
       continue;
     }
     acceptedOperationCount += 1;
-    const existing = documents.get(operation.payload.bookId);
+    const payload = operation.payload as BookSyncDocument;
+    const existing = changes.get(payload.bookId);
     if (!existing) {
-      documents.set(operation.payload.bookId, {
-        manifest: operation.payload,
-        operationIds: [operation.id],
-        latestOperation: operation,
-      });
+      changes.set(
+        payload.bookId,
+        isBookSyncManifest(payload)
+          ? {
+              kind: 'upsert',
+              manifest: payload,
+              operationIds: [operation.id],
+              latestOperation: operation,
+            }
+          : pendingDeletion(payload, [operation.id], operation),
+      );
       continue;
     }
     existing.operationIds.push(operation.id);
     if (compareOperations(operation, existing.latestOperation) > 0) {
-      existing.manifest = operation.payload;
-      existing.latestOperation = operation;
+      changes.set(
+        payload.bookId,
+        isBookSyncManifest(payload)
+          ? {
+              kind: 'upsert',
+              manifest: payload,
+              operationIds: existing.operationIds,
+              latestOperation: operation,
+            }
+          : pendingDeletion(payload, existing.operationIds, operation),
+      );
     }
   }
 
-  return { documents, acceptedOperationCount };
+  return { changes, acceptedOperationCount };
 }
 
 function compareOperations(left: SyncOperation, right: SyncOperation): number {
@@ -492,6 +774,33 @@ function syntheticBookOperation(manifest: BookSyncManifest): SyncOperation {
     revision: 0,
     createdAt: manifest.updatedAt,
     payload: manifest,
+  };
+}
+
+function pendingDeletion(
+  tombstone: BookSyncDeletionTombstone,
+  operationIds: string[],
+  latestOperation: SyncOperation,
+): PendingBookDeletion {
+  return {
+    kind: 'delete',
+    tombstone,
+    operationIds,
+    latestOperation,
+  };
+}
+
+function syntheticBookDeletion(
+  tombstone: BookSyncDeletionTombstone,
+): SyncOperation {
+  return {
+    id: `snapshot-delete:${tombstone.bookId}`,
+    entity: 'book',
+    entityId: tombstone.bookId,
+    operation: 'delete',
+    revision: 0,
+    createdAt: tombstone.deletedAt,
+    payload: tombstone,
   };
 }
 

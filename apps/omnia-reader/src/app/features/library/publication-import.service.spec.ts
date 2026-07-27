@@ -55,6 +55,7 @@ describe('PublicationImportService', () => {
     repository.removeBook.mockResolvedValue(undefined);
     journal.append.mockResolvedValue(undefined);
     enrichment.validateAndEnrich.mockResolvedValue(book);
+    syncExclusions.isExcluded.mockReturnValue(false);
     TestBed.configureTestingModule({
       providers: [
         PublicationImportService,
@@ -112,6 +113,39 @@ describe('PublicationImportService', () => {
       duplicates: [],
       failures: [],
     });
+  });
+
+  it('removes locally before journaling a durable remote deletion', async () => {
+    const service = TestBed.inject(PublicationImportService);
+
+    await service.removePublication(book);
+
+    expect(repository.removeBook).toHaveBeenCalledWith(book.id);
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(book.id);
+    expect(journal.append).toHaveBeenCalledWith({
+      entity: 'book',
+      entityId: book.id,
+      operation: 'delete',
+      payload: expect.objectContaining({
+        schemaVersion: 2,
+        deleted: true,
+        bookId: book.id,
+        fileName: book.fileName,
+      }),
+    });
+    expect(repository.removeBook.mock.invocationCallOrder[0]).toBeLessThan(
+      journal.append.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+  });
+
+  it('rolls back a new exclusion when local removal fails', async () => {
+    repository.removeBook.mockRejectedValueOnce(new Error('read-only'));
+    const service = TestBed.inject(PublicationImportService);
+
+    await expect(service.removePublication(book)).rejects.toThrow('read-only');
+
+    expect(syncExclusions.include).toHaveBeenCalledWith(book.id);
+    expect(journal.append).not.toHaveBeenCalled();
   });
 
   it('reports an exact-edition re-import as a duplicate', async () => {

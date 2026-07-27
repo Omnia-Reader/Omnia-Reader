@@ -10,7 +10,7 @@ export type GitWriteRequest = DocumentWriteRequest;
 
 export type GitRepositoryTransport = Pick<
   LibrarySyncTransport,
-  'list' | 'read' | 'write'
+  'list' | 'read' | 'write' | 'deleteDocument'
 >;
 
 export class GitConflictError extends SyncConflictError {

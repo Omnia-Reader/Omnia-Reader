@@ -130,6 +130,15 @@ describe('MegaSyncGatewayAdapter', () => {
     expect(updated.content).toBe('{"progress":0.5}');
     expect(updated.revision).not.toBe(created.revision);
     expect(fixture.bridge.visibleFiles(path)).toHaveLength(1);
+
+    await fixture.adapter.deleteDocument(sessionId, {
+      path,
+      expectedRevision: updated.revision,
+      message: 'delete progress',
+    });
+    await expect(
+      fixture.adapter.readDocument(sessionId, path),
+    ).resolves.toBeNull();
   });
 
   it('chooses identical duplicates deterministically and rejects divergent ones', async () => {

@@ -7,6 +7,7 @@ import {
   type CredentialAuthorizationPage,
   type CredentialSyncGatewayAdapter,
   type DestinationCreatingSyncGatewayAdapter,
+  type DocumentDeleteRequest,
   type DocumentWriteRequest,
   type RemoteDocument,
   type RemoteObject,
@@ -559,6 +560,22 @@ describe('sync gateway', () => {
         path: write.path,
         content: write.content,
       });
+
+      const deleteResponse = await app.inject({
+        method: 'DELETE',
+        url:
+          `/api/sync/${provider}/${documentName}` +
+          `?path=${encodeURIComponent(write.path)}` +
+          `&expectedRevision=${encodeURIComponent(writeResponse.json().revision)}` +
+          '&message=Delete+bookmark',
+        headers: MUTATION_HEADERS,
+      });
+      expect(deleteResponse.statusCode).toBe(204);
+      const missingResponse = await app.inject({
+        method: 'GET',
+        url: `/api/sync/${provider}/${documentName}?path=${encodeURIComponent(write.path)}`,
+      });
+      expect(missingResponse.statusCode).toBe(404);
     }
     await app.close();
   });
@@ -813,6 +830,22 @@ class MemoryGatewayAdapter implements SyncGatewayAdapter {
     };
     this.documents.set(request.path, document);
     return document;
+  }
+
+  async deleteDocument(
+    sessionId: string,
+    request: DocumentDeleteRequest,
+  ): Promise<void> {
+    void sessionId;
+    const current = this.documents.get(request.path);
+    if (
+      current &&
+      request.expectedRevision !== undefined &&
+      request.expectedRevision !== current.revision
+    ) {
+      throw new GatewayHttpError(409, 'Remote document changed');
+    }
+    this.documents.delete(request.path);
   }
 
   async headObject(
