@@ -8,6 +8,7 @@ import {
   LibraryRepository,
   PublicationAnnotation,
   PublicationSelection,
+  ReaderCommand,
   ReaderEngine,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
@@ -37,6 +38,7 @@ describe('ReaderPageComponent annotations', () => {
       selection?: (selection: PublicationSelection | null) => void;
       annotationActivation?: (annotationId: string) => void;
       navigation?: (direction: 'previous' | 'next') => void;
+      command?: (command: ReaderCommand) => void;
       zoom?: (direction: 'in' | 'out') => void;
       externalLink?: (url: string) => void;
     } = {};
@@ -69,7 +71,7 @@ describe('ReaderPageComponent annotations', () => {
           locator: {
             href: 'chapter-1',
             type: 'application/pdf',
-            locations: { position: 1 },
+            locations: { totalProgression: 0, position: 1 },
           },
           children: [
             {
@@ -77,17 +79,45 @@ describe('ReaderPageComponent annotations', () => {
               locator: {
                 href: 'chapter-1',
                 type: 'application/pdf',
-                locations: { position: 1, fragments: ['introduction'] },
+                locations: {
+                  totalProgression: 0,
+                  position: 1,
+                  fragments: ['introduction'],
+                },
               },
             },
           ],
         },
         {
-          title: '2. Chapter Two',
+          title: '2 Chapter Two',
           locator: {
             href: 'chapter-2',
             type: 'application/pdf',
-            locations: { position: 2 },
+            locations: { totalProgression: 0.5, position: 2 },
+          },
+        },
+        {
+          title: '3. Chapter Three',
+          locator: {
+            href: 'chapter-3',
+            type: 'application/pdf',
+            locations: { totalProgression: 0.75, position: 3 },
+          },
+        },
+        {
+          title: '4. Chapter Four',
+          locator: {
+            href: 'chapter-4',
+            type: 'application/pdf',
+            locations: { totalProgression: 0.9, position: 4 },
+          },
+        },
+        {
+          title: '5. Chapter Five',
+          locator: {
+            href: 'chapter-5',
+            type: 'application/pdf',
+            locations: { totalProgression: 1, position: 5 },
           },
         },
       ],
@@ -122,6 +152,12 @@ describe('ReaderPageComponent annotations', () => {
         callbacks.navigation = listener;
         return () => {
           delete callbacks.navigation;
+        };
+      },
+      onCommandRequested: (listener: (command: ReaderCommand) => boolean) => {
+        callbacks.command = listener;
+        return () => {
+          delete callbacks.command;
         };
       },
       onZoomRequested: (listener: (direction: 'in' | 'out') => void) => {
@@ -177,6 +213,14 @@ describe('ReaderPageComponent annotations', () => {
       acknowledge: vi.fn().mockResolvedValue(undefined),
     } satisfies SyncOperationJournal;
     const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    const exportedAnnotationBytes: Uint8Array[] = [];
+    const createFileSave = vi.fn().mockResolvedValue({
+      writable: new WritableStream<Uint8Array>({
+        write(chunk) {
+          exportedAnnotationBytes.push(chunk.slice());
+        },
+      }),
+    });
 
     await TestBed.configureTestingModule({
       imports: [ReaderPageComponent],
@@ -198,6 +242,8 @@ describe('ReaderPageComponent annotations', () => {
           provide: PLATFORM_PORT,
           useValue: {
             kind: 'web',
+            supportsStreamingFileSave: true,
+            createFileSave,
             onBackground: () => () => undefined,
             openExternalUrl,
           },
@@ -230,14 +276,224 @@ describe('ReaderPageComponent annotations', () => {
       '[data-testid="reader-progress-slider"]',
     ) as HTMLInputElement;
     expect(progressSlider.getAttribute('aria-valuetext')).toBe('0% of book');
+    expect(progressSlider.hasAttribute('list')).toBe(false);
     progressSlider.value = '75';
     progressSlider.dispatchEvent(new Event('change'));
     await vi.waitFor(() => expect(goToProgression).toHaveBeenCalledWith(0.75));
+    fixture.detectChanges();
+    const progressMilestones = fixture.nativeElement.querySelectorAll(
+      '[data-testid="reader-progress-milestone"]',
+    );
+    expect(progressMilestones.length).toBe(5);
+    const firstMilestone = progressMilestones.item(0) as HTMLElement;
+    const firstMilestoneDot = firstMilestone.querySelector(
+      '.reader-progress-milestone-inner',
+    ) as HTMLElement;
+    expect(firstMilestoneDot).toBeTruthy();
+    expect(
+      firstMilestone.querySelector('.reader-progress-milestone-tooltip')
+        ?.textContent,
+    ).toContain('Chapter One');
+    expect(firstMilestone.hasAttribute('aria-pressed')).toBe(false);
+    expect(firstMilestone.hasAttribute('aria-describedby')).toBe(false);
+    const progressMilestoneLabels = Array.from(
+      fixture.nativeElement.querySelectorAll(
+        '[data-testid="reader-progress-milestone"]',
+      ),
+      (button: HTMLElement) => button.getAttribute('aria-label') ?? '',
+    );
+    expect(progressMilestoneLabels.length).toBe(5);
+    const component = fixture.componentInstance as unknown as {
+      chapterProgressMilestones: ReadonlyArray<{
+        key: string;
+        value: number;
+        locator: unknown;
+      }>;
+      getMilestoneLeftPx: (milestone: {
+        key: string;
+        value: number;
+        locator: unknown;
+      }) => number;
+    };
+    vi.spyOn(progressSlider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 320,
+      height: 20,
+      top: 0,
+      right: 320,
+      bottom: 20,
+      left: 0,
+      toJSON: () => undefined,
+    });
+    fixture.detectChanges();
+    expect(
+      component.getMilestoneLeftPx(component.chapterProgressMilestones[0]),
+    ).toBe(5);
+    expect(
+      component.getMilestoneLeftPx(component.chapterProgressMilestones[4]),
+    ).toBe(315);
+    const goToCallsBeforeFirstMilestone = (
+      engine.goTo as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    progressMilestones[0].dispatchEvent(new Event('click'));
+    await vi.waitFor(() => {
+      const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.length).toBeGreaterThan(goToCallsBeforeFirstMilestone);
+      expect(calls[calls.length - 1][0].href).toBe('chapter-1');
+    });
+    fixture.detectChanges();
+    const internal = component as unknown as {
+      manualProgressPercent: number | null;
+      pinnedProgressMilestoneKey: string | null;
+    };
+    expect(internal.manualProgressPercent).toBe(0);
+    expect(internal.pinnedProgressMilestoneKey).toBe(
+      component.chapterProgressMilestones[0]?.key,
+    );
+    const firstMilestoneLeft = Number.parseFloat(
+      (progressMilestones.item(0) as HTMLElement).style.left,
+    );
+    const expectedFirstLeft = component.getMilestoneLeftPx(
+      component.chapterProgressMilestones[0],
+    );
+    expect(firstMilestoneLeft).toBeCloseTo(expectedFirstLeft, 4);
+    expect(Number(progressSlider.value)).toBeCloseTo(
+      component.chapterProgressMilestones[0]?.value,
+      2,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(progressMilestones.item(0));
+    expect(progressMilestones.item(0)?.getAttribute('aria-current')).toBe(
+      'location',
+    );
+    expect(
+      progressMilestones
+        .item(0)
+        ?.classList.contains('reader-progress-milestone-active'),
+    ).toBe(true);
+    expect(
+      progressMilestones
+        .item(0)
+        ?.classList.contains('reader-progress-milestone-reached'),
+    ).toBe(true);
+    const goToCallsBeforeSecondMilestone = (
+      engine.goTo as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    progressMilestones[1].dispatchEvent(new Event('click'));
+    await vi.waitFor(() => {
+      const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.length).toBeGreaterThan(goToCallsBeforeSecondMilestone);
+      expect(calls[calls.length - 1][0].href).toBe('chapter-2');
+    });
+    fixture.detectChanges();
+    const secondMilestoneLeft = Number.parseFloat(
+      (progressMilestones.item(1) as HTMLElement).style.left,
+    );
+    const expectedSecondLeft = component.getMilestoneLeftPx(
+      component.chapterProgressMilestones[1],
+    );
+    expect(secondMilestoneLeft).toBeCloseTo(expectedSecondLeft, 4);
+    expect(Number(progressSlider.value)).toBeCloseTo(
+      component.chapterProgressMilestones[1]?.value,
+      2,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(progressMilestones.item(1));
+    expect(progressMilestones.item(1)?.getAttribute('aria-current')).toBe(
+      'location',
+    );
+    expect(
+      progressMilestones
+        .item(1)
+        ?.classList.contains('reader-progress-milestone-active'),
+    ).toBe(true);
+    expect(
+      progressMilestones[1]?.getAttribute('style')?.includes('left: '),
+    ).toBe(true);
+    const goToCallsBeforeThirdMilestone = (
+      engine.goTo as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    progressMilestones[2].dispatchEvent(new Event('click'));
+    await vi.waitFor(() => {
+      const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.length).toBeGreaterThan(goToCallsBeforeThirdMilestone);
+      expect(calls[calls.length - 1][0].href).toBe('chapter-3');
+    });
+    fixture.detectChanges();
+    const thirdMilestoneLeft = Number.parseFloat(
+      (progressMilestones.item(2) as HTMLElement).style.left,
+    );
+    const expectedThirdLeft = component.getMilestoneLeftPx(
+      component.chapterProgressMilestones[2],
+    );
+    expect(thirdMilestoneLeft).toBeCloseTo(expectedThirdLeft, 4);
+    expect(Number(progressSlider.value)).toBeCloseTo(
+      component.chapterProgressMilestones[2]?.value,
+      2,
+    );
+    expect(document.activeElement).toBe(progressMilestones.item(2));
+    expect(progressMilestones.item(2)?.getAttribute('aria-current')).toBe(
+      'location',
+    );
+    expect(
+      progressMilestones
+        .item(2)
+        ?.classList.contains('reader-progress-milestone-active'),
+    ).toBe(true);
+    const goToCallsBeforeFourthMilestone = (
+      engine.goTo as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    progressMilestones[3].dispatchEvent(new Event('click'));
+    await vi.waitFor(() => {
+      const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.length).toBeGreaterThan(goToCallsBeforeFourthMilestone);
+      expect(calls[calls.length - 1][0].href).toBe('chapter-4');
+    });
+    fixture.detectChanges();
+    const fourthMilestoneLeft = Number.parseFloat(
+      (progressMilestones.item(3) as HTMLElement).style.left,
+    );
+    const expectedFourthLeft = component.getMilestoneLeftPx(
+      component.chapterProgressMilestones[3],
+    );
+    expect(fourthMilestoneLeft).toBeCloseTo(expectedFourthLeft, 4);
+    expect(Number(progressSlider.value)).toBeCloseTo(
+      component.chapterProgressMilestones[3]?.value,
+      2,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(progressMilestones.item(3));
+    expect(progressMilestones.item(3)?.getAttribute('aria-current')).toBe(
+      'location',
+    );
+    expect(
+      progressMilestones
+        .item(3)
+        ?.classList.contains('reader-progress-milestone-active'),
+    ).toBe(true);
+    expect(
+      fixture.nativeElement.querySelector('#reader-progress-milestones'),
+    ).toBeNull();
     const visibleButtonLabels = [
       ...(fixture.nativeElement as HTMLElement).querySelectorAll('button'),
     ].map((button) => button.textContent?.trim());
     expect(visibleButtonLabels).not.toContain('Previous');
     expect(visibleButtonLabels).not.toContain('Next');
+    expect(
+      (
+        fixture.nativeElement.querySelector(
+          '[aria-label="Toggle reader actions"]',
+        ) as HTMLButtonElement
+      ).classList.contains('sm:!hidden'),
+    ).toBe(true);
+    expect(
+      (
+        fixture.nativeElement.querySelector(
+          '[aria-label="Open publication search"]',
+        ) as HTMLButtonElement
+      ).classList.contains('!hidden'),
+    ).toBe(true);
     const readerRoot = fixture.nativeElement.querySelector(
       '[data-testid="reader-root"]',
     ) as HTMLElement;
@@ -306,27 +562,109 @@ describe('ReaderPageComponent annotations', () => {
     ).toBe(true);
     expect(
       fixture.componentInstance.tocItems.map((item) => item.number),
-    ).toEqual([null, null, '1', '1.1', '2']);
-    expect(fixture.componentInstance.tocItems[4].displayLabel).toBe(
-      '2 Chapter Two',
+    ).toEqual([null, null, '1', '1.1', '2', '3', '4', '5']);
+    expect(fixture.componentInstance.tocItems[6].displayLabel).toBe(
+      '4 Chapter Four',
     );
     expect(
       fixture.componentInstance.visibleTocItems.map((item) => item.number),
-    ).toEqual([null, null, '1', '2']);
+    ).toEqual([null, null, '1', '2', '3', '4', '5']);
     const chapterOne = fixture.componentInstance.tocItems[2];
     expect(fixture.componentInstance.isTocItemExpanded(chapterOne)).toBe(false);
     fixture.componentInstance.toggleTocItem(chapterOne);
     expect(
       fixture.componentInstance.visibleTocItems.map((item) => item.number),
-    ).toEqual([null, null, '1', '1.1', '2']);
+    ).toEqual([null, null, '1', '1.1', '2', '3', '4', '5']);
     expect(fixture.componentInstance.isTocItemExpanded(chapterOne)).toBe(true);
     fixture.componentInstance.toggleTocItem(chapterOne);
     expect(
       fixture.componentInstance.visibleTocItems.map((item) => item.number),
-    ).toEqual([null, null, '1', '2']);
+    ).toEqual([null, null, '1', '2', '3', '4', '5']);
     expect(fixture.componentInstance.isTocItemExpanded(chapterOne)).toBe(false);
 
+    const chapterFourTocItem = fixture.componentInstance.tocItems[6];
+    const chapterFourMilestone =
+      fixture.componentInstance.chapterProgressMilestones[3];
+    const internalProgressState = fixture.componentInstance as unknown as {
+      pinnedProgressMilestoneKey: string | null;
+    };
+    const goToCallsBeforeTocChapterFour = (
+      engine.goTo as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    await fixture.componentInstance.goToTocItem(chapterFourTocItem);
+    fixture.detectChanges();
+    expect(engine.goTo).toHaveBeenCalledTimes(
+      goToCallsBeforeTocChapterFour + 1,
+    );
+    expect(engine.goTo).toHaveBeenLastCalledWith(
+      chapterFourTocItem.entry.locator,
+    );
+    const progressSliderAfterTocChapterFour =
+      fixture.nativeElement.querySelector(
+        '[data-testid="reader-progress-slider"]',
+      ) as HTMLInputElement;
+    expect(Number(progressSliderAfterTocChapterFour.value)).toBeCloseTo(
+      chapterFourMilestone?.value ?? 0,
+      2,
+    );
+    expect(internalProgressState.pinnedProgressMilestoneKey).toBe(
+      chapterFourMilestone?.key ?? null,
+    );
+
+    const chapterOneIntroduction = fixture.componentInstance.tocItems[3];
+    const chapterOneMilestone =
+      fixture.componentInstance.chapterProgressMilestones[0];
+    const goToCallsBeforeIntro = (engine.goTo as ReturnType<typeof vi.fn>).mock
+      .calls.length;
+    await fixture.componentInstance.goToTocItem(chapterOneIntroduction);
+    fixture.detectChanges();
+    expect(engine.goTo).toHaveBeenCalledTimes(goToCallsBeforeIntro + 1);
+    expect(engine.goTo).toHaveBeenLastCalledWith(
+      chapterOneIntroduction.entry.locator,
+    );
+    const progressSliderAfterIntro = fixture.nativeElement.querySelector(
+      '[data-testid="reader-progress-slider"]',
+    ) as HTMLInputElement;
+    expect(Number(progressSliderAfterIntro.value)).toBeCloseTo(
+      chapterOneMilestone?.value ?? 0,
+      2,
+    );
+    expect(internalProgressState.pinnedProgressMilestoneKey).toBe(
+      chapterOneMilestone?.key ?? null,
+    );
+
+    const chapterFiveTocItem = fixture.componentInstance.tocItems[7];
+    const chapterFiveMilestone =
+      fixture.componentInstance.chapterProgressMilestones[4];
+    const goToCallsBeforeTocChapterFive = (
+      engine.goTo as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    await fixture.componentInstance.goToTocItem(chapterFiveTocItem);
+    fixture.detectChanges();
+    expect(engine.goTo).toHaveBeenCalledTimes(
+      goToCallsBeforeTocChapterFive + 1,
+    );
+    expect(engine.goTo).toHaveBeenLastCalledWith(
+      chapterFiveTocItem.entry.locator,
+    );
+    const progressSliderAfterTocChapterFive =
+      fixture.nativeElement.querySelector(
+        '[data-testid="reader-progress-slider"]',
+      ) as HTMLInputElement;
+    expect(Number(progressSliderAfterTocChapterFive.value)).toBeCloseTo(
+      chapterFiveMilestone?.value ?? 0,
+      2,
+    );
+    expect(internalProgressState.pinnedProgressMilestoneKey).toBe(
+      chapterFiveMilestone?.key ?? null,
+    );
+
     const panelFocusCases = [
+      {
+        trigger: 'Toggle reader actions',
+        panel: 'Reader actions',
+        close: 'Close reader actions',
+      },
       {
         trigger: 'Toggle table of contents',
         panel: 'Table of contents',
@@ -380,6 +718,80 @@ describe('ReaderPageComponent annotations', () => {
       expect(document.activeElement).toBe(trigger);
     }
 
+    const mobileActionsTrigger = fixture.nativeElement.querySelector(
+      '[aria-label="Toggle reader actions"]',
+    ) as HTMLButtonElement;
+    mobileActionsTrigger.click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const mobileSettingsAction = [
+      ...(
+        fixture.nativeElement as HTMLElement
+      ).querySelectorAll<HTMLButtonElement>(
+        '[data-testid="mobile-reader-actions"] button',
+      ),
+    ].find((button) => button.textContent?.includes('Reader settings'));
+    mobileSettingsAction?.click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      fixture.nativeElement.querySelector('[aria-label="Reader settings"]'),
+    ).not.toBeNull();
+    (
+      fixture.nativeElement.querySelector(
+        '[aria-label="Close reader settings"]',
+      ) as HTMLButtonElement
+    ).click();
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(mobileActionsTrigger);
+
+    const shortcutsTrigger = fixture.nativeElement.querySelector(
+      '[aria-label="Open keyboard shortcuts"]',
+    ) as HTMLButtonElement;
+    shortcutsTrigger.focus();
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: '?',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const shortcutsDialog = fixture.nativeElement.querySelector(
+      '[aria-labelledby="reader-keyboard-shortcuts-title"]',
+    ) as HTMLElement;
+    expect(shortcutsDialog.textContent).toContain('Turn pages');
+    expect(shortcutsDialog.textContent).toContain('Open highlights and notes');
+    expect(shortcutsDialog.contains(document.activeElement)).toBe(true);
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      fixture.nativeElement.querySelector(
+        '[aria-labelledby="reader-keyboard-shortcuts-title"]',
+      ),
+    ).toBeNull();
+    expect(document.activeElement).toBe(shortcutsTrigger);
+
+    callbacks.command?.('annotations');
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[aria-label="Highlights and notes"]',
+      ),
+    ).not.toBeNull();
+    callbacks.command?.('dismiss');
+    fixture.detectChanges();
+
     (
       fixture.nativeElement.querySelector(
         '[aria-label="Toggle table of contents"]',
@@ -419,22 +831,51 @@ describe('ReaderPageComponent annotations', () => {
     viewport.dispatchEvent(wheelDown);
     await vi.waitFor(() => expect(engine.next).toHaveBeenCalledTimes(3));
     expect(wheelDown.defaultPrevented).toBe(true);
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="reader-zoom-indicator"]',
+      ),
+    ).toBeNull();
     const zoomIn = new WheelEvent('wheel', {
       bubbles: true,
       cancelable: true,
       ctrlKey: true,
       deltaY: -120,
     });
+    vi.useFakeTimers();
     viewport.dispatchEvent(zoomIn);
-    await vi.waitFor(() =>
-      expect(engine.applyPreferences).toHaveBeenCalledWith(
-        expect.objectContaining({
-          format: 'pdf',
-          zoomMode: 'custom',
-          zoomPercent: 105,
-        }),
-      ),
+    await vi.advanceTimersByTimeAsync(0);
+    expect(engine.applyPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        format: 'pdf',
+        zoomMode: 'custom',
+        zoomPercent: 105,
+      }),
     );
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="reader-zoom-indicator"]',
+      )?.textContent,
+    ).toContain('105%');
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="reader-zoom-indicator"]')
+        ?.getAttribute('role'),
+    ).toBe('status');
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="reader-zoom-indicator"]')
+        ?.getAttribute('aria-live'),
+    ).toBe('polite');
+    await vi.advanceTimersByTimeAsync(1_200);
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="reader-zoom-indicator"]',
+      ),
+    ).toBeNull();
+    vi.useRealTimers();
     expect(zoomIn.defaultPrevented).toBe(true);
     expect(engine.next).toHaveBeenCalledTimes(3);
     let releaseNavigation: (() => void) | undefined;
@@ -539,17 +980,32 @@ describe('ReaderPageComponent annotations', () => {
         text: { highlight: 'Important' },
       },
     });
-    fixture.componentInstance.annotationColor = 'pink';
-    fixture.componentInstance.annotationNote = 'Revisit this evidence.';
-    callbacks.selection?.({
-      locator: {
-        href: '',
-        type: 'application/pdf',
-        title: 'Page 1',
-        locations: { position: 1 },
-        text: { highlight: 'Important' },
-      },
+    expect(fixture.componentInstance.pendingSelection).toEqual(
+      expect.objectContaining({
+        locator: expect.objectContaining({ text: { highlight: 'Important' } }),
+      }),
+    );
+    expect(
+      fixture.nativeElement.querySelector(
+        '[role="dialog"][aria-labelledby="annotation-editor-title"]',
+      ),
+    ).toBeNull();
+    const selectionContextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
     });
+    viewport.dispatchEvent(selectionContextMenu);
+    expect(selectionContextMenu.defaultPrevented).toBe(true);
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[role="dialog"][aria-labelledby="annotation-editor-title"]',
+      )?.textContent,
+    ).toContain('New annotation');
+    fixture.componentInstance.annotationColor = 'pink';
+    fixture.componentInstance.annotationStyle = 'strikethrough';
+    fixture.componentInstance.annotationNote = 'Revisit this evidence.';
     expect(fixture.componentInstance.annotationColor).toBe('pink');
     expect(fixture.componentInstance.annotationNote).toBe(
       'Revisit this evidence.',
@@ -561,6 +1017,7 @@ describe('ReaderPageComponent annotations', () => {
       expect.objectContaining({
         bookId: BOOK.id,
         color: 'pink',
+        style: 'strikethrough',
         note: 'Revisit this evidence.',
         locator: expect.objectContaining({
           text: { highlight: 'Important' },
@@ -580,13 +1037,116 @@ describe('ReaderPageComponent annotations', () => {
     if (!storedAnnotation) {
       throw new Error('Expected the saved annotation');
     }
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="annotation-count-badge"]',
+      )?.textContent,
+    ).toContain('1');
+    expect(fixture.componentInstance.annotationCount('strikethrough')).toBe(1);
+    expect(fixture.componentInstance.annotationCount('notes')).toBe(1);
+    fixture.componentInstance.annotationQuery = 'evidence';
+    fixture.componentInstance.setAnnotationFilter('notes');
+    expect(fixture.componentInstance.filteredAnnotations).toEqual([
+      storedAnnotation,
+    ]);
+    fixture.componentInstance.annotationQuery = 'missing phrase';
+    expect(fixture.componentInstance.filteredAnnotations).toEqual([]);
+    expect(fixture.componentInstance.annotationOverviewCustomized).toBe(true);
+    fixture.componentInstance.resetAnnotationOverview();
+    expect(fixture.componentInstance.annotationQuery).toBe('');
+    expect(fixture.componentInstance.annotationFilter).toBe('all');
+    expect(fixture.componentInstance.annotationSort).toBe('reading-order');
+    expect(fixture.componentInstance.annotationOverviewCustomized).toBe(false);
+    fixture.componentInstance.annotationQuery = '';
+    fixture.componentInstance.setAnnotationFilter('all');
+    const laterAnnotation: PublicationAnnotation = {
+      ...structuredClone(storedAnnotation),
+      id: 'annotation-later-in-book',
+      locator: {
+        ...structuredClone(storedAnnotation.locator),
+        title: 'Page 2',
+        locations: {
+          ...structuredClone(storedAnnotation.locator.locations),
+          position: 2,
+          totalProgression: 1,
+        },
+        text: { highlight: 'Later passage' },
+      },
+      note: 'Most recently updated note.',
+      createdAt: '2099-01-01T00:00:00.000Z',
+      updatedAt: '2099-01-02T00:00:00.000Z',
+    };
+    fixture.componentInstance.annotations = [laterAnnotation, storedAnnotation];
+    fixture.componentInstance.annotationSort = 'reading-order';
+    expect(fixture.componentInstance.filteredAnnotations).toEqual([
+      storedAnnotation,
+      laterAnnotation,
+    ]);
+    fixture.componentInstance.annotationSort = 'updated-desc';
+    expect(fixture.componentInstance.filteredAnnotations).toEqual([
+      laterAnnotation,
+      storedAnnotation,
+    ]);
+    fixture.componentInstance.annotationSort = 'reading-order';
+    fixture.componentInstance.annotations = [storedAnnotation];
+    fixture.componentInstance.toggleAnnotations();
+    fixture.detectChanges();
+    const annotationsPanel = fixture.nativeElement.querySelector(
+      '[aria-label="Highlights and notes"]',
+    ) as HTMLElement;
+    expect(annotationsPanel.textContent).toContain('Strikethrough');
+    expect(annotationsPanel.textContent).toContain('Page 1');
+    expect(annotationsPanel.textContent).toContain('Revisit this evidence.');
+    expect(
+      annotationsPanel.querySelector('#annotation-sort')?.textContent,
+    ).toContain('Reading order');
+    expect(
+      annotationsPanel.querySelector('#annotation-sort')?.textContent,
+    ).toContain('Recently updated');
+    expect(
+      annotationsPanel.querySelector(
+        '[data-testid="annotation-result-summary"]',
+      )?.textContent,
+    ).toContain('1 annotation');
+    const annotationSearch = annotationsPanel.querySelector(
+      '#annotation-search',
+    ) as HTMLInputElement;
+    annotationSearch.value = 'missing phrase';
+    annotationSearch.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(
+      annotationsPanel.querySelector(
+        '[data-testid="annotation-result-summary"]',
+      )?.textContent,
+    ).toContain('0 of 1 shown');
+    expect(annotationsPanel.textContent).toContain('Show all annotations');
+    fixture.componentInstance.resetAnnotationOverview();
+    fixture.detectChanges();
+    await fixture.componentInstance.exportShownAnnotations();
+    fixture.detectChanges();
+    expect(createFileSave).toHaveBeenCalledWith({
+      suggestedName: 'Annotation fixture-highlights-and-notes.md',
+      mediaType: 'text/markdown',
+      extensions: ['md'],
+    });
+    const exportedAnnotations = new TextDecoder().decode(
+      Buffer.concat(exportedAnnotationBytes.map((chunk) => Buffer.from(chunk))),
+    );
+    expect(exportedAnnotations).toContain('Revisit this evidence.');
+    expect(annotationsPanel.textContent).toContain(
+      '1 annotation saved as Annotation fixture-highlights-and-notes.md.',
+    );
+    fixture.componentInstance.toggleAnnotations();
+    fixture.detectChanges();
     callbacks.annotationActivation?.(storedAnnotation.id);
     fixture.detectChanges();
     const annotationEditor = fixture.nativeElement.querySelector(
       '[role="dialog"][aria-labelledby="annotation-editor-title"]',
     ) as HTMLElement;
-    expect(annotationEditor.textContent).toContain('Edit highlight');
-    expect(annotationEditor.textContent).toContain('Delete highlight');
+    expect(annotationEditor.textContent).toContain('Edit annotation');
+    expect(annotationEditor.textContent).toContain('Delete annotation');
+    expect(fixture.componentInstance.annotationStyle).toBe('strikethrough');
 
     await fixture.componentInstance.removeEditingAnnotation();
     fixture.detectChanges();
@@ -599,10 +1159,60 @@ describe('ReaderPageComponent annotations', () => {
     expect(setAnnotations).toHaveBeenLastCalledWith([]);
     expect(fixture.componentInstance.annotations).toEqual([]);
     expect(fixture.componentInstance.pendingSelection).toBeNull();
+    const deletedAnnotation = saveAnnotation.mock.calls[
+      saveAnnotation.mock.calls.length - 1
+    ]?.[0] as PublicationAnnotation | undefined;
+    expect(deletedAnnotation?.deletedAt).toEqual(expect.any(String));
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="annotation-status"]')
+        ?.textContent,
+    ).toContain('Annotation deleted.');
+
+    await fixture.componentInstance.undoAnnotationRemoval();
+    fixture.detectChanges();
+
+    const restoredAnnotation = saveAnnotation.mock.calls[
+      saveAnnotation.mock.calls.length - 1
+    ]?.[0] as PublicationAnnotation | undefined;
+    expect(restoredAnnotation).toEqual(
+      expect.objectContaining({
+        id: storedAnnotation.id,
+        deletedAt: undefined,
+      }),
+    );
+    expect(Date.parse(restoredAnnotation?.updatedAt ?? '')).toBeGreaterThan(
+      Date.parse(deletedAnnotation?.updatedAt ?? ''),
+    );
+    expect(fixture.componentInstance.annotations).toEqual([
+      expect.objectContaining({ id: storedAnnotation.id }),
+    ]);
+    expect(setAnnotations).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: storedAnnotation.id }),
+    ]);
+    expect(journal.append).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        entity: 'annotation',
+        entityId: storedAnnotation.id,
+        payload: expect.objectContaining({ deletedAt: undefined }),
+      }),
+    );
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="annotation-status"]')
+        ?.textContent,
+    ).toContain('Annotation restored.');
+
+    if (!restoredAnnotation) {
+      throw new Error('Expected the restored annotation');
+    }
+    await fixture.componentInstance.removeAnnotation(restoredAnnotation);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.annotations).toEqual([]);
+    fixture.componentInstance.dismissAnnotationStatus();
     Reflect.deleteProperty(readerRoot, 'requestFullscreen');
     Reflect.deleteProperty(document, 'fullscreenElement');
     Reflect.deleteProperty(document, 'exitFullscreen');
     fixture.destroy();
+    expect(callbacks.command).toBeUndefined();
     vi.unstubAllGlobals();
   });
 });

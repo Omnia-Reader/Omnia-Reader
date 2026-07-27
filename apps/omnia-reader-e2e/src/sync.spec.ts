@@ -146,6 +146,25 @@ const scenarios: readonly SyncScenario[] = [
   },
 ];
 
+test('keeps synchronization status and setup one click from the app toolbar', async ({
+  page,
+}) => {
+  await page.goto('/library');
+
+  const syncStatus = page.getByTestId('global-sync-status');
+  await expect(syncStatus).toHaveAttribute(
+    'aria-label',
+    'Set up sync. View sync details.',
+  );
+  await expect(syncStatus).toHaveAttribute(
+    'title',
+    /Set up Git synchronization/,
+  );
+
+  await syncStatus.click();
+  await expect(page).toHaveURL('/settings/sync');
+});
+
 test('offers GitHub App installation before account authorization', async ({
   context,
   page,
@@ -157,13 +176,13 @@ test('offers GitHub App installation before account authorization', async ({
   await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
 
   await expect(
-    page.getByRole('link', { name: 'Install GitHub App' }),
+    page.getByRole('link', { name: '1. Install or manage GitHub App' }),
   ).toHaveAttribute(
     'href',
     'https://github.test/apps/omnia-reader/installations/new',
   );
   await expect(
-    page.getByRole('button', { name: 'Connect GitHub' }),
+    page.getByRole('button', { name: '2. Authorize GitHub account' }),
   ).toBeEnabled();
 });
 
@@ -200,6 +219,55 @@ test('creates and selects a private GitHub synchronization repository', async ({
     ),
   ).toBeVisible();
   await expect(page.locator('select').first()).toHaveValue('2');
+});
+
+test('preserves successful Git sync details across an application reload', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git');
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await selectProvider(page, { providerButtonName: /^Git \+ LFS/ });
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+
+  const result = page.getByTestId('last-sync-result');
+  await expect(result).toContainText('Last successful result');
+  await expect(result).toContainText('Received');
+  await expect(result).toContainText('Sent');
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const value = localStorage.getItem(
+          'omnia-reader.auto-sync.v1.history.git',
+        );
+        if (!value) {
+          return null;
+        }
+        const history = JSON.parse(value) as {
+          lastSuccessAt?: unknown;
+          lastResult?: unknown;
+        };
+        return {
+          hasTimestamp: typeof history.lastSuccessAt === 'string',
+          hasResult:
+            !!history.lastResult && typeof history.lastResult === 'object',
+        };
+      }),
+    )
+    .toEqual({ hasTimestamp: true, hasResult: true });
+
+  await page.reload();
+
+  await expect(result).toBeVisible();
+  await expect(result).toContainText('Last successful result');
+  await expect(page.getByTestId('github-library-status')).toContainText(
+    'Library is up to date',
+  );
 });
 
 test('recovers when GitHub forbids repository creation', async ({
@@ -249,7 +317,7 @@ test('offers reconnection when GitHub authorization is revoked', async ({
   );
   await expect(alert).not.toContainText('Provider-controlled');
   await expect(
-    page.getByRole('button', { name: 'Connect GitHub' }),
+    page.getByRole('button', { name: '2. Authorize GitHub account' }),
   ).toBeEnabled();
 });
 
@@ -303,6 +371,12 @@ test('cancels an automatic publication upload without losing queued local work',
     );
     await gateway.waitForObjectUploadStart();
 
+    const globalSyncStatus = page.getByTestId('global-sync-status');
+    await expect(globalSyncStatus).toHaveAttribute(
+      'aria-label',
+      /Syncing(?: \d+%)?\. View sync details\./,
+    );
+
     await page.getByRole('link', { name: 'Settings' }).click();
     await page.getByRole('link', { name: 'Configure library sync' }).click();
 
@@ -330,6 +404,10 @@ test('cancels an automatic publication upload without losing queued local work',
     );
     await expect(automaticStatus).toContainText(
       'Local changes are safe and remain queued',
+    );
+    await expect(globalSyncStatus).toHaveAttribute(
+      'aria-label',
+      'Sync cancelled. View sync details.',
     );
     await expect(
       page.getByText(/1 local change is waiting to sync/),

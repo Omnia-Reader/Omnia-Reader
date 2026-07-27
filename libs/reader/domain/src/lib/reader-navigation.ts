@@ -1,6 +1,16 @@
 export type PublicationReadingDirection = 'ltr' | 'rtl';
 export type ReaderNavigationDirection = 'previous' | 'next';
 export type ReaderZoomDirection = 'in' | 'out';
+export type ReaderCommand =
+  | 'toc'
+  | 'search'
+  | 'toggle-bookmark'
+  | 'bookmarks'
+  | 'annotations'
+  | 'settings'
+  | 'fullscreen'
+  | 'shortcuts'
+  | 'dismiss';
 
 export interface TouchNavigationGesture {
   readonly pointerId: number;
@@ -12,6 +22,63 @@ export interface TouchNavigationGesture {
 const MINIMUM_SWIPE_DISTANCE_PX = 48;
 const HORIZONTAL_SWIPE_DOMINANCE = 1.25;
 const MAXIMUM_SWIPE_DURATION_MS = 1_200;
+
+export function keyboardReaderCommand(
+  event: Pick<
+    KeyboardEvent,
+    | 'altKey'
+    | 'ctrlKey'
+    | 'defaultPrevented'
+    | 'key'
+    | 'metaKey'
+    | 'repeat'
+    | 'shiftKey'
+    | 'target'
+  >,
+): ReaderCommand | null {
+  if (event.defaultPrevented || event.repeat) {
+    return null;
+  }
+  if (event.key === 'Escape') {
+    return 'dismiss';
+  }
+  if (isEditableTarget(event.target) || event.altKey) {
+    return null;
+  }
+
+  const key = event.key.toLocaleLowerCase();
+  if (key === 'f' && (event.ctrlKey || event.metaKey) && !event.shiftKey) {
+    return 'search';
+  }
+  if (event.ctrlKey || event.metaKey) {
+    return null;
+  }
+  if (event.key === '?' || (event.key === '/' && event.shiftKey)) {
+    return 'shortcuts';
+  }
+  if (event.shiftKey) {
+    return null;
+  }
+
+  switch (key) {
+    case 't':
+      return 'toc';
+    case '/':
+      return 'search';
+    case 'm':
+      return 'toggle-bookmark';
+    case 'b':
+      return 'bookmarks';
+    case 'a':
+      return 'annotations';
+    case 'o':
+      return 'settings';
+    case 'f':
+      return 'fullscreen';
+    default:
+      return null;
+  }
+}
 
 export function keyboardNavigationDirection(
   event: Pick<

@@ -1130,41 +1130,41 @@ function appendHighlightRectangle(
   ) {
     return false;
   }
-  const highlight = layer.ownerDocument.createElement('div');
-  highlight.dataset['omniaAnnotationId'] = annotation.id;
-  highlight.setAttribute('role', 'button');
-  highlight.setAttribute(
+  const annotationMark = layer.ownerDocument.createElement('div');
+  const annotationStyle = annotation.style ?? 'highlight';
+  annotationMark.dataset['omniaAnnotationId'] = annotation.id;
+  annotationMark.dataset['omniaAnnotationStyle'] = annotationStyle;
+  annotationMark.setAttribute('role', 'button');
+  annotationMark.setAttribute(
     'aria-label',
     annotation.locator.text?.highlight
-      ? `Edit highlight: ${annotation.locator.text.highlight.slice(0, 120)}`
-      : 'Edit highlight',
+      ? `Edit ${annotationStyleLabel(annotationStyle)}: ${annotation.locator.text.highlight.slice(0, 120)}`
+      : `Edit ${annotationStyleLabel(annotationStyle)}`,
   );
-  highlight.tabIndex = focusable ? 0 : -1;
-  Object.assign(highlight.style, {
+  annotationMark.tabIndex = focusable ? 0 : -1;
+  Object.assign(annotationMark.style, {
     position: 'absolute',
     left: `${left}px`,
     top: `${top}px`,
     width: `${right - left}px`,
     height: `${bottom - top}px`,
-    background: PDF_ANNOTATION_COLORS[annotation.color],
-    mixBlendMode: 'multiply',
-    borderRadius: '2px',
     cursor: 'pointer',
     pointerEvents: 'auto',
   });
+  applyPdfAnnotationStyle(annotationMark, annotation);
   const activateAnnotation = (event: Event): void => {
     event.preventDefault();
     event.stopPropagation();
     activate(annotation.id);
   };
-  highlight.addEventListener('click', activateAnnotation);
-  highlight.addEventListener('contextmenu', activateAnnotation);
-  highlight.addEventListener('keydown', (event) => {
+  annotationMark.addEventListener('click', activateAnnotation);
+  annotationMark.addEventListener('contextmenu', activateAnnotation);
+  annotationMark.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       activateAnnotation(event);
     }
   });
-  layer.append(highlight);
+  layer.append(annotationMark);
   return true;
 }
 
@@ -1178,6 +1178,49 @@ const PDF_ANNOTATION_COLORS = {
   blue: 'rgb(96 165 250 / 38%)',
   pink: 'rgb(244 114 182 / 38%)',
 } as const;
+
+const PDF_ANNOTATION_LINE_COLORS = {
+  yellow: '#ca8a04',
+  green: '#16a34a',
+  blue: '#2563eb',
+  pink: '#db2777',
+} as const;
+
+function applyPdfAnnotationStyle(
+  element: HTMLElement,
+  annotation: PublicationAnnotation,
+): void {
+  const style = annotation.style ?? 'highlight';
+  const color = PDF_ANNOTATION_LINE_COLORS[annotation.color];
+  if (style === 'underline') {
+    Object.assign(element.style, {
+      background: 'transparent',
+      borderBottom: `2px solid ${color}`,
+      borderRadius: '0',
+      mixBlendMode: 'multiply',
+    });
+    return;
+  }
+  if (style === 'strikethrough') {
+    Object.assign(element.style, {
+      background: `linear-gradient(to bottom, transparent 46%, ${color} 46%, ${color} 56%, transparent 56%)`,
+      borderRadius: '0',
+      mixBlendMode: 'multiply',
+    });
+    return;
+  }
+  Object.assign(element.style, {
+    background: PDF_ANNOTATION_COLORS[annotation.color],
+    borderRadius: '2px',
+    mixBlendMode: 'multiply',
+  });
+}
+
+function annotationStyleLabel(
+  style: NonNullable<PublicationAnnotation['style']>,
+): string {
+  return style === 'strikethrough' ? 'strikethrough' : style;
+}
 
 function locatorPageNumber(
   locator: PublicationLocator,

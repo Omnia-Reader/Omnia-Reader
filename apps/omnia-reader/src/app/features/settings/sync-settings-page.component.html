@@ -82,10 +82,22 @@
         </p>
       }
       @case ('error') {
-        <p class="mb-0 text-red-800">
-          Automatic sync needs attention:
-          {{ automaticSyncStatus.errorMessage }}
-        </p>
+        <div class="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <p class="m-0 min-w-0 flex-1 text-red-800">
+            Automatic sync needs attention:
+            {{ automaticSyncStatus.errorMessage }}
+          </p>
+          @if (configuredDestination) {
+            <button
+              mat-stroked-button
+              type="button"
+              [disabled]="busy || automaticSyncBusy"
+              (click)="retrySynchronization()"
+            >
+              Retry now
+            </button>
+          }
+        </div>
       }
       @default {
         @if (automaticSyncStatus.lastSuccessAt) {
@@ -99,6 +111,42 @@
           </p>
         }
       }
+    }
+    @if (
+      automaticSyncStatus.lastSuccessAt && automaticSyncStatus.lastResult;
+      as lastResult
+    ) {
+      <section
+        class="mt-3 border-t border-stone-200 pt-3"
+        aria-labelledby="last-sync-result-heading"
+        data-testid="last-sync-result"
+      >
+        <p id="last-sync-result-heading" class="m-0 text-xs font-semibold">
+          Last successful result
+        </p>
+        <dl class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div class="rounded-lg bg-stone-50 p-2">
+            <dt class="text-xs text-stone-500">Received</dt>
+            <dd class="m-0 text-lg font-semibold">{{ lastResult.pulled }}</dd>
+          </div>
+          <div class="rounded-lg bg-stone-50 p-2">
+            <dt class="text-xs text-stone-500">Sent</dt>
+            <dd class="m-0 text-lg font-semibold">{{ lastResult.pushed }}</dd>
+          </div>
+          <div class="rounded-lg bg-stone-50 p-2">
+            <dt class="text-xs text-stone-500">Conflicts retried</dt>
+            <dd class="m-0 text-lg font-semibold">
+              {{ lastResult.conflicts }}
+            </dd>
+          </div>
+          <div class="rounded-lg bg-stone-50 p-2">
+            <dt class="text-xs text-stone-500">Invalid skipped</dt>
+            <dd class="m-0 text-lg font-semibold">
+              {{ lastResult.rejected }}
+            </dd>
+          </div>
+        </dl>
+      </section>
     }
   </div>
 
@@ -114,7 +162,14 @@
         [disabled]="busy || loading || automaticSyncBusy"
         (click)="chooseProvider('git')"
       >
-        <span class="block font-semibold">Git + LFS</span>
+        <span class="flex items-center justify-between gap-3 font-semibold">
+          Git + LFS
+          <span
+            class="rounded-full bg-violet-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-violet-800 uppercase"
+          >
+            Recommended
+          </span>
+        </span>
         <span class="mt-1 block text-sm text-stone-600">
           JSON history in Git; EPUB and PDF files in Git LFS.
         </span>
@@ -224,6 +279,40 @@
         </section>
       } @else if (!gitSession.authenticated) {
         <section
+          class="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-5"
+          aria-labelledby="github-setup-progress-heading"
+          data-testid="github-setup-progress"
+        >
+          <h2
+            id="github-setup-progress-heading"
+            class="m-0 text-lg font-semibold text-violet-950"
+          >
+            GitHub sync setup
+          </h2>
+          <ol
+            class="mt-4 grid list-none gap-3 p-0 text-sm sm:grid-cols-3"
+            aria-label="GitHub synchronization setup progress"
+          >
+            <li
+              class="rounded-xl border border-violet-400 bg-white p-3"
+              aria-current="step"
+            >
+              <span class="block font-bold text-violet-800">1 · Account</span>
+              <span class="mt-1 block text-stone-700">Connect GitHub</span>
+            </li>
+            <li class="rounded-xl border border-stone-200 bg-white/70 p-3">
+              <span class="block font-bold text-stone-500">2 · Repository</span>
+              <span class="mt-1 block text-stone-600"
+                >Choose a destination</span
+              >
+            </li>
+            <li class="rounded-xl border border-stone-200 bg-white/70 p-3">
+              <span class="block font-bold text-stone-500">3 · Library</span>
+              <span class="mt-1 block text-stone-600">Run the first sync</span>
+            </li>
+          </ol>
+        </section>
+        <section
           class="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
           aria-labelledby="github-onboarding-heading"
           data-testid="github-onboarding"
@@ -236,14 +325,14 @@
               Connect your GitHub library
             </h2>
             <p class="mb-0 mt-1 text-sm text-stone-600">
-              Install the GitHub App to grant repository access, then authorize
-              Omnia Reader to identify your account. GitHub credentials remain
-              in the sync gateway.
+              First grant the GitHub App access to one or more private
+              repositories. Then authorize Omnia Reader to identify your
+              account. GitHub credentials remain in the sync gateway.
             </p>
           </div>
           <div class="flex flex-wrap gap-3">
             <a mat-stroked-button [href]="gitSession.installationUrl">
-              Install GitHub App
+              1. Install or manage GitHub App
             </a>
             <button
               mat-flat-button
@@ -251,11 +340,105 @@
               [disabled]="busy || automaticSyncBusy || !gatewayAvailable.git"
               (click)="connect()"
             >
-              Connect GitHub
+              2. Authorize GitHub account
             </button>
           </div>
         </section>
       } @else {
+        <section
+          class="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-5"
+          aria-labelledby="github-setup-progress-heading"
+          data-testid="github-setup-progress"
+        >
+          <div
+            class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+          >
+            <div>
+              <h2
+                id="github-setup-progress-heading"
+                class="m-0 text-lg font-semibold text-violet-950"
+              >
+                GitHub sync setup
+              </h2>
+              <p
+                class="mb-0 mt-1 text-sm font-medium text-violet-900"
+                aria-live="polite"
+                data-testid="github-library-status"
+              >
+                {{ gitLibraryStatus }}
+              </p>
+            </div>
+            @if (gitRepositoryUrl) {
+              <a
+                mat-stroked-button
+                [href]="gitRepositoryUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open repository
+                <mat-icon>open_in_new</mat-icon>
+              </a>
+            }
+          </div>
+          <ol
+            class="mt-4 grid list-none gap-3 p-0 text-sm sm:grid-cols-3"
+            aria-label="GitHub synchronization setup progress"
+          >
+            <li class="rounded-xl border border-emerald-300 bg-white p-3">
+              <span class="block font-bold text-emerald-800"
+                >✓ 1 · Account</span
+              >
+              <span class="mt-1 block truncate text-stone-700">
+                {{ gitSession.user.login }}
+              </span>
+            </li>
+            <li
+              class="rounded-xl border bg-white p-3"
+              [class.border-emerald-300]="selectedGitRepository"
+              [class.border-violet-400]="!selectedGitRepository"
+              [attr.aria-current]="selectedGitRepository ? null : 'step'"
+            >
+              <span
+                class="block font-bold"
+                [class.text-emerald-800]="selectedGitRepository"
+                [class.text-violet-800]="!selectedGitRepository"
+              >
+                {{ selectedGitRepository ? '✓' : '2' }} · Repository
+              </span>
+              <span class="mt-1 block truncate text-stone-700">
+                {{ selectedGitRepository?.fullName ?? 'Choose a destination' }}
+              </span>
+            </li>
+            <li
+              class="rounded-xl border bg-white p-3"
+              [class.border-emerald-300]="gitLibraryStepComplete"
+              [class.border-violet-400]="gitLibraryStepActive"
+              [class.border-stone-200]="!selectedGitRepository"
+              [attr.aria-current]="gitLibraryStepActive ? 'step' : null"
+            >
+              <span
+                class="block font-bold"
+                [class.text-emerald-800]="gitLibraryStepComplete"
+                [class.text-violet-800]="gitLibraryStepActive"
+                [class.text-stone-500]="!selectedGitRepository"
+              >
+                {{ gitLibraryStepComplete ? '✓' : '3' }}
+                · Library
+              </span>
+              <span class="mt-1 block text-stone-700">
+                {{ gitLibraryStepLabel }}
+              </span>
+            </li>
+          </ol>
+          @if (lastCompletedSyncAt) {
+            <p class="mb-0 mt-3 text-xs text-violet-900">
+              Last synchronized
+              <time [attr.datetime]="lastCompletedSyncAt">
+                {{ lastCompletedSyncAt | date: 'medium' }}
+              </time>
+            </p>
+          }
+        </section>
         <section
           class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
         >
@@ -296,6 +479,32 @@
             </section>
           }
 
+          @if (repositories.length > 5) {
+            <label class="block">
+              <span class="mb-1 block text-sm font-semibold">
+                Filter repositories
+              </span>
+              <input
+                class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+                type="search"
+                autocomplete="off"
+                placeholder="Search owner or repository name"
+                [value]="repositoryQuery"
+                [disabled]="busy || automaticSyncBusy"
+                (input)="updateRepositoryQuery($event)"
+                data-testid="github-repository-filter"
+              />
+              <span
+                class="mt-1 block text-xs text-stone-500"
+                aria-live="polite"
+              >
+                Showing {{ filteredRepositories.length }} of
+                {{ repositories.length }} repositories. The selected repository
+                stays visible.
+              </span>
+            </label>
+          }
+
           <label class="block">
             <span class="mb-2 block text-sm font-semibold">
               Git/LFS repository
@@ -308,7 +517,7 @@
               <option value="" [selected]="!gitSession.repository">
                 Choose a repository
               </option>
-              @for (repository of repositories; track repository.id) {
+              @for (repository of filteredRepositories; track repository.id) {
                 <option
                   [value]="repository.id"
                   [selected]="gitSession.repository?.id === repository.id"

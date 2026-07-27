@@ -42,6 +42,8 @@ describe('SyncSettingsPageComponent', () => {
     subscribe: vi.fn(),
     requestImmediate: vi.fn(),
     cancelActive: vi.fn(),
+    recordManualSuccess: vi.fn(),
+    clearHistory: vi.fn(),
   };
   const remoteBackup: RemoteBookBackup = {
     manifest: {
@@ -64,6 +66,7 @@ describe('SyncSettingsPageComponent', () => {
   const listRemoteBackups = vi.fn();
   const deleteRemoteBackup = vi.fn();
   const dialogOpen = vi.fn();
+  const pending = vi.fn();
   let autoSyncListener: ((status: AutoSyncStatus) => void) | null;
 
   beforeEach(async () => {
@@ -84,11 +87,14 @@ describe('SyncSettingsPageComponent', () => {
       });
     autoSync.requestImmediate.mockReset();
     autoSync.cancelActive.mockReset().mockReturnValue(true);
+    autoSync.recordManualSuccess.mockReset();
+    autoSync.clearHistory.mockReset();
     listRemoteBackups.mockReset().mockResolvedValue([remoteBackup]);
     deleteRemoteBackup.mockReset().mockResolvedValue(null);
     dialogOpen.mockReset().mockReturnValue({
       afterClosed: () => of(false),
     });
+    pending.mockReset().mockResolvedValue([]);
     selected = 'mega';
     selection = {
       current: () => selected,
@@ -144,7 +150,7 @@ describe('SyncSettingsPageComponent', () => {
         provideRouter([]),
         {
           provide: SYNC_OPERATION_JOURNAL,
-          useValue: { pending: vi.fn().mockResolvedValue([]) },
+          useValue: { pending },
         },
         { provide: SYNC_PROVIDER_SELECTION, useValue: selection },
         { provide: GITHUB_GATEWAY, useValue: git },
@@ -177,6 +183,12 @@ describe('SyncSettingsPageComponent', () => {
     await fixture.componentInstance.syncNow();
 
     expect(synchronize).toHaveBeenCalled();
+    expect(autoSync.recordManualSuccess).toHaveBeenCalledWith({
+      pulled: 2,
+      pushed: 1,
+      conflicts: 0,
+      rejected: 0,
+    });
     expect(fixture.componentInstance.statusMessage).toContain('2 pulled');
   });
 
@@ -301,7 +313,9 @@ describe('SyncSettingsPageComponent', () => {
     );
     const connectButton = [
       ...(fixture.nativeElement as HTMLElement).querySelectorAll('button'),
-    ].find((button) => button.textContent?.includes('Connect GitHub'));
+    ].find((button) =>
+      button.textContent?.includes('Authorize GitHub account'),
+    );
 
     expect(alert?.textContent).toContain(
       'Your provider session expired. Connect again to sync.',
@@ -409,10 +423,172 @@ describe('SyncSettingsPageComponent', () => {
     ).querySelector<HTMLElement>('[data-testid="github-onboarding"]');
     const installLink = onboarding?.querySelector<HTMLAnchorElement>('a');
 
-    expect(onboarding?.textContent).toContain('Install GitHub App');
-    expect(onboarding?.textContent).toContain('Connect GitHub');
+    expect(onboarding?.textContent).toContain('Install or manage GitHub App');
+    expect(onboarding?.textContent).toContain('Authorize GitHub account');
     expect(installLink?.href).toBe(installationUrl);
     expect(installLink?.target).toBe('');
+  });
+
+  it('shows a guided GitHub setup state and filters large repository lists', async () => {
+    selected = 'git';
+    const repositories = Array.from({ length: 6 }, (_, index) => ({
+      id: index + 1,
+      fullName:
+        index === 4 ? 'reader/favorite-library' : `reader/archive-${index + 1}`,
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    }));
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository: null,
+    });
+    vi.mocked(git.repositories).mockResolvedValue(repositories);
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const progress = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="github-setup-progress"]',
+    );
+    expect(progress?.textContent).toContain('✓ 1 · Account');
+    expect(progress?.textContent).toContain('2 · Repository');
+    expect(progress?.textContent).toContain('Choose a destination');
+
+    const filter = (
+      fixture.nativeElement as HTMLElement
+    ).querySelector<HTMLInputElement>(
+      '[data-testid="github-repository-filter"]',
+    );
+    if (!filter) {
+      throw new Error('Expected the repository filter to be rendered');
+    }
+    filter.value = 'favorite';
+    filter.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.filteredRepositories).toEqual([
+      repositories[4],
+    ]);
+    expect(fixture.nativeElement.textContent).toContain(
+      'Showing 1 of 6 repositories',
+    );
+  });
+
+  it('refreshes queued changes and remote backups after automatic sync succeeds', async () => {
+    pending.mockResolvedValueOnce([{}]).mockResolvedValueOnce([]);
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.pendingChanges).toBe(1),
+    );
+
+    autoSyncListener?.({
+      phase: 'idle',
+      lastSuccessAt: '2026-07-27T14:00:00.000Z',
+      lastResult: {
+        pulled: 3,
+        pushed: 2,
+        conflicts: 1,
+        rejected: 0,
+      },
+    });
+
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.pendingChanges).toBe(0),
+    );
+    fixture.detectChanges();
+    expect(fixture.componentInstance.lastCompletedSyncAt).toBe(
+      '2026-07-27T14:00:00.000Z',
+    );
+    expect(pending).toHaveBeenCalledTimes(2);
+    expect(listRemoteBackups).toHaveBeenCalledTimes(2);
+    const result = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="last-sync-result"]',
+    );
+    expect(result?.textContent).toContain('Received');
+    expect(result?.textContent).toContain('3');
+    expect(result?.textContent).toContain('Sent');
+    expect(result?.textContent).toContain('2');
+    expect(result?.textContent).toContain('Conflicts retried');
+  });
+
+  it('offers an immediate manual retry when automatic sync needs attention', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    autoSyncListener?.({
+      phase: 'error',
+      reason: 'online',
+      errorMessage: 'The previous attempt failed.',
+    });
+    fixture.detectChanges();
+    const retry = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ].find((button) => button.textContent?.includes('Retry now'));
+    retry?.click();
+
+    expect(autoSync.requestImmediate).toHaveBeenCalledWith('online');
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'Synchronization retry queued',
+    );
+  });
+
+  it('does not claim a selected repository is synchronized before the first success', async () => {
+    selected = 'git';
+    const repository = {
+      id: 7,
+      fullName: 'reader/private-library',
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    };
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository,
+    });
+    vi.mocked(git.repositories).mockResolvedValue([repository]);
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.gitLibraryStepComplete).toBe(false);
+    expect(fixture.componentInstance.gitLibraryStatus).toBe(
+      'Ready for the first synchronization',
+    );
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="github-setup-progress"]',
+      )?.textContent,
+    ).toContain('Ready to sync');
+
+    autoSyncListener?.({
+      phase: 'idle',
+      lastSuccessAt: '2026-07-27T15:30:00.000Z',
+    });
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.gitLibraryStepComplete).toBe(true),
+    );
+    fixture.detectChanges();
+    expect(fixture.componentInstance.gitLibraryStatus).toBe(
+      'Library is up to date',
+    );
+    expect(fixture.nativeElement.textContent).toContain('Last synchronized');
   });
 
   it('offers installation recovery when no repositories are accessible', async () => {
@@ -550,6 +726,7 @@ describe('SyncSettingsPageComponent', () => {
 
     expect(git.createRepository).toHaveBeenCalledWith('omnia-reader-library');
     expect(fixture.componentInstance.gitSession).toEqual(authenticatedSession);
+    expect(autoSync.clearHistory).toHaveBeenCalledWith('git');
     expect(autoSync.requestImmediate).toHaveBeenCalledWith(
       'destination-selected',
     );

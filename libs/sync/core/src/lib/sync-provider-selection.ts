@@ -12,22 +12,50 @@ export interface SyncProviderSelection {
   current(): SyncProviderKind | null;
   select(provider: SyncProviderKind): void;
   clear(): void;
+  subscribe?(listener: (provider: SyncProviderKind | null) => void): () => void;
 }
 
 export class BrowserSyncProviderSelection implements SyncProviderSelection {
   private readonly storageKey = 'omnia-reader.sync-provider';
+  private readonly listeners = new Set<
+    (provider: SyncProviderKind | null) => void
+  >();
+
+  constructor(private readonly storage: Storage = globalThis.localStorage) {}
 
   current(): SyncProviderKind | null {
-    const value = globalThis.localStorage?.getItem(this.storageKey);
+    const value = this.storage.getItem(this.storageKey);
     return value === 'git' || value === 'mega' ? value : null;
   }
 
   select(provider: SyncProviderKind): void {
-    globalThis.localStorage?.setItem(this.storageKey, provider);
+    this.storage.setItem(this.storageKey, provider);
+    this.notify(provider);
   }
 
   clear(): void {
-    globalThis.localStorage?.removeItem(this.storageKey);
+    this.storage.removeItem(this.storageKey);
+    this.notify(null);
+  }
+
+  subscribe(listener: (provider: SyncProviderKind | null) => void): () => void {
+    this.listeners.add(listener);
+    try {
+      listener(this.current());
+    } catch {
+      // Provider state presentation cannot prevent a valid subscription.
+    }
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(provider: SyncProviderKind | null): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(provider);
+      } catch {
+        // Provider state presentation cannot prevent a valid selection.
+      }
+    }
   }
 }
 

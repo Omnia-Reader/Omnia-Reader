@@ -260,6 +260,28 @@ describe('PdfReaderEngine', () => {
     expect(renderedHighlight?.tabIndex).toBe(0);
     renderedHighlight?.click();
     expect(activatedAnnotations).toEqual([annotation.id]);
+
+    await engine.setAnnotations([
+      { ...annotation, style: 'underline', color: 'blue' },
+    ]);
+    const renderedUnderline = viewport.querySelector<HTMLElement>(
+      '[data-omnia-annotation-style="underline"]',
+    );
+    expect(renderedUnderline?.style.borderBottom).toContain('2px solid');
+    expect(renderedUnderline?.style.background).toBe('transparent');
+
+    await engine.setAnnotations([
+      { ...annotation, style: 'strikethrough', color: 'pink' },
+    ]);
+    const renderedStrikethrough = viewport.querySelector<HTMLElement>(
+      '[data-omnia-annotation-style="strikethrough"]',
+    );
+    expect(renderedStrikethrough?.style.background).toContain(
+      'linear-gradient',
+    );
+    expect(renderedStrikethrough?.getAttribute('aria-label')).toContain(
+      'Edit strikethrough',
+    );
     await engine.close();
     expect(viewport.style.position).toBe('relative');
     viewport.remove();

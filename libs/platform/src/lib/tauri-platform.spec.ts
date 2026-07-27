@@ -181,6 +181,19 @@ describe('BrowserPlatform', () => {
     ).rejects.toThrow('Only HTTP and HTTPS links can be opened');
     vi.unstubAllGlobals();
   });
+
+  it('reports page hiding as background activity and removes its listeners', () => {
+    const callback = vi.fn();
+    const platform = new BrowserPlatform();
+    const stop = platform.onBackground(callback);
+
+    globalThis.dispatchEvent(new PageTransitionEvent('pagehide'));
+
+    expect(callback).toHaveBeenCalledOnce();
+    stop();
+    globalThis.dispatchEvent(new PageTransitionEvent('pagehide'));
+    expect(callback).toHaveBeenCalledOnce();
+  });
 });
 
 describe('TauriPlatform', () => {
@@ -479,6 +492,59 @@ describe('TauriPlatform', () => {
 
     expect(listenBack).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('reports native suspension and removes page and native listeners', async () => {
+    const callback = vi.fn();
+    const unlisten = vi.fn();
+    let suspendedListener: ((event: { payload: unknown }) => void) | undefined;
+    const listen = vi.fn(
+      async (
+        event: string,
+        listener: (event: { payload: unknown }) => void,
+      ) => {
+        expect(event).toBe('tauri://suspended');
+        suspendedListener = listener;
+        return unlisten;
+      },
+    );
+    const platform = new TauriPlatform(
+      invoke as NativeInvoke,
+      listen as NativeListen,
+    );
+
+    const stop = platform.onBackground(callback);
+    await vi.waitFor(() => expect(suspendedListener).toBeDefined());
+    suspendedListener?.({ payload: null });
+    globalThis.dispatchEvent(new PageTransitionEvent('pagehide'));
+
+    expect(callback).toHaveBeenCalledTimes(2);
+    stop();
+    expect(unlisten).toHaveBeenCalledOnce();
+    suspendedListener?.({ payload: null });
+    globalThis.dispatchEvent(new PageTransitionEvent('pagehide'));
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  it('unregisters a native suspension listener that resolves after cleanup', async () => {
+    const unlisten = vi.fn();
+    let resolveListener: ((value: () => void) => void) | undefined;
+    const listen = vi.fn(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveListener = resolve;
+        }),
+    );
+    const platform = new TauriPlatform(
+      invoke as NativeInvoke,
+      listen as NativeListen,
+    );
+
+    const stop = platform.onBackground(vi.fn());
+    stop();
+    resolveListener?.(unlisten);
+
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledOnce());
   });
 
   it('delegates validated external links to the native opener', async () => {

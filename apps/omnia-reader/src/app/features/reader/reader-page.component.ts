@@ -4,6 +4,7 @@ import {
   ChangeDetectorRef,
   Component,
   ElementRef,
+  HostListener,
   OnDestroy,
   ViewChild,
   inject,
@@ -25,17 +26,20 @@ import {
   DEFAULT_PDF_READER_PREFERENCES,
   EpubReaderPreferences,
   keyboardNavigationDirection,
+  keyboardReaderCommand,
   PdfReaderPreferences,
   PdfRotation,
   PageNavigation,
   PublicationAnnotation,
   PublicationAnnotationColor,
+  PublicationAnnotationStyle,
   PublicationBookmark,
   PublicationLocator,
   PublicationMetadata,
   PublicationPasswordChallenge,
   PublicationSelection,
   ReaderEngine,
+  ReaderCommand,
   ReaderNavigationDirection,
   ReaderPageStatus,
   ReaderPreferences,
@@ -55,9 +59,11 @@ import {
 import { createBookSyncManifest } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { BackNavigationService } from '../../back-navigation.service';
+import { AnnotationMarkdownExportService } from './annotation-markdown-export.service';
 import { PdfThumbnailComponent } from './pdf-thumbnail.component';
 
 type ReaderPanel =
+  | 'actions'
   | 'toc'
   | 'search'
   | 'settings'
@@ -65,9 +71,13 @@ type ReaderPanel =
   | 'bookmarks'
   | 'annotations';
 
+type AnnotationFilter = 'all' | 'notes' | PublicationAnnotationStyle;
+type AnnotationSort = 'reading-order' | 'updated-desc';
+
 @Component({
   selector: 'omnia-reader-page',
   templateUrl: './reader-page.component.html',
+  styleUrl: './reader-page.component.css',
   host: {
     class: 'block h-[calc(100vh-64px)]',
     '(document:keydown)': 'onDocumentKeydown($event)',
@@ -96,6 +106,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   @ViewChild('tocTrigger')
   private tocTrigger?: ElementRef<HTMLButtonElement>;
 
+  @ViewChild('actionsTrigger')
+  private actionsTrigger?: ElementRef<HTMLButtonElement>;
+
   @ViewChild('searchTrigger')
   private searchTrigger?: ElementRef<HTMLButtonElement>;
 
@@ -111,8 +124,14 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   @ViewChild('annotationsTrigger')
   private annotationsTrigger?: ElementRef<HTMLButtonElement>;
 
+  @ViewChild('shortcutsTrigger')
+  private shortcutsTrigger?: ElementRef<HTMLButtonElement>;
+
   @ViewChild('tocPanel')
   private tocPanel?: ElementRef<HTMLElement>;
+
+  @ViewChild('actionsPanel')
+  private actionsPanel?: ElementRef<HTMLElement>;
 
   @ViewChild('searchPanel')
   private searchPanel?: ElementRef<HTMLElement>;
@@ -132,6 +151,15 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   @ViewChild('annotationsPanel')
   private annotationsPanel?: ElementRef<HTMLElement>;
 
+  @ViewChild('annotationSearchInput')
+  private annotationSearchInput?: ElementRef<HTMLInputElement>;
+
+  @ViewChild('shortcutsDialog')
+  private shortcutsDialog?: ElementRef<HTMLElement>;
+
+  @ViewChild('readerProgressSlider')
+  private readerProgressSlider?: ElementRef<HTMLInputElement>;
+
   private readonly repository = inject(LIBRARY_REPOSITORY);
   private readonly engines = inject(ReaderEngineRegistry);
   private readonly route = inject(ActivatedRoute);
@@ -140,12 +168,15 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private readonly syncJournal = inject(SYNC_OPERATION_JOURNAL);
   private readonly platform = inject(PLATFORM_PORT);
   private readonly backNavigation = inject(BackNavigationService);
+  private readonly annotationExports = inject(AnnotationMarkdownExportService);
+  private readonly progressSliderThumbWidthPx = 10;
 
   book: BookRecord | null = null;
   metadata: PublicationMetadata | null = null;
   tableOfContents: readonly TocEntry[] = [];
   tocItems: readonly FlattenedTocEntry[] = [];
   visibleTocItems: readonly FlattenedTocEntry[] = [];
+  chapterProgressMilestones: readonly ReaderProgressMilestone[] = [];
   searchResults: readonly SearchResult[] = [];
   searchQuery = '';
   searching = false;
@@ -153,6 +184,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   errorMessage: string | null = null;
   searchError: string | null = null;
   tocOpen = false;
+  actionsOpen = false;
   searchOpen = false;
   settingsOpen = false;
   thumbnailsOpen = false;
@@ -164,10 +196,22 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   bookmarkError: string | null = null;
   annotationBusy = false;
   annotationError: string | null = null;
+  annotationStatus: string | null = null;
+  annotationStatusIsError = false;
+  deletedAnnotation: PublicationAnnotation | null = null;
   pendingSelection: PublicationSelection | null = null;
+  annotationEditorOpen = false;
   editingAnnotation: PublicationAnnotation | null = null;
   annotationColor: PublicationAnnotationColor = 'yellow';
+  annotationStyle: PublicationAnnotationStyle = 'highlight';
   annotationNote = '';
+  annotationQuery = '';
+  annotationFilter: AnnotationFilter = 'all';
+  annotationSort: AnnotationSort = 'reading-order';
+  annotationExportBusy = false;
+  annotationExportMessage: string | null = null;
+  shortcutsOpen = false;
+  zoomIndicatorPercent: number | null = null;
   navigationBusy = false;
   navigationError: string | null = null;
   private navigationLoopActive = false;
@@ -190,6 +234,19 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   pdfPreferences: PdfReaderPreferences = {
     ...DEFAULT_PDF_READER_PREFERENCES,
   };
+  readonly keyboardShortcuts = [
+    { keys: ['←', '→', '↑', '↓'], label: 'Turn pages' },
+    { keys: ['T'], label: 'Open the table of contents' },
+    { keys: ['/'], label: 'Search this publication' },
+    { keys: ['Ctrl/⌘', 'F'], label: 'Search this publication' },
+    { keys: ['M'], label: 'Add or remove a bookmark here' },
+    { keys: ['B'], label: 'Open bookmarks' },
+    { keys: ['A'], label: 'Open highlights and notes' },
+    { keys: ['O'], label: 'Open reader settings' },
+    { keys: ['F'], label: 'Enter or exit immersive reading' },
+    { keys: ['?'], label: 'Show these keyboard shortcuts' },
+    { keys: ['Esc'], label: 'Close the active reader panel or dialog' },
+  ] as const;
 
   private engine: ReaderEngine | null = null;
   private progress: ReadingProgress | null = null;
@@ -202,6 +259,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private removePasswordListener: (() => void) | null = null;
   private removeAnnotationActivationListener: (() => void) | null = null;
   private removeNavigationRequestListener: (() => void) | null = null;
+  private removeCommandRequestListener: (() => void) | null = null;
   private removeZoomRequestListener: (() => void) | null = null;
   private removeExternalLinkRequestListener: (() => void) | null = null;
   private lastWheelNavigationAt = Number.NEGATIVE_INFINITY;
@@ -212,6 +270,16 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.closeTransientReaderUi(),
     );
   private progressWrite: Promise<void> = Promise.resolve();
+  private zoomWrite: Promise<void> = Promise.resolve();
+  private zoomIndicatorTimeout: ReturnType<typeof setTimeout> | null = null;
+  private annotationStatusTimeout: ReturnType<typeof setTimeout> | null = null;
+  private readerPanelReturnFocus: HTMLElement | null = null;
+  private shortcutsReturnFocus: HTMLElement | null = null;
+  private clearSelectionInProgress = false;
+  private manualProgressPercent: number | null = null;
+  private pinnedProgressMilestoneKey: string | null = null;
+  private destroyed = false;
+  private progressSliderGeometryRefreshId: number | null = null;
 
   async ngAfterViewInit(): Promise<void> {
     const bookId = this.route.snapshot.paramMap.get('bookId');
@@ -272,6 +340,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         this.engine.onNavigationRequested?.((direction) => {
           void this.navigate(direction);
         }) ?? null;
+      this.removeCommandRequestListener =
+        this.engine.onCommandRequested?.((command) => {
+          return this.handleReaderCommand(command);
+        }) ?? null;
       this.removeZoomRequestListener =
         this.engine.onZoomRequested?.((direction) => {
           this.requestZoom(direction);
@@ -313,14 +385,29 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       await this.engine.applyPreferences(preferences);
       await this.engine.mount(this.viewport.nativeElement);
       this.removeSelectionListener = this.engine.onSelection((selection) => {
-        if (!selection || this.pendingSelection) {
+        if (!selection) {
+          if (this.clearSelectionInProgress) {
+            this.clearSelectionInProgress = false;
+            return;
+          }
+          if (!this.annotationEditorOpen) {
+            this.pendingSelection = null;
+            this.editingAnnotation = null;
+            this.annotationEditorOpen = false;
+            this.annotationStyle = 'highlight';
+            this.annotationNote = '';
+            this.annotationError = null;
+            this.changeDetector.markForCheck();
+          }
           return;
         }
         this.pendingSelection = selection;
+        this.annotationEditorOpen = false;
+        this.annotationError = null;
         this.editingAnnotation = null;
         this.annotationColor = 'yellow';
+        this.annotationStyle = 'highlight';
         this.annotationNote = '';
-        this.annotationError = null;
         this.changeDetector.markForCheck();
       });
       await this.engine.setAnnotations(this.annotations);
@@ -331,6 +418,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         this.currentLocator = locator;
         this.currentPageNumber = locator.locations?.position ?? 1;
         this.pageStatus = this.engine?.pageStatus?.() ?? null;
+        this.alignManualProgressPercent();
+        this.scheduleProgressSliderGeometryRefresh();
         this.changeDetector.markForCheck();
         void this.queueProgressSave(locator).catch(() => undefined);
       });
@@ -346,6 +435,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.currentPageNumber = this.currentLocator?.locations?.position ?? 1;
       this.tableOfContents = this.engine.tableOfContents();
       this.tocItems = flattenToc(this.tableOfContents);
+      this.chapterProgressMilestones = deriveChapterProgressMilestones(
+        this.tocItems,
+        this.pageStatus,
+      );
+      this.scheduleProgressSliderGeometryRefresh();
       this.collapsedTocItemKeys.clear();
       for (const item of this.tocItems) {
         if (item.hasChildren) {
@@ -362,7 +456,35 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  @HostListener('window:resize')
+  onWindowResize(): void {
+    this.scheduleProgressSliderGeometryRefresh();
+  }
+
+  onPublicationContextMenu(event: MouseEvent): void {
+    if (!this.pendingSelection || this.loading || this.errorMessage) {
+      return;
+    }
+    event.preventDefault();
+    if (
+      this.passwordChallenge ||
+      this.pendingExternalUrl ||
+      this.readerPanelOpen
+    ) {
+      return;
+    }
+    this.editingAnnotation = null;
+    this.annotationEditorOpen = true;
+    this.annotationError = null;
+    this.changeDetector.markForCheck();
+  }
+
   onDocumentKeydown(event: KeyboardEvent): void {
+    const command = keyboardReaderCommand(event);
+    if (command && this.handleReaderCommand(command)) {
+      event.preventDefault();
+      return;
+    }
     if (
       this.loading ||
       this.errorMessage ||
@@ -456,9 +578,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   get overallProgressPercent(): number | null {
-    const progression = this.currentLocator?.locations?.totalProgression;
-    if (progression !== undefined && Number.isFinite(progression)) {
-      return Math.round(Math.min(1, Math.max(0, progression)) * 100);
+    const progressionPercent = this.extractProgressPercent(this.currentLocator);
+    if (progressionPercent !== null) {
+      return progressionPercent;
     }
     if (this.pageStatus?.scope !== 'publication') {
       return null;
@@ -466,9 +588,143 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (this.pageStatus.total <= 1) {
       return 100;
     }
-    return Math.round(
+    return clamp(
       ((this.pageStatus.current - 1) / (this.pageStatus.total - 1)) * 100,
+      0,
+      100,
     );
+  }
+
+  get displayedProgressPercent(): number | null {
+    if (this.manualProgressPercent === null) {
+      return this.overallProgressPercent;
+    }
+    if (this.pinnedProgressMilestoneKey !== null) {
+      return this.manualProgressPercent;
+    }
+    const actualPercent = this.overallProgressPercent;
+    if (
+      actualPercent === null ||
+      Math.abs(actualPercent - this.manualProgressPercent) <=
+        PROGRESS_MILESTONE_MATCH_TOLERANCE
+    ) {
+      return this.manualProgressPercent;
+    }
+    return this.manualProgressPercent;
+  }
+
+  get displayedProgressPercentLabel(): string | null {
+    const percent = this.displayedProgressPercent;
+    if (percent === null) {
+      return null;
+    }
+    return `${Math.round(percent)}% of book`;
+  }
+
+  get displayedOverallProgressPercentText(): string {
+    const percent = this.displayedProgressPercent;
+    return percent === null ? '--' : `${Math.round(percent)}`;
+  }
+
+  get progressSliderTrackBackground(): string {
+    const progressPercent = this.displayedProgressPercent ?? 0;
+    const normalized = normalizeProgressPercent(progressPercent);
+    return `linear-gradient(to right, var(--reader-progress-slider-fill-color) ${normalized}%, var(--reader-progress-slider-track-color) ${normalized}%)`;
+  }
+
+  isProgressMilestoneReached(milestone: ReaderProgressMilestone): boolean {
+    const percent = this.displayedProgressPercent;
+    return percent !== null && milestone.value <= percent;
+  }
+
+  get activeProgressMilestoneKey(): string | null {
+    if (
+      this.pinnedProgressMilestoneKey &&
+      this.chapterProgressMilestones.some(
+        (milestone) => milestone.key === this.pinnedProgressMilestoneKey,
+      )
+    ) {
+      return this.pinnedProgressMilestoneKey;
+    }
+    const percent = this.displayedProgressPercent;
+    if (percent === null) {
+      return null;
+    }
+    const nearest = this.findClosestProgressMilestoneByPercent(percent);
+    if (
+      nearest === null ||
+      Math.abs(nearest.value - percent) > PROGRESS_MILESTONE_MATCH_TOLERANCE
+    ) {
+      return null;
+    }
+    const active = nearest;
+    return active?.key ?? null;
+  }
+
+  private findClosestProgressMilestoneByPercent(
+    targetPercent: number,
+  ): ReaderProgressMilestone | null {
+    let nearest: ReaderProgressMilestone | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of this.chapterProgressMilestones) {
+      const distance = Math.abs(candidate.value - targetPercent);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = candidate;
+        continue;
+      }
+      if (
+        distance === nearestDistance &&
+        nearest !== null &&
+        candidate.tocItemIndex < nearest.tocItemIndex &&
+        candidate.value >= targetPercent
+      ) {
+        nearest = candidate;
+      }
+    }
+    return nearest;
+  }
+
+  getMilestoneLeftPx(milestone: ReaderProgressMilestone): number {
+    const progressPercent = normalizeProgressPercent(milestone.value);
+    const slider = this.readerProgressSlider?.nativeElement;
+    if (slider === undefined) {
+      return 0;
+    }
+    return this.progressPercentToPixelOffset(progressPercent, slider);
+  }
+
+  private progressPercentToPixelOffset(
+    progressPercent: number,
+    slider: HTMLInputElement,
+  ): number {
+    const sliderRect = slider.getBoundingClientRect();
+    const sliderWidth = Math.max(0, sliderRect.width);
+    if (sliderWidth <= 0) {
+      return 0;
+    }
+
+    const min = Number.parseFloat(slider.min || '0');
+    const max = Number.parseFloat(slider.max || '100');
+    const denominator = Math.max(0.000001, max - min);
+    const progressRatio = clamp((progressPercent - min) / denominator, 0, 1);
+
+    const thumbWidth = Math.min(this.progressSliderThumbWidthPx, sliderWidth);
+    const trackWidth = Math.max(0, sliderWidth - thumbWidth);
+    return thumbWidth / 2 + progressRatio * trackWidth;
+  }
+
+  private scheduleProgressSliderGeometryRefresh(): void {
+    if (this.destroyed) {
+      return;
+    }
+    if (this.progressSliderGeometryRefreshId !== null) {
+      return;
+    }
+    this.progressSliderGeometryRefreshId = requestAnimationFrame(() => {
+      this.progressSliderGeometryRefreshId = null;
+      this.changeDetector.markForCheck();
+    });
   }
 
   get progressSeekingAvailable(): boolean {
@@ -479,23 +735,101 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   get readerPanelOpen(): boolean {
-    return this.activeReaderPanel !== null;
+    return this.shortcutsOpen || this.activeReaderPanel !== null;
+  }
+
+  toggleKeyboardShortcuts(): void {
+    if (this.shortcutsOpen) {
+      this.closeKeyboardShortcuts();
+      return;
+    }
+    this.openKeyboardShortcuts();
   }
 
   async seekToProgress(event: Event): Promise<void> {
     const input = event.currentTarget;
-    const engine = this.engine;
-    const seek = engine?.goToProgression;
-    if (
-      !(input instanceof HTMLInputElement) ||
-      !seek ||
-      this.loading ||
-      this.navigationBusy
-    ) {
+    if (!(input instanceof HTMLInputElement)) {
       return;
     }
-    const percent = Number(input.value);
+    const percent = input.valueAsNumber;
     if (!Number.isFinite(percent)) {
+      return;
+    }
+    const normalized = normalizeProgressPercent(percent);
+    this.setManualProgressPercent(normalized);
+    this.pinnedProgressMilestoneKey = null;
+    this.changeDetector.markForCheck();
+    await this.seekToProgressPercent(normalized);
+  }
+
+  onProgressSliderInput(event: Event): void {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    const percent = input.valueAsNumber;
+    if (!Number.isFinite(percent)) {
+      return;
+    }
+    this.setManualProgressPercent(normalizeProgressPercent(percent));
+    this.pinnedProgressMilestoneKey = null;
+    this.changeDetector.markForCheck();
+  }
+
+  async seekToChapterMilestone(
+    milestone: ReaderProgressMilestone,
+    event?: MouseEvent,
+  ): Promise<void> {
+    if (this.loading || this.navigationBusy) {
+      return;
+    }
+    if (!milestone) {
+      return;
+    }
+    const locator = milestone.locator;
+    const normalized = normalizeProgressPercent(milestone.value);
+    this.setManualProgressPercent(normalized);
+    this.pinnedProgressMilestoneKey = milestone.key;
+    if (event?.currentTarget instanceof HTMLElement) {
+      event.currentTarget.focus({ preventScroll: true });
+      this.queueFocus(event.currentTarget);
+    }
+    this.changeDetector.markForCheck();
+    await this.seekToLocator(locator, true);
+  }
+
+  private async seekToLocator(
+    locator: PublicationLocator,
+    keepManualProgress = false,
+  ): Promise<void> {
+    if (!keepManualProgress) {
+      this.clearProgressMilestonePin();
+    }
+    const engine = this.engine;
+    if (!engine || this.loading || this.navigationBusy) {
+      return;
+    }
+
+    this.navigationBusy = true;
+    this.navigationError = null;
+    this.changeDetector.markForCheck();
+    try {
+      await engine.goTo(locator);
+    } catch (error) {
+      this.navigationError =
+        error instanceof Error
+          ? error.message
+          : 'Unable to move to this chapter';
+    } finally {
+      this.navigationBusy = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  private async seekToProgressPercent(percent: number): Promise<void> {
+    const engine = this.engine;
+    const seek = engine?.goToProgression;
+    if (!seek || this.loading || this.navigationBusy) {
       return;
     }
 
@@ -513,6 +847,31 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.navigationBusy = false;
       this.changeDetector.markForCheck();
     }
+  }
+
+  private setManualProgressPercent(percent: number | null): void {
+    if (percent === null) {
+      this.manualProgressPercent = null;
+      return;
+    }
+    const normalized = normalizeProgressPercent(percent);
+    this.manualProgressPercent = normalized;
+    const slider = this.readerProgressSlider?.nativeElement;
+    if (slider) {
+      slider.value = String(normalized);
+      this.scheduleProgressSliderGeometryRefresh();
+    }
+  }
+
+  private extractProgressPercent(
+    locator: PublicationLocator | null,
+  ): number | null {
+    const directProgression =
+      locator?.locations?.totalProgression ?? locator?.locations?.progression;
+    if (directProgression !== undefined && Number.isFinite(directProgression)) {
+      return normalizeProgressPercent(directProgression * 100);
+    }
+    return null;
   }
 
   onPublicationWheel(event: WheelEvent): void {
@@ -648,7 +1007,16 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.touchEventNavigationGesture = null;
   }
 
-  async goTo(entry: TocEntry): Promise<void> {
+  async goTo(
+    entry: TocEntry,
+    options: { progressMilestone?: ReaderProgressMilestone | null } = {},
+  ): Promise<void> {
+    if (options.progressMilestone) {
+      this.setManualProgressPercent(options.progressMilestone.value);
+      this.pinnedProgressMilestoneKey = options.progressMilestone.key;
+    } else {
+      this.clearProgressMilestonePin();
+    }
     if (!this.engine || this.loading || this.navigationBusy) {
       return;
     }
@@ -671,6 +1039,272 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   toggleToc(): void {
     this.toggleReaderPanel('toc');
+  }
+
+  toggleReaderActions(): void {
+    this.toggleReaderPanel('actions');
+  }
+
+  goToTocItem(item: FlattenedTocEntry): Promise<void> {
+    const milestone = this.getProgressMilestoneForTocItem(item);
+    return this.goTo(item.entry, {
+      progressMilestone: milestone,
+    });
+  }
+
+  private getProgressMilestoneForTocItem(
+    tocItem: FlattenedTocEntry,
+  ): ReaderProgressMilestone | null {
+    const tocItemIndex = this.tocItems.findIndex(
+      (item) => item.key === tocItem.key,
+    );
+    const targetTocIndex = tocItemIndex;
+
+    const byTocKey = this.chapterProgressMilestones.find(
+      (milestone) => milestone.tocItemKey === tocItem.key,
+    );
+    if (byTocKey) {
+      return byTocKey;
+    }
+
+    const itemLocatorKey = locatorKey({
+      href: tocItem.entry.locator.href,
+      type: tocItem.entry.locator.type,
+      locations: tocItem.entry.locator.locations,
+    });
+    const byLocatorCandidates = this.chapterProgressMilestones.filter(
+      (milestone) => locatorKey(milestone.locator) === itemLocatorKey,
+    );
+    if (byLocatorCandidates.length === 1) {
+      return byLocatorCandidates[0] ?? null;
+    }
+    if (byLocatorCandidates.length > 1) {
+      return this.chooseClosestMilestoneByTocIndex(
+        targetTocIndex,
+        byLocatorCandidates,
+      );
+    }
+
+    const byLocatorHref =
+      this.findProgressMilestoneForTocItemByHrefWithoutFragment(tocItem);
+    if (byLocatorHref) {
+      return byLocatorHref;
+    }
+
+    const byTocAncestor =
+      this.findProgressMilestoneForTocItemByAncestor(tocItem);
+    if (byTocAncestor) {
+      return byTocAncestor;
+    }
+
+    const byChapterMilestoneOrder =
+      this.findProgressMilestoneByChapterMilestoneOrder(tocItem);
+    if (byChapterMilestoneOrder) {
+      return byChapterMilestoneOrder;
+    }
+
+    return this.findProgressMilestoneForTocItemFallback(
+      tocItem,
+      itemLocatorKey,
+    );
+  }
+
+  private findProgressMilestoneByChapterMilestoneOrder(
+    tocItem: FlattenedTocEntry,
+  ): ReaderProgressMilestone | null {
+    const topLevelItems = this.tocItems.filter((item) => item.depth === 0);
+    if (topLevelItems.length === 0) {
+      return null;
+    }
+
+    const chapterMilestoneItems = chooseChapterMilestoneEntries(
+      topLevelItems,
+      this.tocItems,
+    );
+    if (chapterMilestoneItems.length === 0) {
+      return null;
+    }
+
+    const orderedMilestones = this.chapterProgressMilestones
+      .slice()
+      .sort((left, right) => left.tocItemIndex - right.tocItemIndex);
+
+    if (!orderedMilestones.length) {
+      return null;
+    }
+
+    const directMatch = orderedMilestones.find(
+      (milestone) => milestone.tocItemKey === tocItem.key,
+    );
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const tocItemIsChapter = isChapterLikeTocEntry(tocItem);
+    if (tocItemIsChapter) {
+      const chapterMilestoneItemsLength = chapterMilestoneItems.length;
+      const chapterIndex = chapterMilestoneItems.findIndex(
+        (item) => item.key === tocItem.key,
+      );
+      if (chapterIndex >= 0 && chapterIndex < chapterMilestoneItemsLength) {
+        return orderedMilestones[chapterIndex] ?? null;
+      }
+    }
+
+    const targetIndex = this.tocItems.findIndex(
+      (item) => item.key === tocItem.key,
+    );
+    if (targetIndex < 0) {
+      return orderedMilestones[0] ?? null;
+    }
+
+    return this.chooseClosestMilestoneByTocIndex(
+      targetIndex,
+      orderedMilestones,
+    );
+  }
+
+  private findProgressMilestoneForTocItemByAncestor(
+    tocItem: FlattenedTocEntry,
+  ): ReaderProgressMilestone | null {
+    for (let index = tocItem.parentKeys.length - 1; index >= 0; index -= 1) {
+      const parentKey = tocItem.parentKeys[index];
+      const parentMilestone = this.chapterProgressMilestones.find(
+        (milestone) => milestone.tocItemKey === parentKey,
+      );
+      if (parentMilestone) {
+        return parentMilestone;
+      }
+    }
+    return null;
+  }
+
+  private findProgressMilestoneForTocItemByHrefWithoutFragment(
+    tocItem: FlattenedTocEntry,
+  ): ReaderProgressMilestone | null {
+    const targetHref = tocItem.entry.locator.href.split('#', 1)[0];
+    if (!targetHref) {
+      return null;
+    }
+    const candidates = this.chapterProgressMilestones.filter(
+      (milestone) => milestone.locator.href.split('#', 1)[0] === targetHref,
+    );
+    if (candidates.length === 0) {
+      return null;
+    }
+    const targetIndex = this.tocItems.findIndex(
+      (item) => item.key === tocItem.key,
+    );
+    if (targetIndex < 0) {
+      return candidates[0] ?? null;
+    }
+    return this.chooseClosestMilestoneByTocIndex(targetIndex, candidates);
+  }
+
+  private findProgressMilestoneForTocItemFallback(
+    tocItem: FlattenedTocEntry,
+    itemLocatorKey: string,
+  ): ReaderProgressMilestone | null {
+    if (this.chapterProgressMilestones.length === 0) {
+      return null;
+    }
+
+    const fallbackIndex = this.tocItems.findIndex(
+      (item) => item.key === tocItem.key,
+    );
+    if (fallbackIndex >= 0) {
+      return this.chooseClosestMilestoneByTocIndex(fallbackIndex);
+    }
+
+    const targetPercent = inferLocatorProgressionPercent(
+      tocItem.entry.locator,
+      this.pageStatus,
+    );
+    if (targetPercent === null) {
+      return this.chapterProgressMilestones[0] ?? null;
+    }
+
+    const fallbackByProgress = this.chooseClosestMilestoneByPercent(
+      itemLocatorKey,
+      targetPercent,
+    );
+    return fallbackByProgress ?? this.chapterProgressMilestones[0];
+  }
+
+  private chooseClosestMilestoneByTocIndex(
+    tocIndex: number,
+    candidates: readonly ReaderProgressMilestone[] = this
+      .chapterProgressMilestones,
+  ): ReaderProgressMilestone | null {
+    if (candidates.length === 0) {
+      return null;
+    }
+    if (tocIndex < 0) {
+      return candidates[0] ?? null;
+    }
+    let best: ReaderProgressMilestone | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      const candidateDistance = Math.abs(candidate.tocItemIndex - tocIndex);
+      if (candidateDistance < bestDistance) {
+        bestDistance = candidateDistance;
+        best = candidate;
+        continue;
+      }
+      if (candidateDistance === bestDistance) {
+        if (best === null || candidate.tocItemIndex > best.tocItemIndex) {
+          best = candidate;
+        }
+      }
+    }
+
+    return best;
+  }
+
+  private chooseClosestMilestoneByPercent(
+    targetLocatorKey: string,
+    targetPercent: number,
+  ): ReaderProgressMilestone | null {
+    let best: ReaderProgressMilestone | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of this.chapterProgressMilestones) {
+      const distance = Math.abs(candidate.value - targetPercent);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = candidate;
+        continue;
+      }
+      if (distance !== bestDistance) {
+        continue;
+      }
+      if (
+        best === null ||
+        (candidate.value === best.value &&
+          locatorKey(candidate.locator) === targetLocatorKey)
+      ) {
+        best = candidate;
+        continue;
+      }
+      if (candidate.value > best.value) {
+        best = candidate;
+      }
+    }
+
+    return best;
+  }
+
+  openReaderPanelFromActions(
+    panel: Exclude<ReaderPanel, 'actions' | 'toc'>,
+  ): void {
+    this.readerPanelReturnFocus ??= this.actionsTrigger?.nativeElement ?? null;
+    this.closeReaderPanels();
+    this.setReaderPanelOpen(panel, true);
+    this.changeDetector.detectChanges();
+    this.queueFocus(
+      panel === 'search'
+        ? this.searchInput?.nativeElement
+        : this.readerPanelElement(panel),
+    );
   }
 
   toggleTocItem(item: FlattenedTocEntry): void {
@@ -710,6 +1344,16 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   toggleAnnotations(): void {
     this.toggleReaderPanel('annotations');
     this.annotationError = null;
+  }
+
+  async toggleCurrentBookmarkFromActions(): Promise<void> {
+    await this.toggleCurrentBookmark();
+    this.closeReaderPanelsAndRestoreTrigger();
+  }
+
+  toggleImmersiveModeFromActions(): void {
+    this.closeReaderPanelsAndRestoreTrigger();
+    void this.toggleImmersiveMode();
   }
 
   get currentBookmark(): PublicationBookmark | null {
@@ -801,14 +1445,17 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   async goToBookmark(bookmark: PublicationBookmark): Promise<void> {
+    this.clearProgressMilestonePin();
     await this.engine?.goTo(bookmark.locator);
     this.closeReaderPanelsForReading();
   }
 
   beginEditAnnotation(annotation: PublicationAnnotation): void {
     this.editingAnnotation = annotation;
+    this.annotationEditorOpen = true;
     this.pendingSelection = { locator: structuredClone(annotation.locator) };
     this.annotationColor = annotation.color;
+    this.annotationStyle = annotation.style ?? 'highlight';
     this.annotationNote = annotation.note ?? '';
     this.annotationError = null;
     this.annotationsOpen = false;
@@ -817,9 +1464,21 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   cancelAnnotationEditor(): void {
     this.pendingSelection = null;
     this.editingAnnotation = null;
+    this.annotationEditorOpen = false;
+    this.annotationStyle = 'highlight';
     this.annotationNote = '';
     this.annotationError = null;
-    this.engine?.clearSelection();
+    if (!this.engine) {
+      return;
+    }
+    this.clearSelectionInProgress = true;
+    try {
+      this.engine.clearSelection();
+    } finally {
+      queueMicrotask(() => {
+        this.clearSelectionInProgress = false;
+      });
+    }
   }
 
   async saveAnnotation(): Promise<void> {
@@ -844,6 +1503,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         deviceId: getDeviceId(),
         locator: structuredClone(this.pendingSelection.locator),
         color: this.annotationColor,
+        style: this.annotationStyle,
         note: note || undefined,
         createdAt: this.editingAnnotation?.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -888,6 +1548,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       );
       await this.engine?.setAnnotations(this.annotations);
       await this.journalAnnotation(tombstone);
+      this.offerAnnotationUndo(tombstone);
       removed = true;
     } catch (error) {
       this.annotationError =
@@ -909,12 +1570,250 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  async undoAnnotationRemoval(): Promise<void> {
+    const deletedAnnotation = this.deletedAnnotation;
+    if (!deletedAnnotation || this.annotationBusy) {
+      return;
+    }
+    this.clearAnnotationStatusTimeout();
+    this.annotationBusy = true;
+    this.annotationError = null;
+    this.annotationStatus = 'Restoring annotation…';
+    this.annotationStatusIsError = false;
+    this.changeDetector.markForCheck();
+    try {
+      const restored: PublicationAnnotation = {
+        ...deletedAnnotation,
+        deviceId: getDeviceId(),
+        updatedAt: timestampAfter(deletedAnnotation.updatedAt),
+        deletedAt: undefined,
+      };
+      await this.repository.saveAnnotation(restored);
+      this.annotations = [
+        restored,
+        ...this.annotations.filter((candidate) => candidate.id !== restored.id),
+      ];
+      await this.journalAnnotation(restored);
+      await this.engine?.setAnnotations(this.annotations);
+      this.deletedAnnotation = null;
+      this.annotationStatus = 'Annotation restored.';
+      this.scheduleAnnotationStatusDismissal(4_000);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to restore annotation';
+      this.annotationError = message;
+      this.annotationStatus = message;
+      this.annotationStatusIsError = true;
+    } finally {
+      this.annotationBusy = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  dismissAnnotationStatus(): void {
+    this.clearAnnotationStatusTimeout();
+    this.deletedAnnotation = null;
+    this.annotationStatus = null;
+    this.annotationStatusIsError = false;
+    this.changeDetector.markForCheck();
+  }
+
   async goToAnnotation(annotation: PublicationAnnotation): Promise<void> {
+    this.clearProgressMilestonePin();
     await this.engine?.goTo(annotation.locator);
     this.closeReaderPanelsForReading();
   }
 
+  get filteredAnnotations(): readonly PublicationAnnotation[] {
+    const query = this.annotationQuery.trim().toLocaleLowerCase();
+    return this.annotations
+      .filter((annotation) => {
+        const style = this.annotationStyleOf(annotation);
+        if (
+          this.annotationFilter !== 'all' &&
+          (this.annotationFilter === 'notes'
+            ? !annotation.note
+            : style !== this.annotationFilter)
+        ) {
+          return false;
+        }
+        if (!query) {
+          return true;
+        }
+        return [
+          annotation.locator.text?.highlight,
+          annotation.note,
+          annotation.locator.title,
+          this.annotationLocationLabel(annotation),
+          this.annotationStyleLabel(style),
+        ].some((value) => value?.toLocaleLowerCase().includes(query));
+      })
+      .sort((left, right) => this.compareAnnotationOverviewOrder(left, right));
+  }
+
+  annotationCount(filter: AnnotationFilter): number {
+    if (filter === 'all') {
+      return this.annotations.length;
+    }
+    if (filter === 'notes') {
+      return this.annotations.filter((annotation) => !!annotation.note).length;
+    }
+    return this.annotations.filter(
+      (annotation) => this.annotationStyleOf(annotation) === filter,
+    ).length;
+  }
+
+  setAnnotationFilter(filter: AnnotationFilter): void {
+    this.annotationFilter = filter;
+    this.annotationExportMessage = null;
+  }
+
+  get annotationOverviewCustomized(): boolean {
+    return (
+      this.annotationQuery.trim().length > 0 ||
+      this.annotationFilter !== 'all' ||
+      this.annotationSort !== 'reading-order'
+    );
+  }
+
+  clearAnnotationSearch(): void {
+    this.annotationQuery = '';
+    this.annotationExportMessage = null;
+    this.queueFocus(this.annotationSearchInput?.nativeElement);
+  }
+
+  resetAnnotationOverview(): void {
+    this.annotationQuery = '';
+    this.annotationFilter = 'all';
+    this.annotationSort = 'reading-order';
+    this.annotationExportMessage = null;
+    this.queueFocus(this.annotationSearchInput?.nativeElement);
+  }
+
+  async exportShownAnnotations(): Promise<void> {
+    const book = this.book;
+    const annotations = this.filteredAnnotations;
+    if (!book || annotations.length === 0 || this.annotationExportBusy) {
+      return;
+    }
+    this.annotationExportBusy = true;
+    this.annotationError = null;
+    this.annotationExportMessage = null;
+    this.changeDetector.markForCheck();
+    try {
+      const result = await this.annotationExports.exportAnnotations(
+        book,
+        annotations,
+      );
+      this.annotationExportMessage =
+        result.status === 'cancelled'
+          ? 'Annotation export cancelled.'
+          : `${result.annotationCount} ${
+              result.annotationCount === 1 ? 'annotation' : 'annotations'
+            } saved as ${result.fileName}.`;
+    } catch (error) {
+      this.annotationError =
+        error instanceof Error ? error.message : 'Unable to export annotations';
+    } finally {
+      this.annotationExportBusy = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  private compareAnnotationOverviewOrder(
+    left: PublicationAnnotation,
+    right: PublicationAnnotation,
+  ): number {
+    if (this.annotationSort === 'updated-desc') {
+      return (
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        right.createdAt.localeCompare(left.createdAt) ||
+        left.id.localeCompare(right.id)
+      );
+    }
+
+    const leftPosition = finiteAnnotationLocation(
+      left.locator.locations?.position,
+    );
+    const rightPosition = finiteAnnotationLocation(
+      right.locator.locations?.position,
+    );
+    if (leftPosition !== null && rightPosition !== null) {
+      const positionOrder = leftPosition - rightPosition;
+      if (positionOrder !== 0) {
+        return positionOrder;
+      }
+    }
+
+    const leftProgression = finiteAnnotationLocation(
+      left.locator.locations?.totalProgression,
+    );
+    const rightProgression = finiteAnnotationLocation(
+      right.locator.locations?.totalProgression,
+    );
+    if (leftProgression !== null && rightProgression !== null) {
+      const progressionOrder = leftProgression - rightProgression;
+      if (progressionOrder !== 0) {
+        return progressionOrder;
+      }
+    }
+
+    return (
+      left.locator.href.localeCompare(right.locator.href) ||
+      (left.locator.locations?.fragments?.join('|') ?? '').localeCompare(
+        right.locator.locations?.fragments?.join('|') ?? '',
+      ) ||
+      left.createdAt.localeCompare(right.createdAt) ||
+      left.id.localeCompare(right.id)
+    );
+  }
+
+  annotationStyleOf(
+    annotation: PublicationAnnotation,
+  ): PublicationAnnotationStyle {
+    return annotation.style ?? 'highlight';
+  }
+
+  annotationStyleLabel(style: PublicationAnnotationStyle): string {
+    switch (style) {
+      case 'underline':
+        return 'Underline';
+      case 'strikethrough':
+        return 'Strikethrough';
+      default:
+        return 'Highlight';
+    }
+  }
+
+  annotationStyleIcon(style: PublicationAnnotationStyle): string {
+    switch (style) {
+      case 'underline':
+        return 'format_underlined';
+      case 'strikethrough':
+        return 'strikethrough_s';
+      default:
+        return 'ink_highlighter';
+    }
+  }
+
+  annotationLocationLabel(annotation: PublicationAnnotation): string {
+    const title = annotation.locator.title?.trim();
+    if (title) {
+      return title;
+    }
+    const position = annotation.locator.locations?.position;
+    if (position) {
+      return `Page ${position}`;
+    }
+    const totalProgression = annotation.locator.locations?.totalProgression;
+    if (totalProgression !== undefined && Number.isFinite(totalProgression)) {
+      return `${Math.round(clamp(totalProgression, 0, 1) * 100)}% of book`;
+    }
+    return 'Saved location';
+  }
+
   async goToPdfPage(pageNumber: number): Promise<void> {
+    this.clearProgressMilestonePin();
     await this.engine?.goTo({
       href: '',
       type: 'application/pdf',
@@ -984,14 +1883,21 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private requestZoom(direction: ReaderZoomDirection): void {
-    void this.zoomPublication(direction).catch((error) => {
-      this.navigationError =
-        error instanceof Error ? error.message : 'Unable to change zoom';
-      this.changeDetector.markForCheck();
-    });
+    this.zoomWrite = this.zoomWrite
+      .then(async () => {
+        const percent = await this.zoomPublication(direction);
+        this.showZoomIndicator(percent);
+      })
+      .catch((error) => {
+        this.navigationError =
+          error instanceof Error ? error.message : 'Unable to change zoom';
+        this.changeDetector.markForCheck();
+      });
   }
 
-  private async zoomPublication(direction: ReaderZoomDirection): Promise<void> {
+  private async zoomPublication(
+    direction: ReaderZoomDirection,
+  ): Promise<number> {
     const delta =
       direction === 'in' ? WHEEL_ZOOM_STEP_PERCENT : -WHEEL_ZOOM_STEP_PERCENT;
     if (this.book?.format === 'epub') {
@@ -1003,7 +1909,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       if (fontSizePercent !== this.epubPreferences.fontSizePercent) {
         await this.updateEpubPreferences({ fontSizePercent });
       }
-      return;
+      return fontSizePercent;
     }
 
     const zoomPercent = clamp(
@@ -1017,6 +1923,23 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     ) {
       await this.updatePdfPreferences({ zoomMode: 'custom', zoomPercent });
     }
+    return zoomPercent;
+  }
+
+  private showZoomIndicator(percent: number): void {
+    if (this.destroyed) {
+      return;
+    }
+    if (this.zoomIndicatorTimeout) {
+      clearTimeout(this.zoomIndicatorTimeout);
+    }
+    this.zoomIndicatorPercent = percent;
+    this.changeDetector.markForCheck();
+    this.zoomIndicatorTimeout = setTimeout(() => {
+      this.zoomIndicatorTimeout = null;
+      this.zoomIndicatorPercent = null;
+      this.changeDetector.markForCheck();
+    }, ZOOM_INDICATOR_DURATION_MS);
   }
 
   async rotatePdf(delta: -90 | 90): Promise<void> {
@@ -1062,7 +1985,12 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     const readerRoot = this.readerRoot.nativeElement;
+    if (this.progressSliderGeometryRefreshId !== null) {
+      cancelAnimationFrame(this.progressSliderGeometryRefreshId);
+      this.progressSliderGeometryRefreshId = null;
+    }
     if (readerRoot.ownerDocument.fullscreenElement === readerRoot) {
       void readerRoot.ownerDocument.exitFullscreen().catch(() => undefined);
     }
@@ -1072,8 +2000,14 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.removeSelectionListener?.();
     this.removeAnnotationActivationListener?.();
     this.removeNavigationRequestListener?.();
+    this.removeCommandRequestListener?.();
     this.removeZoomRequestListener?.();
     this.removeExternalLinkRequestListener?.();
+    if (this.zoomIndicatorTimeout) {
+      clearTimeout(this.zoomIndicatorTimeout);
+      this.zoomIndicatorTimeout = null;
+    }
+    this.clearAnnotationStatusTimeout();
     this.passwordChallenge?.cancel();
     this.removePasswordListener?.();
     const engine = this.engine;
@@ -1087,6 +2021,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private get activeReaderPanel(): ReaderPanel | null {
+    if (this.actionsOpen) {
+      return 'actions';
+    }
     if (this.tocOpen) {
       return 'toc';
     }
@@ -1109,10 +2046,17 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private toggleReaderPanel(panel: ReaderPanel): void {
-    const opening = this.activeReaderPanel !== panel;
+    const activePanel = this.activeReaderPanel;
+    const opening = activePanel !== panel;
     const returningFocusTarget = opening
       ? undefined
-      : this.readerPanelTriggerElement(panel);
+      : (this.readerPanelReturnFocus ?? this.readerPanelTriggerElement(panel));
+    if (opening) {
+      this.readerPanelReturnFocus =
+        this.readerPanelTriggerElement(panel) ?? null;
+    } else {
+      this.readerPanelReturnFocus = null;
+    }
     this.closeReaderPanels();
     if (opening) {
       this.setReaderPanelOpen(panel, true);
@@ -1128,6 +2072,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private closeReaderPanels(): void {
+    this.actionsOpen = false;
     this.tocOpen = false;
     this.searchOpen = false;
     this.settingsOpen = false;
@@ -1141,7 +2086,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (!panel) {
       return false;
     }
-    const returningFocusTarget = this.readerPanelTriggerElement(panel);
+    const returningFocusTarget =
+      this.readerPanelReturnFocus ?? this.readerPanelTriggerElement(panel);
+    this.readerPanelReturnFocus = null;
     this.closeReaderPanels();
     this.changeDetector.detectChanges();
     this.queueFocus(returningFocusTarget);
@@ -1149,6 +2096,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private closeReaderPanelsForReading(): void {
+    this.readerPanelReturnFocus = null;
     this.closeReaderPanels();
     this.changeDetector.detectChanges();
     this.queueFocus(this.readerRoot.nativeElement);
@@ -1156,6 +2104,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   private setReaderPanelOpen(panel: ReaderPanel, open: boolean): void {
     switch (panel) {
+      case 'actions':
+        this.actionsOpen = open;
+        break;
       case 'toc':
         this.tocOpen = open;
         break;
@@ -1179,6 +2130,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   private readerPanelElement(panel: ReaderPanel): HTMLElement | undefined {
     switch (panel) {
+      case 'actions':
+        return this.actionsPanel?.nativeElement;
       case 'toc':
         return this.tocPanel?.nativeElement;
       case 'search':
@@ -1203,6 +2156,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     return (
       queriedTrigger ??
       {
+        actions: this.actionsTrigger,
         toc: this.tocTrigger,
         search: this.searchTrigger,
         settings: this.settingsTrigger,
@@ -1241,11 +2195,102 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.changeDetector.markForCheck();
       return true;
     }
+    if (this.closeKeyboardShortcuts()) {
+      return true;
+    }
     return this.closeReaderPanelsAndRestoreTrigger();
+  }
+
+  private handleReaderCommand(command: ReaderCommand): boolean {
+    if (command === 'dismiss') {
+      return this.closeTransientReaderUi();
+    }
+    if (this.shortcutsOpen) {
+      return true;
+    }
+    if (
+      this.passwordChallenge ||
+      this.pendingExternalUrl ||
+      this.pendingSelection
+    ) {
+      return true;
+    }
+    if (command === 'shortcuts') {
+      this.openKeyboardShortcuts();
+      return true;
+    }
+    if (this.loading || this.errorMessage) {
+      return false;
+    }
+
+    switch (command) {
+      case 'toc':
+        if (this.tableOfContents.length > 0) {
+          this.toggleToc();
+        }
+        return true;
+      case 'search':
+        this.toggleSearch();
+        return true;
+      case 'toggle-bookmark':
+        void this.toggleCurrentBookmark();
+        return true;
+      case 'bookmarks':
+        this.toggleBookmarks();
+        return true;
+      case 'annotations':
+        this.toggleAnnotations();
+        return true;
+      case 'settings':
+        this.toggleSettings();
+        return true;
+      case 'fullscreen':
+        void this.toggleImmersiveMode();
+        return true;
+    }
+  }
+
+  private openKeyboardShortcuts(): void {
+    if (this.shortcutsOpen) {
+      return;
+    }
+    const activePanel = this.activeReaderPanel;
+    const activeElement =
+      this.readerRoot.nativeElement.ownerDocument.activeElement;
+    this.shortcutsReturnFocus = activePanel
+      ? (this.readerPanelReturnFocus ??
+        this.readerPanelTriggerElement(activePanel) ??
+        this.readerRoot.nativeElement)
+      : activeElement instanceof HTMLElement &&
+          this.readerRoot.nativeElement.contains(activeElement)
+        ? activeElement
+        : (this.shortcutsTrigger?.nativeElement ??
+          this.readerRoot.nativeElement);
+    this.readerPanelReturnFocus = null;
+    this.closeReaderPanels();
+    this.shortcutsOpen = true;
+    this.changeDetector.detectChanges();
+    this.queueFocus(this.shortcutsDialog?.nativeElement);
+  }
+
+  private closeKeyboardShortcuts(): boolean {
+    if (!this.shortcutsOpen) {
+      return false;
+    }
+    const returnFocus =
+      this.shortcutsReturnFocus ??
+      this.shortcutsTrigger?.nativeElement ??
+      this.readerRoot.nativeElement;
+    this.shortcutsOpen = false;
+    this.shortcutsReturnFocus = null;
+    this.changeDetector.detectChanges();
+    this.queueFocus(returnFocus);
+    return true;
   }
 
   private async navigate(direction: ReaderNavigationDirection): Promise<void> {
     const engine = this.engine;
+    this.clearProgressMilestonePin();
     if (!engine || this.loading || this.readerPanelOpen) {
       return;
     }
@@ -1326,6 +2371,32 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  private offerAnnotationUndo(tombstone: PublicationAnnotation): void {
+    this.clearAnnotationStatusTimeout();
+    this.deletedAnnotation = structuredClone(tombstone);
+    this.annotationStatus = 'Annotation deleted.';
+    this.annotationStatusIsError = false;
+    this.scheduleAnnotationStatusDismissal(10_000);
+  }
+
+  private scheduleAnnotationStatusDismissal(delayMs: number): void {
+    this.annotationStatusTimeout = setTimeout(() => {
+      this.annotationStatusTimeout = null;
+      this.deletedAnnotation = null;
+      this.annotationStatus = null;
+      this.annotationStatusIsError = false;
+      this.changeDetector.markForCheck();
+    }, delayMs);
+  }
+
+  private clearAnnotationStatusTimeout(): void {
+    if (!this.annotationStatusTimeout) {
+      return;
+    }
+    clearTimeout(this.annotationStatusTimeout);
+    this.annotationStatusTimeout = null;
+  }
+
   private async persistPreferences(
     preferences: ReaderPreferences,
   ): Promise<void> {
@@ -1379,6 +2450,34 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     } catch {
       // Local progress is authoritative; sync availability must never block reading.
     }
+  }
+
+  get hasProgressMilestones(): boolean {
+    return this.chapterProgressMilestones.length > 0;
+  }
+
+  private alignManualProgressPercent(): void {
+    if (this.manualProgressPercent === null) {
+      return;
+    }
+    if (this.pinnedProgressMilestoneKey !== null) {
+      return;
+    }
+    const currentPercent = this.overallProgressPercent;
+    if (currentPercent === null) {
+      return;
+    }
+    if (
+      Math.abs(currentPercent - this.manualProgressPercent) >
+      PROGRESS_MILESTONE_MATCH_TOLERANCE
+    ) {
+      this.manualProgressPercent = null;
+    }
+  }
+
+  private clearProgressMilestonePin(): void {
+    this.pinnedProgressMilestoneKey = null;
+    this.manualProgressPercent = null;
   }
 }
 
@@ -1441,6 +2540,172 @@ interface FlattenedTocEntry {
   hasChildren: boolean;
 }
 
+interface ReaderProgressMilestone {
+  readonly key: string;
+  readonly value: number;
+  readonly label: string;
+  readonly locator: TocEntry['locator'];
+  readonly tocItemKey: string;
+  readonly tocItemIndex: number;
+}
+
+function deriveChapterProgressMilestones(
+  tocItems: readonly FlattenedTocEntry[],
+  pageStatus: ReaderPageStatus | null,
+): readonly ReaderProgressMilestone[] {
+  const topLevel = tocItems.filter((entry) => entry.depth === 0);
+  if (topLevel.length === 0) {
+    return [];
+  }
+
+  const chapterCandidates = chooseChapterMilestoneEntries(topLevel, tocItems);
+  if (chapterCandidates.length < 2) {
+    return [];
+  }
+
+  const itemIndexByKey = new Map(
+    tocItems.map((item, index) => [item.key, index]),
+  );
+  const milestones: ReaderProgressMilestone[] = [];
+
+  for (let index = 0; index < chapterCandidates.length; index += 1) {
+    const item = chapterCandidates[index];
+    const value = extractLocatorProgressionPercent(
+      item.entry.locator,
+      index,
+      chapterCandidates.length - 1,
+      pageStatus,
+    );
+    milestones.push({
+      key: `${item.key}:${item.entry.locator.href}:${item.entry.locator.title ?? ''}:${milestones.length}`,
+      value,
+      label: item.displayLabel,
+      locator: item.entry.locator,
+      tocItemKey: item.key,
+      tocItemIndex: itemIndexByKey.get(item.key) ?? index,
+    });
+  }
+
+  return milestones;
+}
+
+function chooseChapterMilestoneEntries(
+  topLevel: readonly FlattenedTocEntry[],
+  tocItems: readonly FlattenedTocEntry[],
+): readonly FlattenedTocEntry[] {
+  const topLevelChapterCandidates = topLevel.filter(isChapterLikeTocEntry);
+  if (topLevelChapterCandidates.length >= 2) {
+    return topLevelChapterCandidates;
+  }
+
+  const maximumDepth = tocItems.reduce(
+    (result, entry) => Math.max(result, entry.depth),
+    0,
+  );
+  for (let depth = 1; depth <= maximumDepth; depth += 1) {
+    const candidatesAtDepth = tocItems.filter(
+      (entry) => entry.depth === depth && isChapterLikeTocEntry(entry),
+    );
+    if (candidatesAtDepth.length >= 2) {
+      return candidatesAtDepth;
+    }
+  }
+
+  if (topLevel.length >= 2 && topLevelChapterCandidates.length === 0) {
+    return topLevel;
+  }
+
+  return topLevelChapterCandidates;
+}
+
+function isChapterLikeTocEntry(entry: FlattenedTocEntry): boolean {
+  if (entry.entry.numbering === 'numbered') {
+    return true;
+  }
+  if (entry.entry.numbering === 'unnumbered') {
+    return false;
+  }
+  if (entry.number !== null) {
+    return true;
+  }
+  if (
+    entry.depth === 0 &&
+    isLikelyNonChapterTopLevelTocTitle(entry.entry.title)
+  ) {
+    return false;
+  }
+  return (
+    entry.depth > 0 ||
+    !UNNUMBERED_TOP_LEVEL_TOC_TITLES.has(normalizeTocTitle(entry.entry.title))
+  );
+}
+
+function extractLocatorProgressionPercent(
+  locator: TocEntry['locator'],
+  fallbackIndex: number,
+  fallbackTotal: number,
+  pageStatus: ReaderPageStatus | null,
+): number {
+  const directProgression =
+    locator.locations?.totalProgression ?? locator.locations?.progression;
+  if (
+    typeof directProgression === 'number' &&
+    Number.isFinite(directProgression)
+  ) {
+    return normalizeProgressPercent(directProgression * 100);
+  }
+
+  const directPosition = locator.locations?.position;
+  if (
+    pageStatus &&
+    pageStatus.scope === 'publication' &&
+    pageStatus.total > 1 &&
+    typeof directPosition === 'number' &&
+    Number.isFinite(directPosition)
+  ) {
+    const cappedPosition = clamp(directPosition, 1, pageStatus.total);
+    return normalizeProgressPercent(
+      ((cappedPosition - 1) / (pageStatus.total - 1)) * 100,
+    );
+  }
+
+  if (fallbackTotal <= 0) {
+    return 0;
+  }
+
+  return normalizeProgressPercent((fallbackIndex / fallbackTotal) * 100);
+}
+
+function inferLocatorProgressionPercent(
+  locator: TocEntry['locator'],
+  pageStatus: ReaderPageStatus | null,
+): number | null {
+  const directProgression =
+    locator.locations?.totalProgression ?? locator.locations?.progression;
+  if (
+    typeof directProgression === 'number' &&
+    Number.isFinite(directProgression)
+  ) {
+    return normalizeProgressPercent(directProgression * 100);
+  }
+
+  const directPosition = locator.locations?.position;
+  if (
+    pageStatus &&
+    pageStatus.scope === 'publication' &&
+    pageStatus.total > 1 &&
+    typeof directPosition === 'number' &&
+    Number.isFinite(directPosition)
+  ) {
+    const cappedPosition = clamp(directPosition, 1, pageStatus.total);
+    return normalizeProgressPercent(
+      ((cappedPosition - 1) / (pageStatus.total - 1)) * 100,
+    );
+  }
+
+  return null;
+}
+
 function flattenToc(
   entries: readonly TocEntry[],
   depth = 0,
@@ -1501,9 +2766,22 @@ function shouldNumberTocEntry(entry: TocEntry, depth: number): boolean {
   if (entry.numbering) {
     return entry.numbering === 'numbered';
   }
+  if (depth === 0 && isLikelyNonChapterTopLevelTocTitle(entry.title)) {
+    return false;
+  }
   return (
     depth > 0 ||
     !UNNUMBERED_TOP_LEVEL_TOC_TITLES.has(normalizeTocTitle(entry.title))
+  );
+}
+
+function isLikelyNonChapterTopLevelTocTitle(title: string): boolean {
+  const normalized = normalizeTocTitle(title);
+  return (
+    normalized.startsWith('part ') ||
+    normalized === 'part' ||
+    normalized.startsWith('volume ') ||
+    normalized === 'volume'
   );
 }
 
@@ -1517,13 +2795,23 @@ function normalizeTocTitle(title: string): string {
 
 const WHEEL_NAVIGATION_INTERVAL_MS = 400;
 const WHEEL_ZOOM_STEP_PERCENT = 5;
+const ZOOM_INDICATOR_DURATION_MS = 1_200;
 const EPUB_MINIMUM_ZOOM_PERCENT = 75;
 const EPUB_MAXIMUM_ZOOM_PERCENT = 200;
 const PDF_MINIMUM_ZOOM_PERCENT = 25;
 const PDF_MAXIMUM_ZOOM_PERCENT = 400;
+const PROGRESS_MILESTONE_MATCH_TOLERANCE = 0.6;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function normalizeProgressPercent(value: number): number {
+  return Number(clamp(value, 0, 100).toFixed(2));
+}
+
+function finiteAnnotationLocation(value: number | undefined): number | null {
+  return value !== undefined && Number.isFinite(value) ? value : null;
 }
 
 const UNNUMBERED_TOP_LEVEL_TOC_TITLES = new Set([
@@ -1563,4 +2851,11 @@ function getDeviceId(): string {
     localStorage.setItem(storageKey, deviceId);
   }
   return deviceId;
+}
+
+function timestampAfter(value: string): string {
+  const previous = Date.parse(value);
+  return new Date(
+    Math.max(Date.now(), Number.isFinite(previous) ? previous + 1 : 0),
+  ).toISOString();
 }

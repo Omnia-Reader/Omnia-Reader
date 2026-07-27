@@ -6,6 +6,7 @@ import {
   PlatformStorageStatus,
 } from '@omnia-reader/reader/domain';
 import { BrowserBookSource } from './browser-book-source';
+import { registerPageBackgroundListener } from './page-lifecycle';
 
 interface SaveFilePickerOptions {
   suggestedName?: string;
@@ -188,13 +189,7 @@ export class BrowserPlatform implements PlatformPort {
   }
 
   onBackground(callback: () => void): () => void {
-    const listener = () => {
-      if (document.visibilityState === 'hidden') {
-        callback();
-      }
-    };
-    document.addEventListener('visibilitychange', listener);
-    return () => document.removeEventListener('visibilitychange', listener);
+    return registerPageBackgroundListener(callback);
   }
 }
 

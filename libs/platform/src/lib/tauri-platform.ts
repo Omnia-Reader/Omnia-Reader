@@ -5,6 +5,7 @@ import {
   PlatformPort,
   PlatformStorageStatus,
 } from '@omnia-reader/reader/domain';
+import { registerPageBackgroundListener } from './page-lifecycle';
 
 interface NativePublicationDescriptor {
   sourceId: string;
@@ -35,6 +36,7 @@ type TauriPlatformKind = 'tauri-desktop' | 'tauri-android';
 const BACKUP_EXPORT_ID_HEADER = 'X-Omnia-Export-Id';
 const NATIVE_BACKUP_CHUNK_SIZE = 512 * 1024;
 const BOOK_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const TAURI_SUSPENDED_EVENT = 'tauri://suspended';
 
 export class TauriPlatform implements PlatformPort {
   readonly supportsStreamingFileSave = true;
@@ -183,13 +185,32 @@ export class TauriPlatform implements PlatformPort {
   }
 
   onBackground(callback: () => void): () => void {
-    const listener = () => {
-      if (document.visibilityState === 'hidden') {
+    const removePageListener = registerPageBackgroundListener(callback);
+    let active = true;
+    let removeNativeListener: NativeUnlisten | null = null;
+
+    void this.listenNative(TAURI_SUSPENDED_EVENT, () => {
+      if (active) {
         callback();
       }
+    })
+      .then((unlisten) => {
+        if (active) {
+          removeNativeListener = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch(() => {
+        // Page lifecycle events remain available if native registration fails.
+      });
+
+    return () => {
+      active = false;
+      removePageListener();
+      removeNativeListener?.();
+      removeNativeListener = null;
     };
-    document.addEventListener('visibilitychange', listener);
-    return () => document.removeEventListener('visibilitychange', listener);
   }
 
   private createSources(

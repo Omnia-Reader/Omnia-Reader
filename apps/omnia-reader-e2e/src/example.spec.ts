@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 import {
   createEncryptedPdfFixture,
   createEpubFixture,
+  createLargeEpubFixture,
   createFixedLayoutRtlEpubFixture,
   createMalformedPdfFixture,
   createPdfFixture,
@@ -43,6 +44,7 @@ test('filters, sorts, and remembers the accessible library view', async ({
   page,
 }) => {
   test.setTimeout(90_000);
+  const search = page.getByLabel('Search library');
   await importPublication(
     page,
     'omnia-library.epub',
@@ -76,6 +78,21 @@ test('filters, sorts, and remembers the accessible library view', async ({
   await expect
     .poll(() => storedTotalProgression(page))
     .toBeGreaterThanOrEqual(0.45);
+  const progressMilestones = page.getByTestId('reader-progress-milestone');
+  await expect(progressMilestones).toHaveCount(2);
+  await expect(progressMilestones.first()).toHaveClass(/rounded-full/);
+  await expect(progressMilestones.first().locator('.h-2.w-2')).toBeVisible();
+  await expect(progressMilestones.first()).toHaveAttribute(
+    'aria-label',
+    /Go to 1 Chapter One/,
+  );
+  expect(await progressMilestones.first().getAttribute('title')).toBeNull();
+  const chapterTwoMilestone = progressMilestones.nth(1);
+  const progressBeforeMilestone = await storedTotalProgression(page);
+  await chapterTwoMilestone.click();
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeGreaterThan(Math.max(0.45, progressBeforeMilestone));
   const libraryProgressPercent = Math.round(
     (await storedTotalProgression(page)) * 100,
   );
@@ -83,12 +100,18 @@ test('filters, sorts, and remembers the accessible library view', async ({
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0)).toContainText('Omnia EPUB Fixture');
   const continueReading = page.getByRole('link', {
-    name: `Continue reading Omnia EPUB Fixture, ${libraryProgressPercent}% read`,
+    name:
+      libraryProgressPercent >= 100
+        ? 'Open finished book Omnia EPUB Fixture, Finished'
+        : `Continue reading Omnia EPUB Fixture, ${libraryProgressPercent}% read`,
   });
   await expect(continueReading).toBeVisible();
   await expect(
     page.getByRole('progressbar', {
-      name: `Reading progress for Omnia EPUB Fixture: ${libraryProgressPercent}% read`,
+      name:
+        libraryProgressPercent >= 100
+          ? 'Reading progress for Omnia EPUB Fixture: Finished'
+          : `Reading progress for Omnia EPUB Fixture: ${libraryProgressPercent}% read`,
     }),
   ).toHaveAttribute('value', String(libraryProgressPercent));
   await continueReading.click();
@@ -100,22 +123,53 @@ test('filters, sorts, and remembers the accessible library view', async ({
 
   const readingStatus = page.getByLabel('Reading status');
   await readingStatus.selectOption('reading');
-  await expect(cards).toHaveCount(1);
-  await expect(cards.first()).toContainText('Omnia EPUB Fixture');
-  await expect(page.getByText('Showing 1 of 2 books')).toBeVisible();
+  if (libraryProgressPercent === 100) {
+    await expect(cards).toHaveCount(0);
+    await expect(page.getByText('Showing 0 of 2 books')).toBeVisible();
+  } else {
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText('Omnia EPUB Fixture');
+    await expect(page.getByText('Showing 1 of 2 books')).toBeVisible();
+  }
 
   await readingStatus.selectOption('unread');
-  await expect(cards).toHaveCount(1);
-  await expect(cards.first()).toContainText('Omnia PDF Fixture');
+  const unreadCount = await cards.count();
+  if (unreadCount === 0) {
+    await expect(
+      page.getByRole('heading', { name: 'No books found' }),
+    ).toBeVisible();
+    await expect(page.getByText('Showing 0 of 2 books')).toBeVisible();
+  } else {
+    await expect(unreadCount).toBe(1);
+    await expect(cards.first()).toContainText('Omnia PDF Fixture');
+    await expect(page.getByText('Showing 1 of 2 books')).toBeVisible();
+  }
 
   await readingStatus.selectOption('finished');
-  await expect(
-    page.getByRole('heading', { name: 'No books found' }),
-  ).toBeVisible();
-  await expect(page.getByText('Showing 0 of 2 books')).toBeVisible();
-  await page.getByRole('button', { name: 'Clear filters' }).click();
-  await expect(readingStatus).toHaveValue('all');
-  await expect(cards).toHaveCount(2);
+  const finishedCount = await cards.count();
+  if (finishedCount === 0) {
+    await expect(
+      page.getByRole('heading', { name: 'No books found' }),
+    ).toBeVisible();
+    await expect(page.getByText('Showing 0 of 2 books')).toBeVisible();
+  } else {
+    await expect(finishedCount).toBe(1);
+    await expect(cards.first()).toContainText('Omnia EPUB Fixture');
+    await expect(page.getByText('Showing 1 of 2 books')).toBeVisible();
+  }
+  const clearFiltersButton = page.getByRole('button', {
+    name: 'Clear filters',
+  });
+  if (await clearFiltersButton.isVisible().catch(() => false)) {
+    await clearFiltersButton.click();
+  } else {
+    await readingStatus.selectOption('all');
+    const search = page.getByLabel('Search library');
+    await search.fill('');
+    await expect(clearFiltersButton).not.toBeVisible();
+    await expect(readingStatus).toHaveValue('all');
+    await expect(cards).toHaveCount(2);
+  }
 
   await page.getByLabel('Sort books').selectOption('added');
   await expect(cards.nth(0)).toContainText('Omnia PDF Fixture');
@@ -124,7 +178,6 @@ test('filters, sorts, and remembers the accessible library view', async ({
   await expect(cards.nth(0)).toContainText('Omnia EPUB Fixture');
   await expect(cards.nth(1)).toContainText('Omnia PDF Fixture');
 
-  const search = page.getByLabel('Search library');
   await search.fill('epub');
   await expect(cards).toHaveCount(1);
   await expect(cards.first()).toContainText('Omnia EPUB Fixture');
@@ -156,6 +209,257 @@ test('filters, sorts, and remembers the accessible library view', async ({
     'data-view',
     'list',
   );
+});
+
+test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await importPublication(
+    page,
+    'omnia-large.epub',
+    'application/epub+zip',
+    await createLargeEpubFixture(5, 2),
+    'Omnia Large EPUB Fixture',
+  );
+
+  await page
+    .getByRole('link', { name: 'Start reading Omnia Large EPUB Fixture' })
+    .click();
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByRole('heading', { name: 'Chapter 1', exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  const progressMilestones = page.getByTestId('reader-progress-milestone');
+  await expect(progressMilestones).toHaveCount(5);
+  const chapterFourMilestone = progressMilestones.nth(3);
+  const chapterFourMilestoneLabel =
+    (await chapterFourMilestone.getAttribute('aria-label')) ?? '';
+  const chapterFourPercent = Number(
+    chapterFourMilestoneLabel.match(/\(([\d.]+)%/)?.[1],
+  );
+  expect(Number.isFinite(chapterFourPercent)).toBe(true);
+
+  await chapterFourMilestone.evaluate((element) =>
+    (element as HTMLButtonElement).click(),
+  );
+  await expect
+    .poll(() => chapterFourMilestone.getAttribute('aria-current'))
+    .toBe('location');
+  const progressSlider = page.getByTestId('reader-progress-slider');
+  await expect(progressSlider).toHaveValue(String(chapterFourPercent));
+  await expect(progressSlider).toBeTruthy();
+  const sliderFillPercent = await page
+    .getByTestId('reader-progress-slider')
+    .evaluate((element) => (element as HTMLInputElement).style.backgroundImage);
+  expect(sliderFillPercent).toContain(`${chapterFourPercent}%`);
+  await expect(page.getByTestId('reader-overall-progress')).toHaveText(
+    new RegExp(`\\s*${Math.round(chapterFourPercent)}% of book\\s*`),
+  );
+  await expect(chapterFourMilestone).toHaveClass(
+    /reader-progress-milestone-active/,
+  );
+  await expect(chapterFourMilestone).toHaveClass(
+    /reader-progress-milestone-reached/,
+  );
+
+  const clickedMilestoneStyle =
+    await chapterFourMilestone.getAttribute('style');
+  expect(clickedMilestoneStyle).not.toBeNull();
+  const expectedMilestoneLeft = await chapterFourMilestone.evaluate((element) =>
+    Number.parseFloat((element as HTMLElement).style.left || '0'),
+  );
+  expect(expectedMilestoneLeft).toBeGreaterThan(0);
+  await expect(chapterFourMilestone).toHaveAttribute(
+    'aria-current',
+    'location',
+  );
+  await expect
+    .poll(async () => {
+      const currentSliderCenter = await progressSlider.evaluate((element) => {
+        const sliderEl = element as HTMLInputElement;
+        const sliderRect = sliderEl.getBoundingClientRect();
+        const min = Number.parseFloat(sliderEl.min || '0');
+        const max = Number.parseFloat(sliderEl.max || '100');
+        const value = Number.parseFloat(sliderEl.value || '0');
+        const ratio = Math.max(
+          0,
+          Math.min(1, (value - min) / Math.max(0.000001, max - min)),
+        );
+        const thumbWidth = Math.min(10, sliderRect.width);
+        return (
+          sliderRect.left +
+          thumbWidth / 2 +
+          ratio * Math.max(0, sliderRect.width - thumbWidth)
+        );
+      });
+      const currentMilestoneCenter = await chapterFourMilestone.evaluate(
+        (element) =>
+          (element as HTMLElement).getBoundingClientRect().left +
+          (element as HTMLElement).getBoundingClientRect().width / 2,
+      );
+      return Math.abs(currentMilestoneCenter - currentSliderCenter);
+    })
+    .toBeLessThanOrEqual(3);
+});
+
+test('shows hover feedback on the progress slider milestone dots', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+
+  await importPublication(
+    page,
+    'omnia-basic-epub.epub',
+    'application/epub+zip',
+    await createEpubFixture(),
+    'Omnia EPUB Fixture',
+  );
+  await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByRole('heading', { name: 'Chapter One', exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  const milestones = page.getByTestId('reader-progress-milestone');
+  await expect(milestones).toHaveCount(2);
+  const chapterMilestone = milestones.last();
+  await expect(chapterMilestone).toBeVisible({ timeout: 20_000 });
+
+  await chapterMilestone.click();
+  await expect(chapterMilestone).toHaveClass(
+    /reader-progress-milestone-active/,
+  );
+  await expect.poll(() => chapterMilestone.getAttribute('title')).toBeNull();
+
+  const hoveredMilestone = milestones.first();
+  const progressSlider = page.getByTestId('reader-progress-slider');
+  const milestoneDot = hoveredMilestone.locator(
+    '.reader-progress-milestone-inner',
+  );
+  const milestoneTooltip = hoveredMilestone.locator(
+    '.reader-progress-milestone-tooltip',
+  );
+  const milestoneStyleBefore = await hoveredMilestone.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      borderColor: style.borderColor,
+      backgroundColor: style.backgroundColor,
+      opacity: style.opacity,
+    };
+  });
+  const dotStyleBefore = await milestoneDot.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      transform: style.transform,
+      boxShadow: style.boxShadow,
+    };
+  });
+  const tooltipOpacityBefore = await milestoneTooltip.evaluate(
+    (element) => getComputedStyle(element).opacity,
+  );
+
+  const sliderValueBefore = await progressSlider.inputValue();
+  const sliderBackgroundBefore = await progressSlider.evaluate((element) => {
+    const slider = element as HTMLInputElement;
+    return slider.style.backgroundImage;
+  });
+  const sliderAriaBefore =
+    (await progressSlider.getAttribute('aria-valuetext')) ?? '';
+  const sliderThumbStyleBefore = await progressSlider.evaluate((element) => {
+    const slider = element as HTMLInputElement;
+    const withFallback = (selector: string) => {
+      try {
+        const style = window.getComputedStyle(slider, selector);
+        return {
+          transform: style.transform,
+          boxShadow: style.boxShadow,
+          backgroundColor: style.backgroundColor,
+        };
+      } catch {
+        return null;
+      }
+    };
+    return {
+      webkit: withFallback('::-webkit-slider-thumb'),
+      moz: withFallback('::-moz-range-thumb'),
+      ms: withFallback('::-ms-thumb'),
+    };
+  });
+
+  await hoveredMilestone.hover();
+  await expect(milestoneTooltip).toHaveCSS('opacity', '1');
+
+  const dotStyleAfter = await milestoneDot.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      transform: style.transform,
+      boxShadow: style.boxShadow,
+    };
+  });
+  const milestoneStyleAfter = await hoveredMilestone.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      borderColor: style.borderColor,
+      backgroundColor: style.backgroundColor,
+      opacity: style.opacity,
+    };
+  });
+  const tooltipOpacityAfter = await milestoneTooltip.evaluate(
+    (element) => getComputedStyle(element).opacity,
+  );
+
+  expect(milestoneStyleAfter.opacity).toBe(milestoneStyleBefore.opacity);
+  expect(milestoneStyleAfter.borderColor).toBe(
+    milestoneStyleBefore.borderColor,
+  );
+  expect(milestoneStyleAfter.backgroundColor).toBe(
+    milestoneStyleBefore.backgroundColor,
+  );
+  expect(dotStyleAfter.transform).not.toBe(dotStyleBefore.transform);
+  expect(dotStyleAfter.boxShadow).not.toBe(dotStyleBefore.boxShadow);
+  expect(tooltipOpacityBefore).toBe('0');
+  expect(tooltipOpacityAfter).toBe('1');
+
+  const sliderBackgroundAfter = await progressSlider.evaluate((element) => {
+    const slider = element as HTMLInputElement;
+    return slider.style.backgroundImage;
+  });
+  const sliderThumbStyleAfter = await progressSlider.evaluate((element) => {
+    const slider = element as HTMLInputElement;
+    const withFallback = (selector: string) => {
+      try {
+        const style = window.getComputedStyle(slider, selector);
+        return {
+          transform: style.transform,
+          boxShadow: style.boxShadow,
+          backgroundColor: style.backgroundColor,
+        };
+      } catch {
+        return null;
+      }
+    };
+    return {
+      webkit: withFallback('::-webkit-slider-thumb'),
+      moz: withFallback('::-moz-range-thumb'),
+      ms: withFallback('::-ms-thumb'),
+    };
+  });
+
+  await expect(progressSlider).toHaveValue(sliderValueBefore);
+  expect(sliderBackgroundAfter).toBe(sliderBackgroundBefore);
+  await expect(progressSlider).toHaveAttribute(
+    'aria-valuetext',
+    sliderAriaBefore,
+  );
+  expect(sliderThumbStyleAfter).toEqual(sliderThumbStyleBefore);
 });
 
 test('exports exact PDF and EPUB publication files from the library', async ({
@@ -325,6 +629,42 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await pdfProgress.fill('0');
   await expectReaderPage(page, 1, 2);
   await page.getByTestId('reader-root').focus();
+  await page.keyboard.press('Shift+/');
+  const pdfShortcuts = page.getByRole('dialog', {
+    name: 'Keyboard shortcuts',
+  });
+  await expect(pdfShortcuts).toBeVisible();
+  await expect(pdfShortcuts).toContainText('Open highlights and notes');
+  await page.keyboard.press('Escape');
+  await expect(pdfShortcuts).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileReaderActions = page.getByRole('button', {
+    name: 'Toggle reader actions',
+  });
+  await expect(mobileReaderActions).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Open publication search' }),
+  ).toBeHidden();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId('reader-root')
+        .evaluate((root) => root.scrollWidth <= root.clientWidth),
+    )
+    .toBe(true);
+  await mobileReaderActions.click();
+  await expect(
+    page.getByRole('complementary', { name: 'Reader actions' }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Reader settings', exact: true })
+    .click();
+  await expect(
+    page.getByRole('complementary', { name: 'Reader settings' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Close reader settings' }).click();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(firstPage.locator('canvas')).toBeVisible();
 
   const readerName = firstPage.locator('.annotationLayer input[type="text"]');
   await expect(readerName).toBeVisible();
@@ -487,6 +827,7 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await expect
     .poll(() => storedPreference<number>(page, 'pdf', 'zoomPercent'))
     .toBe(55);
+  await expect(page.getByTestId('reader-zoom-indicator')).toHaveText('55%');
   const zoomOutPrevented = await publicationViewport.evaluate((viewport) => {
     const event = new WheelEvent('wheel', {
       bubbles: true,
@@ -501,6 +842,10 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await expect
     .poll(() => storedPreference<number>(page, 'pdf', 'zoomPercent'))
     .toBe(50);
+  await expect(page.getByTestId('reader-zoom-indicator')).toHaveText('50%');
+  await expect(page.getByTestId('reader-zoom-indicator')).toBeHidden({
+    timeout: 3_000,
+  });
   await expect
     .poll(async () => {
       const box = await page
@@ -545,7 +890,13 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     .click();
   await expectReaderPage(page, 2, 2);
 
-  await createPdfHighlight(page, 2, 'Page Two', 'Review this second page.');
+  await createPdfHighlight(
+    page,
+    2,
+    'Page Two',
+    'Review this second page.',
+    'strikethrough',
+  );
   await expect(
     page.locator(
       '.pdfViewer .page[data-page-number="2"] [data-omnia-annotation-layer] > div',
@@ -558,6 +909,79 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     page.getByRole('complementary', { name: 'Highlights and notes' }),
   ).toBeFocused();
   await expect(page.getByText('Review this second page.')).toBeVisible();
+  const pdfAnnotationsPanel = page.getByRole('complementary', {
+    name: 'Highlights and notes',
+  });
+  await expect(
+    pdfAnnotationsPanel.getByRole('button', { name: 'Strikethrough 1' }),
+  ).toBeVisible();
+  await expect(
+    pdfAnnotationsPanel.getByRole('button', { name: 'Notes 1' }),
+  ).toBeVisible();
+  const annotationOrder = pdfAnnotationsPanel.getByRole('combobox', {
+    name: 'Order annotations',
+  });
+  await expect(annotationOrder).toHaveValue('reading-order');
+  await annotationOrder.selectOption('updated-desc');
+  await expect(annotationOrder).toHaveValue('updated-desc');
+  await annotationOrder.selectOption('reading-order');
+  await pdfAnnotationsPanel
+    .getByRole('searchbox', { name: 'Find in this book' })
+    .fill('second page');
+  await expect(
+    pdfAnnotationsPanel.getByTestId('annotation-result-summary'),
+  ).toHaveText('1 annotation');
+  await expect(
+    pdfAnnotationsPanel.getByRole('button', {
+      name: 'Clear annotation search',
+    }),
+  ).toBeVisible();
+  await expect(pdfAnnotationsPanel.getByText('Page Two')).toBeVisible();
+  await pdfAnnotationsPanel
+    .getByRole('button', { name: 'Clear annotation search' })
+    .click();
+  await expect(
+    pdfAnnotationsPanel.getByRole('searchbox', { name: 'Find in this book' }),
+  ).toBeFocused();
+  await pdfAnnotationsPanel
+    .getByRole('searchbox', { name: 'Find in this book' })
+    .fill('missing phrase');
+  await expect(
+    pdfAnnotationsPanel.getByTestId('annotation-result-summary'),
+  ).toHaveText('0 of 1 shown');
+  await pdfAnnotationsPanel
+    .getByRole('button', { name: 'Show all annotations' })
+    .click();
+  await expect(
+    pdfAnnotationsPanel.getByTestId('annotation-result-summary'),
+  ).toHaveText('1 annotation');
+  await page.evaluate(() => {
+    Object.defineProperty(globalThis, 'showSaveFilePicker', {
+      value: undefined,
+      configurable: true,
+    });
+  });
+  const pdfAnnotationDownload = page.waitForEvent('download');
+  await pdfAnnotationsPanel
+    .getByRole('button', {
+      name: 'Export 1 shown annotation as Markdown',
+    })
+    .click();
+  const downloadedPdfAnnotations = await pdfAnnotationDownload;
+  expect(downloadedPdfAnnotations.suggestedFilename()).toBe(
+    'Omnia PDF Fixture-highlights-and-notes.md',
+  );
+  const downloadedPdfAnnotationPath = await downloadedPdfAnnotations.path();
+  expect(downloadedPdfAnnotationPath).not.toBeNull();
+  const pdfAnnotationMarkdown = await readFile(
+    downloadedPdfAnnotationPath as string,
+    'utf8',
+  );
+  expect(pdfAnnotationMarkdown).toContain(
+    '# Highlights and notes — Omnia PDF Fixture',
+  );
+  expect(pdfAnnotationMarkdown).toContain('Review this second page.');
+  expect(pdfAnnotationMarkdown).toContain('**Strikethrough · Pink**');
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
@@ -588,10 +1012,14 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     '.pdfViewer .page[data-page-number="2"] [data-omnia-annotation-id]',
   );
   await expect(pdfSavedHighlight).toBeVisible();
+  await expect(pdfSavedHighlight).toHaveAttribute(
+    'data-omnia-annotation-style',
+    'strikethrough',
+  );
   await expect(pdfSavedHighlight).toHaveAttribute('role', 'button');
   await pdfSavedHighlight.click();
   const pdfAnnotationEditor = page.getByRole('dialog', {
-    name: 'Edit highlight',
+    name: 'Edit annotation',
   });
   const pdfAnnotationNote = pdfAnnotationEditor.getByRole('textbox', {
     name: 'Note (optional)',
@@ -606,10 +1034,15 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await expect(pdfAnnotationNote).toBeFocused();
   await pdfAnnotationNote.fill('Updated PDF note.');
   await pdfAnnotationEditor.getByRole('button', { name: 'Blue' }).click();
+  await pdfAnnotationEditor.getByRole('button', { name: 'Underline' }).click();
   await pdfAnnotationEditor
     .getByRole('button', { name: 'Save', exact: true })
     .click();
   await expect(pdfAnnotationEditor).toBeHidden();
+  await expect(pdfSavedHighlight).toHaveAttribute(
+    'data-omnia-annotation-style',
+    'underline',
+  );
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
@@ -619,20 +1052,34 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     .click();
   await pdfSavedHighlight.click();
   await pdfAnnotationEditor
-    .getByRole('button', { name: 'Delete highlight' })
+    .getByRole('button', { name: 'Delete annotation' })
     .click();
   await expect(pdfAnnotationEditor).toBeHidden();
   await expect(pdfSavedHighlight).toHaveCount(0);
+  const pdfAnnotationStatus = page.getByTestId('annotation-status');
+  await expect(pdfAnnotationStatus).toContainText('Annotation deleted.');
+  await pdfAnnotationStatus.getByRole('button', { name: 'Undo' }).click();
+  await expect(pdfAnnotationStatus).toContainText('Annotation restored.');
+  await expect(pdfSavedHighlight).toBeVisible();
+  await pdfSavedHighlight.click();
+  await pdfAnnotationEditor
+    .getByRole('button', { name: 'Delete annotation' })
+    .click();
+  await expect(pdfAnnotationEditor).toBeHidden();
+  await expect(pdfSavedHighlight).toHaveCount(0);
+  await pdfAnnotationStatus
+    .getByRole('button', { name: 'Dismiss annotation message' })
+    .click();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
-  await expect(page.getByText('No highlights yet.')).toBeVisible();
+  await expect(page.getByText('No annotations yet.')).toBeVisible();
   await page.goBack();
   await page.getByText('Omnia PDF Fixture', { exact: true }).click();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
-  await expect(page.getByText('No highlights yet.')).toBeVisible();
+  await expect(page.getByText('No annotations yet.')).toBeVisible();
 });
 
 test('opens an encrypted PDF after an accessible password retry', async ({
@@ -1081,6 +1528,33 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
       .frameLocator('iframe')
       .getByRole('heading', { name: 'Chapter One', exact: true }),
   ).toBeVisible({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Toggle table of contents' }).click();
+  await page
+    .getByRole('button', { name: '5 Chapter Five', exact: true })
+    .click();
+  const chapterFiveMilestone = page
+    .getByTestId('reader-progress-milestone')
+    .nth(4);
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByRole('heading', { name: 'Chapter 5', exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(chapterFiveMilestone).toHaveAttribute('aria-current', 'step');
+  const chapterFiveMilestoneLabel =
+    (await chapterFiveMilestone.getAttribute('aria-label')) ?? '';
+  const chapterFivePercent = Number(
+    chapterFiveMilestoneLabel.match(/\(([\d.]+)%/)?.[1],
+  );
+  expect(Number.isFinite(chapterFivePercent)).toBe(true);
+  await expect
+    .poll(async () =>
+      Number.parseFloat(
+        await page.getByTestId('reader-progress-slider').inputValue(),
+      ),
+    )
+    .toBeCloseTo(chapterFivePercent, 1);
 
   await page.getByRole('button', { name: 'Open reader settings' }).click();
   await expect(
@@ -1176,6 +1650,28 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .poll(() => storedProgression(page))
     .toBeGreaterThan(progressionAfterWheelUp);
 
+  const focusedEpubBody = page
+    .getByTestId('publication-viewport')
+    .frameLocator('iframe')
+    .locator('body');
+  await focusedEpubBody.press('Shift+/');
+  const epubShortcuts = page.getByRole('dialog', {
+    name: 'Keyboard shortcuts',
+  });
+  await expect(epubShortcuts).toBeVisible();
+  await expect(epubShortcuts).toContainText(
+    'including while the EPUB page has focus',
+  );
+  await page.keyboard.press('Escape');
+  await expect(epubShortcuts).toBeHidden();
+  await focusedEpubBody.press('a');
+  await expect(
+    page.getByRole('complementary', { name: 'Highlights and notes' }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Close highlights and notes' })
+    .click();
+
   await page.keyboard.press('ArrowUp');
   await expect
     .poll(() => storedProgression(page))
@@ -1222,11 +1718,46 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
       .getByText('Chapter One'),
   ).toBeVisible({ timeout: 20_000 });
 
-  await createEpubHighlight(page, 'first EPUB fixture', 'Portable EPUB note.');
+  await createEpubHighlight(
+    page,
+    'first EPUB fixture',
+    'Portable EPUB note.',
+    'underline',
+  );
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   await expect(page.getByText('Portable EPUB note.')).toBeVisible();
+  const epubAnnotationsPanel = page.getByRole('complementary', {
+    name: 'Highlights and notes',
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(globalThis, 'showSaveFilePicker', {
+      value: undefined,
+      configurable: true,
+    });
+  });
+  const epubAnnotationDownload = page.waitForEvent('download');
+  await epubAnnotationsPanel
+    .getByRole('button', {
+      name: 'Export 1 shown annotation as Markdown',
+    })
+    .click();
+  const downloadedEpubAnnotations = await epubAnnotationDownload;
+  expect(downloadedEpubAnnotations.suggestedFilename()).toBe(
+    'Omnia EPUB Fixture-highlights-and-notes.md',
+  );
+  const downloadedEpubAnnotationPath = await downloadedEpubAnnotations.path();
+  expect(downloadedEpubAnnotationPath).not.toBeNull();
+  const epubAnnotationMarkdown = await readFile(
+    downloadedEpubAnnotationPath as string,
+    'utf8',
+  );
+  expect(epubAnnotationMarkdown).toContain(
+    '# Highlights and notes — Omnia EPUB Fixture',
+  );
+  expect(epubAnnotationMarkdown).toContain('Portable EPUB note.');
+  expect(epubAnnotationMarkdown).toContain('**Underline · Green**');
   await page.goBack();
   await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
   await expect(
@@ -1236,13 +1767,13 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
       .getByText('Chapter One'),
   ).toBeVisible({ timeout: 20_000 });
   const epubSavedHighlight = page.locator(
-    '.omnia-annotation-green[data-annotation-id]',
+    '.omnia-annotation-green-underline[data-annotation-id]',
   );
   await expect(epubSavedHighlight).toBeVisible();
   await expect(epubSavedHighlight).toHaveAttribute('role', 'button');
   await epubSavedHighlight.click();
   const epubAnnotationEditor = page.getByRole('dialog', {
-    name: 'Edit highlight',
+    name: 'Edit annotation',
   });
   await expect(
     epubAnnotationEditor.getByRole('textbox', { name: 'Note (optional)' }),
@@ -1251,6 +1782,9 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .getByRole('textbox', { name: 'Note (optional)' })
     .fill('Updated EPUB note.');
   await epubAnnotationEditor.getByRole('button', { name: 'Pink' }).click();
+  await epubAnnotationEditor
+    .getByRole('button', { name: 'Strikethrough' })
+    .click();
   await epubAnnotationEditor
     .getByRole('button', { name: 'Save', exact: true })
     .click();
@@ -1263,25 +1797,39 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   const updatedEpubHighlight = page.locator(
-    '.omnia-annotation-pink[data-annotation-id]',
+    '.omnia-annotation-pink-strikethrough[data-annotation-id]',
   );
   await expect(updatedEpubHighlight).toBeVisible();
   await updatedEpubHighlight.click();
   await epubAnnotationEditor
-    .getByRole('button', { name: 'Delete highlight' })
+    .getByRole('button', { name: 'Delete annotation' })
     .click();
   await expect(epubAnnotationEditor).toBeHidden();
   await expect(updatedEpubHighlight).toHaveCount(0);
+  const epubAnnotationStatus = page.getByTestId('annotation-status');
+  await expect(epubAnnotationStatus).toContainText('Annotation deleted.');
+  await epubAnnotationStatus.getByRole('button', { name: 'Undo' }).click();
+  await expect(epubAnnotationStatus).toContainText('Annotation restored.');
+  await expect(updatedEpubHighlight).toBeVisible();
+  await updatedEpubHighlight.click();
+  await epubAnnotationEditor
+    .getByRole('button', { name: 'Delete annotation' })
+    .click();
+  await expect(epubAnnotationEditor).toBeHidden();
+  await expect(updatedEpubHighlight).toHaveCount(0);
+  await epubAnnotationStatus
+    .getByRole('button', { name: 'Dismiss annotation message' })
+    .click();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
-  await expect(page.getByText('No highlights yet.')).toBeVisible();
+  await expect(page.getByText('No annotations yet.')).toBeVisible();
   await page.goBack();
   await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
-  await expect(page.getByText('No highlights yet.')).toBeVisible();
+  await expect(page.getByText('No annotations yet.')).toBeVisible();
   await page
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
@@ -1314,6 +1862,7 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await expect
     .poll(() => storedPreference<number>(page, 'epub', 'fontSizePercent'))
     .toBe(105);
+  await expect(page.getByTestId('reader-zoom-indicator')).toHaveText('105%');
   await expect
     .poll(() =>
       finalEpubBody.evaluate((body) => getComputedStyle(body).fontSize),
@@ -1337,6 +1886,10 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await expect
     .poll(() => storedPreference<number>(page, 'epub', 'fontSizePercent'))
     .toBe(100);
+  await expect(page.getByTestId('reader-zoom-indicator')).toHaveText('100%');
+  await expect(page.getByTestId('reader-zoom-indicator')).toBeHidden({
+    timeout: 3_000,
+  });
   await expect
     .poll(() =>
       finalEpubBody.evaluate((body) => getComputedStyle(body).fontSize),

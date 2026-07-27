@@ -140,7 +140,7 @@ test('PDF reader shell has no automated WCAG A or AA violations', async ({
   const savedHighlight = firstPage.locator('[data-omnia-annotation-id]');
   await savedHighlight.click();
   const annotationDialog = page.getByRole('dialog', {
-    name: 'Edit highlight',
+    name: 'Edit annotation',
   });
   await expect(
     annotationDialog.getByRole('textbox', { name: 'Note (optional)' }),

@@ -3,8 +3,10 @@ import type { PublicationFormat, PublicationLocator } from './publication';
 const BOOK_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const ANNOTATION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const ANNOTATION_COLORS = ['yellow', 'green', 'blue', 'pink'] as const;
+const ANNOTATION_STYLES = ['highlight', 'underline', 'strikethrough'] as const;
 
 export type PublicationAnnotationColor = (typeof ANNOTATION_COLORS)[number];
+export type PublicationAnnotationStyle = (typeof ANNOTATION_STYLES)[number];
 
 /**
  * A format-neutral text annotation.
@@ -22,6 +24,11 @@ export interface PublicationAnnotation {
   deviceId: string;
   locator: PublicationLocator;
   color: PublicationAnnotationColor;
+  /**
+   * Missing on records created before decoration styles were introduced.
+   * Readers must treat an omitted style as a traditional highlight.
+   */
+  style?: PublicationAnnotationStyle;
   note?: string;
   createdAt: string;
   updatedAt: string;
@@ -51,6 +58,10 @@ export function isPublicationAnnotation(
     isRecord(locator.text) &&
     isBoundedString(locator.text['highlight'], 4096) &&
     ANNOTATION_COLORS.includes(value['color'] as PublicationAnnotationColor) &&
+    (value['style'] === undefined ||
+      ANNOTATION_STYLES.includes(
+        value['style'] as PublicationAnnotationStyle,
+      )) &&
     (value['note'] === undefined || isBoundedString(value['note'], 16_384)) &&
     isCanonicalTimestamp(createdAt) &&
     isCanonicalTimestamp(updatedAt) &&

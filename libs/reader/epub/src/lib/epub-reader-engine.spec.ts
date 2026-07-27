@@ -31,7 +31,7 @@ describe('EPUB publication CSS sanitization', () => {
 });
 
 describe('EpubReaderEngine annotations', () => {
-  it('captures a CFI text quote and renders persisted highlights', async () => {
+  it('captures a CFI text quote and renders persisted annotation styles', async () => {
     const listeners = new Map<string, (...args: unknown[]) => void>();
     let sanitizeContent: ((document: Document) => void) | undefined;
     let attachContent: ((contents: Contents) => void) | undefined;
@@ -39,11 +39,19 @@ describe('EpubReaderEngine annotations', () => {
       'http://www.w3.org/2000/svg',
       'g',
     );
+    const renderedMark = {
+      element: annotationElement,
+      render: vi.fn(),
+    };
     const renderedAnnotation = {
-      mark: { element: annotationElement },
+      mark: renderedMark,
       on: vi.fn(),
     };
     const highlight = vi.fn((...args: unknown[]) => {
+      void args;
+      return renderedAnnotation;
+    });
+    const underline = vi.fn((...args: unknown[]) => {
       void args;
       return renderedAnnotation;
     });
@@ -68,7 +76,7 @@ describe('EpubReaderEngine annotations', () => {
         displayed: { page: 1, total: 10 },
       })),
       reportLocation: vi.fn().mockResolvedValue(undefined),
-      annotations: { highlight, remove },
+      annotations: { highlight, underline, remove },
       getContents: vi.fn(() => []),
       hooks: {
         content: {
@@ -201,7 +209,12 @@ describe('EpubReaderEngine annotations', () => {
     );
     const navigation: string[] = [];
     const zoom: string[] = [];
+    const commands: string[] = [];
     engine.onNavigationRequested((direction) => navigation.push(direction));
+    const removeCommandListener = engine.onCommandRequested((command) => {
+      commands.push(command);
+      return true;
+    });
     engine.onZoomRequested((direction) => zoom.push(direction));
     const renderedContents = {
       window: globalThis.window,
@@ -218,6 +231,32 @@ describe('EpubReaderEngine annotations', () => {
     globalThis.document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
     );
+    const shortcutsEvent = new KeyboardEvent('keydown', {
+      key: '?',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    globalThis.document.dispatchEvent(shortcutsEvent);
+    globalThis.document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'f',
+        ctrlKey: true,
+        bubbles: true,
+      }),
+    );
+    globalThis.document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'm',
+        repeat: true,
+        bubbles: true,
+      }),
+    );
+    const editor = globalThis.document.createElement('textarea');
+    globalThis.document.body.append(editor);
+    editor.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'a', bubbles: true }),
+    );
     const wheelDown = new WheelEvent('wheel', {
       bubbles: true,
       cancelable: true,
@@ -225,6 +264,16 @@ describe('EpubReaderEngine annotations', () => {
     });
     globalThis.document.dispatchEvent(wheelDown);
     expect(navigation).toEqual(['next', 'previous', 'next', 'next']);
+    expect(commands).toEqual(['shortcuts', 'search']);
+    expect(shortcutsEvent.defaultPrevented).toBe(true);
+    removeCommandListener();
+    const unhandledEscape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    globalThis.document.dispatchEvent(unhandledEscape);
+    expect(unhandledEscape.defaultPrevented).toBe(false);
     expect(wheelDown.defaultPrevented).toBe(true);
     const zoomIn = new WheelEvent('wheel', {
       bubbles: true,
@@ -358,6 +407,43 @@ describe('EpubReaderEngine annotations', () => {
       new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }),
     );
     expect(activatedAnnotations).toEqual([annotation.id, annotation.id]);
+
+    await engine.setAnnotations([
+      { ...annotation, style: 'underline', color: 'blue' },
+    ]);
+    expect(underline).toHaveBeenLastCalledWith(
+      'epubcfi(/6/2!/4/2,/1:7,/1:25)',
+      { annotationId: annotation.id },
+      expect.any(Function),
+      'omnia-annotation-blue-underline',
+      expect.objectContaining({ stroke: '#2563eb' }),
+    );
+
+    const rectangle = globalThis.document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'rect',
+    );
+    rectangle.setAttribute('y', '10');
+    rectangle.setAttribute('height', '20');
+    const line = globalThis.document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'line',
+    );
+    line.setAttribute('y1', '29');
+    line.setAttribute('y2', '29');
+    annotationElement.replaceChildren(rectangle, line);
+    await engine.setAnnotations([
+      { ...annotation, style: 'strikethrough', color: 'pink' },
+    ]);
+    expect(underline).toHaveBeenLastCalledWith(
+      'epubcfi(/6/2!/4/2,/1:7,/1:25)',
+      { annotationId: annotation.id },
+      expect.any(Function),
+      'omnia-annotation-pink-strikethrough',
+      expect.objectContaining({ stroke: '#db2777' }),
+    );
+    expect(line.getAttribute('y1')).toBe('20');
+    expect(line.getAttribute('y2')).toBe('20');
 
     (
       renderedContents.cfiFromRange as ReturnType<typeof vi.fn>

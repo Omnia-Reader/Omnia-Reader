@@ -70,6 +70,7 @@ export class SyncSettingsPageComponent implements OnInit {
   };
   megaSession: MegaGatewaySession = { authenticated: false };
   repositories: readonly GitHubRepository[] = [];
+  repositoryQuery = '';
   repositoryInstallationSettingsUrl: string | null = null;
   folders: readonly MegaFolder[] = [];
   remoteBackups: readonly RemoteBookBackup[] = [];
@@ -78,11 +79,22 @@ export class SyncSettingsPageComponent implements OnInit {
   transferProgress: ObjectTransferProgress | null = null;
   manualSyncController: AbortController | null = null;
   automaticSyncStatus: AutoSyncStatus = this.autoSync.status();
+  lastCompletedSyncAt: string | null =
+    this.automaticSyncStatus.lastSuccessAt ?? null;
 
   async ngOnInit(): Promise<void> {
     const authorizationOutcome = githubAuthorizationOutcome(this.router.url);
+    let observedSuccess = this.automaticSyncStatus.lastSuccessAt ?? null;
     const unsubscribe = this.autoSync.subscribe((status) => {
       this.automaticSyncStatus = status;
+      const nextSuccess = status.lastSuccessAt ?? null;
+      if (nextSuccess !== observedSuccess) {
+        observedSuccess = nextSuccess;
+        this.lastCompletedSyncAt = nextSuccess;
+        if (nextSuccess) {
+          void this.refreshAfterAutomaticSync();
+        }
+      }
       this.changeDetector.markForCheck();
     });
     this.destroyRef.onDestroy(unsubscribe);
@@ -132,6 +144,107 @@ export class SyncSettingsPageComponent implements OnInit {
     return this.hasConfiguredDestination();
   }
 
+  get gitAuthenticated(): boolean {
+    return this.gitSession.authenticated;
+  }
+
+  get selectedGitRepository(): GitHubRepository | null {
+    return this.gitSession.authenticated ? this.gitSession.repository : null;
+  }
+
+  get filteredRepositories(): readonly GitHubRepository[] {
+    const query = this.repositoryQuery.trim().toLocaleLowerCase();
+    if (!query) {
+      return this.repositories;
+    }
+    const matches = this.repositories.filter((repository) =>
+      repository.fullName.toLocaleLowerCase().includes(query),
+    );
+    const selected = this.selectedGitRepository;
+    return selected &&
+      !matches.some((repository) => repository.id === selected.id)
+      ? [selected, ...matches]
+      : matches;
+  }
+
+  get gitLibraryStatus(): string {
+    if (!this.gitAuthenticated) {
+      return 'Authorize your GitHub account';
+    }
+    if (!this.selectedGitRepository) {
+      return 'Choose or create a private repository';
+    }
+    if (this.automaticSyncBusy || this.manualSyncController) {
+      return 'Synchronizing now';
+    }
+    if (this.automaticSyncStatus.phase === 'offline') {
+      return 'Waiting for an internet connection';
+    }
+    if (this.automaticSyncStatus.phase === 'error') {
+      return 'Synchronization needs attention';
+    }
+    if (this.automaticSyncStatus.phase === 'cancelled') {
+      return 'Synchronization cancelled; local changes remain safe';
+    }
+    if (this.automaticSyncStatus.phase === 'scheduled') {
+      return this.lastCompletedSyncAt
+        ? 'Synchronization scheduled'
+        : 'Initial synchronization queued';
+    }
+    if (this.pendingChanges > 0) {
+      return `${this.pendingChanges} ${
+        this.pendingChanges === 1 ? 'change' : 'changes'
+      } waiting to sync`;
+    }
+    return this.lastCompletedSyncAt
+      ? 'Library is up to date'
+      : 'Ready for the first synchronization';
+  }
+
+  get gitLibraryStepComplete(): boolean {
+    return (
+      !!this.selectedGitRepository &&
+      !!this.lastCompletedSyncAt &&
+      this.pendingChanges === 0
+    );
+  }
+
+  get gitLibraryStepActive(): boolean {
+    return !!this.selectedGitRepository && !this.gitLibraryStepComplete;
+  }
+
+  get gitLibraryStepLabel(): string {
+    if (!this.selectedGitRepository) {
+      return 'Waiting for a repository';
+    }
+    if (this.gitLibraryStepComplete) {
+      return 'Up to date';
+    }
+    if (this.pendingChanges > 0) {
+      return `${this.pendingChanges} waiting`;
+    }
+    return this.automaticSyncStatus.phase === 'scheduled'
+      ? 'Initial sync queued'
+      : 'Ready to sync';
+  }
+
+  get gitRepositoryUrl(): string | null {
+    const fullName = this.selectedGitRepository?.fullName;
+    if (!fullName) {
+      return null;
+    }
+    const parts = fullName.split('/');
+    if (
+      parts.length !== 2 ||
+      parts.some((part) => !/^[a-z0-9._-]+$/i.test(part))
+    ) {
+      return null;
+    }
+    return `https://github.com/${parts
+      .map((part) => encodeURIComponent(part))
+      .join('/')}`;
+  }
+
   async chooseProvider(provider: SyncProviderKind): Promise<void> {
     this.providerSelection.select(provider);
     this.selectedProvider = provider;
@@ -168,9 +281,13 @@ export class SyncSettingsPageComponent implements OnInit {
     if (!repository || !repository.canPush) {
       return;
     }
+    const destinationChanged = this.selectedGitRepository?.id !== repository.id;
 
     await this.runBusy(async () => {
       this.gitSession = await this.gitGateway.selectRepository(repositoryId);
+      if (destinationChanged) {
+        this.autoSync.clearHistory('git');
+      }
       await this.refreshRemoteBackups();
       this.repositoryInstallationSettingsUrl = null;
       this.statusMessage =
@@ -180,6 +297,10 @@ export class SyncSettingsPageComponent implements OnInit {
     });
   }
 
+  updateRepositoryQuery(event: Event): void {
+    this.repositoryQuery = (event.target as HTMLInputElement).value;
+  }
+
   async createRepository(name: string): Promise<void> {
     await this.runBusy(async () => {
       const result = await this.gitGateway.createRepository(name);
@@ -187,6 +308,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.repositories = await this.gitGateway.repositories();
       this.repositoryInstallationSettingsUrl = result.installationSettingsUrl;
       if (result.selected) {
+        this.autoSync.clearHistory('git');
         await this.refreshRemoteBackups();
         this.statusMessage =
           `Created and selected private repository ${result.repository.fullName}. ` +
@@ -217,9 +339,15 @@ export class SyncSettingsPageComponent implements OnInit {
     if (!folder || !folder.canWrite) {
       return;
     }
+    const destinationChanged =
+      !this.megaSession.authenticated ||
+      this.megaSession.folder?.handle !== folder.handle;
 
     await this.runBusy(async () => {
       this.megaSession = await this.megaGateway.selectFolder(handle);
+      if (destinationChanged) {
+        this.autoSync.clearHistory('mega');
+      }
       await this.refreshRemoteBackups();
       this.statusMessage =
         `MEGA sync folder set to ${folder.path}. ` +
@@ -251,6 +379,7 @@ export class SyncSettingsPageComponent implements OnInit {
         });
         await this.refreshPendingCount();
         await this.refreshRemoteBackups();
+        this.autoSync.recordManualSuccess(result);
         this.statusMessage =
           `Sync complete: ${result.pulled} pulled, ${result.pushed} pushed` +
           (result.conflicts ? `, ${result.conflicts} conflicts retried` : '') +
@@ -290,6 +419,20 @@ export class SyncSettingsPageComponent implements OnInit {
     }
   }
 
+  retrySynchronization(): void {
+    if (
+      this.hasConfiguredDestination() &&
+      !this.busy &&
+      !this.automaticSyncBusy
+    ) {
+      this.errorMessage = null;
+      this.statusMessage =
+        'Synchronization retry queued. Local changes remain safe while it runs.';
+      this.autoSync.requestImmediate('online');
+      this.changeDetector.markForCheck();
+    }
+  }
+
   async disconnect(): Promise<void> {
     await this.runBusy(async () => {
       if (this.selectedProvider === 'git') {
@@ -302,6 +445,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.providerSelection.clear();
       this.selectedProvider = null;
       this.repositories = [];
+      this.repositoryQuery = '';
       this.repositoryInstallationSettingsUrl = null;
       this.folders = [];
       this.remoteBackups = [];
@@ -402,6 +546,14 @@ export class SyncSettingsPageComponent implements OnInit {
     } else {
       this.remoteBackups = [];
     }
+  }
+
+  private async refreshAfterAutomaticSync(): Promise<void> {
+    await this.refreshPendingCount().catch(() => undefined);
+    if (this.hasConfiguredDestination()) {
+      await this.refreshRemoteBackups().catch(() => undefined);
+    }
+    this.changeDetector.markForCheck();
   }
 
   private async refreshRemoteBackups(): Promise<void> {

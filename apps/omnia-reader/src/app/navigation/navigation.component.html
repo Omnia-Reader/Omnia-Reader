@@ -80,6 +80,28 @@
         </span>
       </button>
       <span class="ml-2 font-medium md:sr-only">Omnia Reader</span>
+      <a
+        data-testid="global-sync-status"
+        class="ml-auto flex min-h-10 items-center gap-2 rounded-full px-3 text-sm font-medium no-underline transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        [ngClass]="syncStatusClasses"
+        [routerLink]="syncSettingsRoute"
+        [attr.aria-label]="syncStatusLabel + '. View sync details.'"
+        [attr.title]="syncStatusDescription"
+      >
+        <span
+          class="material-icons text-xl"
+          [class.animate-spin]="
+            automaticSyncStatus.phase === 'syncing' ||
+            automaticSyncStatus.phase === 'cancelling'
+          "
+          aria-hidden="true"
+          translate="no"
+        >
+          {{ syncStatusIcon }}
+        </span>
+        <span class="hidden sm:inline">{{ syncStatusLabel }}</span>
+      </a>
+      <span class="sr-only" aria-live="polite">{{ syncStatusLabel }}</span>
     </header>
     <router-outlet></router-outlet>
   </div>

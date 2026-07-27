@@ -9,6 +9,21 @@ a private repository for books and reading state. The Settings flow now
 separates GitHub App installation/repository access from state-bound account
 authorization, recovers when an installation exposes no repositories, and
 guides the user to approve missing repository permissions after a GitHub 403.
+Its Settings journey now presents an Account/Repository/Library checklist,
+identifies Git + LFS as the recommended provider, filters large repository
+lists, links to the selected private repository, refreshes pending-change and
+remote-backup state after automatic synchronization, and provides an immediate
+retry action after a failed automatic attempt. The final setup step distinguishes
+a queued or ready first synchronization from a genuinely synchronized library,
+then reports the most recent successful synchronization time and the received,
+sent, conflict-retry, and invalid-record counts. That successful result is
+validated and persisted per provider across application restarts, while selecting
+a different destination clears stale evidence. Manual and automatic runs update
+the same global status. The application toolbar now keeps synchronization state
+visible outside Settings, reports active
+publication-transfer percentage, distinguishes setup, scheduled, delayed,
+offline, cancelled, successful, and attention-required states, and provides a
+one-click path to the relevant synchronization details.
 Signed, replay-safe GitHub authorization webhooks now invalidate every local
 session for a revoked user across gateway replicas, while provider `401`
 fallback handling remains in place. Lost installation access clears only the
@@ -152,8 +167,12 @@ implemented:
   blocked by the script-disabled sandbox and pre-render sanitizer. Text
   selection remains passive until the reader explicitly requests the context
   menu with a secondary click; only then does Omnia offer highlighting and note
-  actions. Selected ranges produce quote-backed CFI annotations and persisted
-  highlights are reapplied through EPUB decorations. Event-driven selection
+  actions. The annotation editor supports highlight, underline, and
+  strikethrough decorations with independent colors and optional notes.
+  Selected ranges produce quote-backed CFI annotations and persisted
+  decorations are reapplied through EPUB highlight/underline primitives;
+  strikethrough lines remain centered when EPUB pagination rerenders a mark.
+  Event-driven selection
   capture has a deduplicated stable-selection fallback plus a sandbox-frame
   bridge for WebKit hosts that drop iframe pointer-event delivery.
 - PDF.js runs in a lazy engine with a separately deployed worker and the
@@ -168,7 +187,8 @@ implemented:
   rejected through the actual lazy engine and atomically remove only newly
   created records. PDF text selection is likewise passive until an explicit
   secondary click. Accepted selections persist page-relative text offsets and
-  PDF-space rectangles so highlights survive zoom and rotation.
+  PDF-space rectangles so highlights, underlines, and strikethrough marks
+  survive zoom and rotation.
 - Progress is saved from renderer relocation events, not only button actions.
   Local writes remain authoritative and append to an offline sync operation
   journal.
@@ -196,12 +216,44 @@ implemented:
   corresponding toolbar trigger when dismissed. Choosing panel content returns
   focus to the publication, while arrow, wheel, and swipe navigation are
   isolated whenever a panel is open.
+- On narrow mobile viewports the reader keeps the table of contents directly
+  available and consolidates secondary tools into an in-reader action panel,
+  avoiding horizontal toolbar overflow without relying on an overlay outside
+  the fullscreen reader root. Opening search, bookmarks, annotations,
+  thumbnails, settings, shortcuts, or immersive mode from this panel preserves
+  focus context and restores focus to the visible mobile trigger when closed.
+- A format-neutral keyboard command layer opens the table of contents, search,
+  bookmarks, annotations, settings, immersive mode, and the current-location
+  bookmark action. The same commands work when an EPUB iframe owns focus,
+  ignore editable controls and repeated key events, and only prevent a browser
+  key action when the reader shell actually handles it. A toolbar button and
+  `?` shortcut open a focus-contained command reference whose close action
+  restores the reader's previous focus.
 - The shared reader shell can create, revisit, persist, and delete PDF or EPUB
   bookmarks. Deletions are durable tombstones, so an older provider copy
   cannot resurrect a bookmark on another device.
 - The same shell can create colored highlights, attach or edit notes, navigate
-  back to an annotation, and delete it. Annotation deletions are durable
-  tombstones and local persistence completes before rendering or sync work.
+  back to an annotation, delete it, and undo an accidental deletion from an
+  accessible transient action. Undo restores the same stable annotation ID
+  with a revision newer than its deletion tombstone, so later synchronization
+  cannot resurrect the deletion over the restored record. Its per-book
+  annotation overview shows
+  totals by decoration type and note presence, searches quotes, notes, and
+  locations, orders results either by publication location or most-recent
+  update, and provides direct Go to, Edit, and Delete actions. The current
+  filtered, searched, and sorted overview can be exported as deterministic
+  Markdown through the shared browser/native save boundary. The export includes
+  locations, decoration styles, colors, quotes, and notes while escaping
+  publication-provided content. Annotation totals are also visible as a compact
+  badge in the reader toolbar, making the per-book overview discoverable
+  without opening it first. Annotation deletions are durable tombstones and
+  local persistence completes before rendering or sync work. Records created
+  before decoration styles remain valid and default to highlight rendering.
+- Ctrl+mouse-wheel zoom is serialized across both engines and reports the
+  resulting EPUB font-size or PDF page-view percentage in a non-interactive
+  overlay. Repeated wheel steps refresh the overlay timeout; it automatically
+  disappears 1.2 seconds after the final step and is never shown for ordinary
+  wheel page navigation or settings changes.
 - EPUB rendering now preserves authored fixed-layout geometry and typography,
   honors RTL page progression and authored spread settings, and routes
   internal links without allowing publication scripts. HTTP(S) links require
@@ -271,6 +323,11 @@ implemented:
   can be cancelled through the same abort-aware transport contract as manual
   sync, and retain durable local journal work for a later retry. Cancellation
   is reported separately from provider failures without blocking local reading.
+  The persistent application toolbar subscribes to both scheduler state and
+  provider-selection changes, so setup, disconnect, offline, delayed, active
+  transfer, cancellation, success, and failure feedback remains current on
+  every route. Local-only development builds show their local storage boundary
+  without exposing or contacting a remote provider.
 - The PWA application shell and static assets work offline; imported books stay
   in OPFS or the IndexedDB fallback rather than the Angular service-worker
   cache.
@@ -311,25 +368,27 @@ Verified in the current implementation:
 ```text
 npx nx run-many -t test --all --skip-nx-cache            PASS (12 projects + 2 prerequisite tasks)
 npx nx run-many -t lint --all --skip-nx-cache            PASS (12 projects)
-npx nx test omnia-reader                                PASS (93/93)
-npx nx test sync-core                                   PASS (101/101)
+npx nx test omnia-reader                                PASS (105/105)
+npx nx test sync-core                                   PASS (106/106)
 npx nx test sync-git                                    PASS (25/25)
-npx nx test sync-gateway                                PASS (64/64; 1 live Redis test skipped)
+npx nx test sync-gateway                                PASS (103/103; 1 live Redis test skipped)
 npx nx test reader-epub                                 PASS (20/20)
-Local reader/domain/engine/storage/platform suites        PASS (102/102)
+npx nx test reader-domain                               PASS (27/27)
+Local reader/domain/engine/storage/platform suites        PASS (105/105)
 npx nx run-many -t lint -p omnia-reader omnia-reader-e2e sync-gateway sync-git PASS
 npx nx build omnia-reader --configuration production     PASS
 npx nx build omnia-reader --configuration local-development PASS
 npx nx build sync-gateway --configuration production     PASS
 npm run container:smoke                                  PASS (web + gateway health, headers, cache, proxy)
 REMOTE_SYNC_E2E=1 ... --project=chromium src/sync.spec.ts PASS (7/7)
+Chromium/WebKit persisted successful Git result E2E       PASS (2/2)
 PWA_E2E=1 ... --project=chromium src/offline.spec.ts    PASS (cold PDF + EPUB restart)
 npm audit --omit=dev                                     PASS (0 vulnerabilities)
 npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
 npm run native:build                                     PASS (deb + rpm + AppImage)
-Initial production bundle                                487.18 kB (120.46 kB estimated transfer)
+Initial production bundle                                499.98 kB (122.78 kB estimated transfer)
 Schema-v8 migration and corrupt-record recovery tests     PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
@@ -348,6 +407,13 @@ Chromium/WebKit remote EPUB font/CSS sanitization E2E      PASS (2/2)
 Chromium/Firefox/WebKit nested EPUB ToC navigation E2E     PASS (3/3)
 Chromium durable PDF bookmark create/resume/delete E2E   PASS
 Chromium/Firefox/WebKit PDF/EPUB annotation lifecycle E2E PASS (6/6)
+Chromium/WebKit PDF/EPUB annotation deletion undo E2E     PASS (4/4 focused)
+Chromium/WebKit styled annotation and zoom feedback E2E   PASS (4/4)
+Chromium/WebKit annotation overview ordering E2E           PASS (2/2; 2 workers; 41.2s)
+Chromium/WebKit PDF/EPUB annotation Markdown export E2E    PASS (4/4 focused; 1.4m)
+Chromium/WebKit focused Git/PDF/EPUB UX E2E               PASS (8/8; 4 workers; 1.2m)
+Chromium/WebKit PDF/EPUB keyboard command E2E             PASS (4/4; 2 workers; 1.3m)
+Chromium/WebKit mobile-width PDF reader actions E2E        PASS (2/2; 2 workers; 41.5s)
 Chromium/Firefox/WebKit PDF/EPUB immersive reader E2E    PASS (6/6)
 Chromium drag-and-drop import and automatic open E2E      PASS
 Chromium installed-PWA fully-offline reopen E2E          PASS
@@ -365,10 +431,12 @@ Chromium/Firefox/WebKit library search/sort/status/view E2E PASS (3/3)
 Chromium/Firefox/WebKit library progress/resume E2E        PASS (3/3)
 Chromium/Firefox/WebKit populated progress grid/list WCAG  PASS (3/3)
 Chromium large-publication performance/memory/backup E2E   PASS (3/3)
-Chromium/WebKit active local web E2E matrix                PASS (41 active; 23 opt-in/unsupported skipped; 4 workers; 4.5m)
+Chromium/WebKit active local web E2E matrix                PASS (51/55 matrix + 4/4 corrected Git-label rerun; 23 skipped; 4 workers)
 Chromium/WebKit Git/LFS PDF convergence E2E                PASS (2/2; REMOTE_SYNC_E2E=1)
 Chromium/WebKit MEGA EPUB convergence E2E                  PASS (2/2; REMOTE_SYNC_E2E=1)
 Chromium/WebKit automatic upload cancellation E2E          PASS (2/2)
+Chromium/WebKit global sync status/setup/cancellation E2E   PASS (4/4 focused)
+Chromium/WebKit complete active sync suite                  PASS (20/24; 4 skipped)
 Chromium/WebKit remote-backup local removal E2E             PASS (2/2)
 Chromium/WebKit confirmed remote-backup deletion E2E         PASS (2/2)
 Chromium GitHub OAuth cancellation recovery E2E              PASS (1/1)
@@ -975,6 +1043,13 @@ Reader layout:
 - Touch-friendly tap zones and explicit controls.
 - Keyboard shortcuts and distraction-free mode on desktop.
 
+The application toolbar keeps the active synchronization state visible across
+library, reader, and settings routes. Its compact status link exposes live
+publication-transfer percentage when available, announces meaningful state
+changes to assistive technology, and opens synchronization recovery or setup
+in one action. A local-only build states that boundary instead of presenting a
+remote-provider action.
+
 EPUB controls:
 
 - Font family and size.
@@ -1122,11 +1197,20 @@ gateway alongside it.
   merge rules, complete snapshot seeding, and provider-neutral Git/MEGA
   synchronization.
 - Implemented: durable PDF/EPUB highlights and notes, deletion tombstones,
-  quote-backed locators, deterministic merge rules, complete snapshot seeding,
-  and provider-neutral Git/MEGA synchronization.
+  quote-backed locators, backward-compatible highlight/underline/strikethrough
+  styles, searchable per-book annotation overview, deterministic filtered
+  Markdown export, deterministic merge rules, complete snapshot seeding, and
+  provider-neutral Git/MEGA synchronization.
 - Implemented in the web client contract: GitHub App authentication,
   App installation/repository-access onboarding, repository selection, Git LFS
-  object transfer, and actionable error mapping. The gateway implements OAuth
+  object transfer, actionable error mapping, guided setup-state feedback,
+  repository filtering/linking, automatic-result refresh, and manual retry.
+  Successful manual and automatic results share one global status, including
+  received, sent, conflict-retry, and invalid-record counts. A validated,
+  provider-scoped local history restores this evidence after restart; changing
+  the selected repository or folder clears it so a previous destination cannot
+  appear current.
+  The gateway implements OAuth
   state validation, S256 PKCE with an encrypted one-time verifier, callback
   rotation, sanitized cancellation/failure recovery, strict expiring
   user/refresh-token rotation with per-process concurrent request coalescing
@@ -1167,9 +1251,13 @@ gateway alongside it.
   pending.
 - Implemented: pull, push, bounded conflict retry, durable offline operation
   queue, provider selection, manual sync, automatic lifecycle scheduling, and
-  visible automatic-sync status. Manual and automatic publication transfers
-  expose direction, bytes transferred, total bytes, percentage, and
-  cancellation.
+  visible automatic-sync status both in Settings and in the persistent
+  application toolbar. The toolbar reacts immediately to provider selection
+  and disconnect, distinguishes setup, scheduled, delayed, offline, cancelled,
+  successful, and attention-required states, links directly to synchronization
+  details, and reports live publication-transfer percentage. Manual and
+  automatic publication transfers expose direction, bytes transferred, total
+  bytes, percentage, and cancellation.
   Uploads send the original Blob through the browser-native request body and
   downloads monitor the response stream, avoiding a second explicit full
   binary copy in application code. Cancellation retains the local journal
@@ -1340,8 +1428,8 @@ End-to-end journeys:
 - Use the application fully offline after installation.
 - Restore books, progress, bookmarks, highlights, and notes onto a clean
   simulated device.
-- Create, reopen, navigate to, edit, and delete highlights/notes in EPUB and
-  PDF.
+- Create, reopen, filter, navigate to, restyle, edit, and delete
+  highlights/underlines/strikethroughs/notes in EPUB and PDF.
 - Synchronize a library between two simulated devices through Git/LFS and
   MEGA.
 - Recover from a remote 409 conflict and an interrupted sync.

@@ -5,6 +5,7 @@ export async function createPdfHighlight(
   pageNumber: number,
   selectedText: string,
   note: string,
+  style: 'highlight' | 'underline' | 'strikethrough' = 'highlight',
 ): Promise<void> {
   const textLayer = page.locator(
     `.pdfViewer .page[data-page-number="${pageNumber}"] .textLayer`,
@@ -34,10 +35,17 @@ export async function createPdfHighlight(
       y: selectionRect.top - layerRect.top + selectionRect.height / 2,
     };
   }, selectedText);
-  const editor = page.getByRole('dialog', { name: 'New highlight' });
+  const editor = page.getByRole('dialog', { name: 'New annotation' });
   await expect(editor).toBeHidden();
   await textLayer.click({ button: 'right', position: selectionPosition });
   await expect(editor).toBeVisible();
+  if (style !== 'highlight') {
+    await editor
+      .getByRole('button', {
+        name: style === 'underline' ? 'Underline' : 'Strikethrough',
+      })
+      .click();
+  }
   await editor.getByRole('button', { name: 'Pink' }).click();
   await editor.getByRole('textbox', { name: 'Note (optional)' }).fill(note);
   await editor.getByRole('button', { name: 'Save', exact: true }).click();
@@ -48,6 +56,7 @@ export async function createEpubHighlight(
   page: Page,
   selectedText: string,
   note: string,
+  style: 'highlight' | 'underline' | 'strikethrough' = 'highlight',
 ): Promise<void> {
   const paragraph = page
     .getByTestId('publication-viewport')
@@ -84,9 +93,11 @@ export async function createEpubHighlight(
       }),
     )
     .toContain(selectedText);
-  const editor = page.getByRole('dialog', { name: 'New highlight' });
+  const editor = page.getByRole('dialog', { name: 'New annotation' });
   await expect(editor).toBeHidden();
-  if (page.context().browser()?.browserType().name() === 'webkit') {
+  const browserName = page.context().browser()?.browserType().name();
+  const viewport = page.getByTestId('publication-viewport');
+  if (browserName === 'webkit') {
     const contextMenuAllowed = await page
       .getByTestId('publication-viewport')
       .locator('iframe')
@@ -101,10 +112,19 @@ export async function createEpubHighlight(
         ),
       );
     expect(contextMenuAllowed).toBe(false);
+  } else if (browserName === 'firefox') {
+    await viewport.dispatchEvent('contextmenu');
   } else {
     await paragraph.click({ button: 'right', position: selectionPosition });
   }
   await expect(editor).toBeVisible();
+  if (style !== 'highlight') {
+    await editor
+      .getByRole('button', {
+        name: style === 'underline' ? 'Underline' : 'Strikethrough',
+      })
+      .click();
+  }
   await editor.getByRole('button', { name: 'Green' }).click();
   await editor.getByRole('textbox', { name: 'Note (optional)' }).fill(note);
   await editor.getByRole('button', { name: 'Save', exact: true }).click();

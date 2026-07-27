@@ -68,8 +68,21 @@
       }
     </div>
     <button
+      #actionsTrigger
+      mat-icon-button
+      class="sm:!hidden"
+      type="button"
+      aria-label="Toggle reader actions"
+      aria-controls="reader-actions-panel"
+      [attr.aria-expanded]="actionsOpen"
+      (click)="toggleReaderActions()"
+    >
+      <mat-icon>more_vert</mat-icon>
+    </button>
+    <button
       #searchTrigger
       mat-icon-button
+      class="!hidden sm:!inline-flex"
       type="button"
       aria-label="Open publication search"
       aria-controls="reader-search-panel"
@@ -81,6 +94,7 @@
     <button
       #bookmarksTrigger
       mat-icon-button
+      class="!hidden sm:!inline-flex"
       type="button"
       aria-label="Toggle bookmarks"
       aria-controls="reader-bookmarks-panel"
@@ -92,18 +106,39 @@
     <button
       #annotationsTrigger
       mat-icon-button
+      class="relative !hidden sm:!inline-flex"
       type="button"
       aria-label="Toggle highlights and notes"
+      [attr.aria-describedby]="
+        annotations.length > 0 ? 'reader-annotation-count' : null
+      "
       aria-controls="reader-annotations-panel"
       [attr.aria-expanded]="annotationsOpen"
       (click)="toggleAnnotations()"
     >
       <mat-icon>ink_highlighter</mat-icon>
+      @if (annotations.length > 0) {
+        <span
+          id="reader-annotation-count"
+          class="pointer-events-none absolute top-0 right-0 grid min-h-4 min-w-4 place-items-center rounded-full bg-violet-700 px-1 text-[0.625rem] leading-4 font-bold text-white"
+          data-testid="annotation-count-badge"
+        >
+          {{ annotations.length > 99 ? '99+' : annotations.length }}
+          <span class="sr-only">
+            {{
+              annotations.length === 1
+                ? 'saved annotation'
+                : 'saved annotations'
+            }}
+          </span>
+        </span>
+      }
     </button>
     @if (pageNavigation) {
       <button
         #thumbnailsTrigger
         mat-icon-button
+        class="!hidden sm:!inline-flex"
         type="button"
         aria-label="Toggle PDF page thumbnails"
         aria-controls="reader-thumbnails-panel"
@@ -116,6 +151,7 @@
     <button
       #settingsTrigger
       mat-icon-button
+      class="!hidden sm:!inline-flex"
       type="button"
       aria-label="Open reader settings"
       aria-controls="reader-settings-panel"
@@ -125,7 +161,21 @@
       <mat-icon>text_fields</mat-icon>
     </button>
     <button
+      #shortcutsTrigger
       mat-icon-button
+      class="!hidden sm:!inline-flex"
+      type="button"
+      aria-label="Open keyboard shortcuts"
+      aria-haspopup="dialog"
+      aria-controls="reader-keyboard-shortcuts-dialog"
+      [attr.aria-expanded]="shortcutsOpen"
+      (click)="toggleKeyboardShortcuts()"
+    >
+      <mat-icon>keyboard</mat-icon>
+    </button>
+    <button
+      mat-icon-button
+      class="!hidden sm:!inline-flex"
       type="button"
       [attr.aria-label]="
         immersiveMode
@@ -149,6 +199,122 @@
       </button>
     }
   </header>
+
+  @if (actionsOpen) {
+    <aside
+      #actionsPanel
+      id="reader-actions-panel"
+      data-testid="mobile-reader-actions"
+      tabindex="-1"
+      class="absolute top-14 right-0 bottom-16 z-4 w-[min(320px,90vw)] overflow-auto bg-white p-5 shadow-[-8px_0_24px_rgb(15_23_42/16%)]"
+      aria-label="Reader actions"
+    >
+      <div class="mb-4 flex items-center justify-between gap-2">
+        <div>
+          <h2 class="m-0 text-lg">Reader actions</h2>
+          <p class="m-0 text-xs text-stone-500">
+            Reading tools for this publication
+          </p>
+        </div>
+        <button
+          mat-icon-button
+          type="button"
+          aria-label="Close reader actions"
+          (click)="toggleReaderActions()"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+      <nav class="grid gap-1" aria-label="Mobile reader tools">
+        <button
+          mat-button
+          class="w-full"
+          type="button"
+          (click)="openReaderPanelFromActions('search')"
+        >
+          <mat-icon>search</mat-icon>
+          Search publication
+        </button>
+        <button
+          mat-button
+          class="w-full"
+          type="button"
+          [disabled]="bookmarkBusy || loading"
+          (click)="toggleCurrentBookmarkFromActions()"
+        >
+          <mat-icon>{{
+            currentBookmark ? 'bookmark_remove' : 'bookmark_add'
+          }}</mat-icon>
+          {{ currentBookmark ? 'Remove bookmark here' : 'Add bookmark here' }}
+        </button>
+        <button
+          mat-button
+          class="w-full"
+          type="button"
+          (click)="openReaderPanelFromActions('bookmarks')"
+        >
+          <mat-icon>bookmarks</mat-icon>
+          Bookmarks
+        </button>
+        <button
+          mat-button
+          class="w-full"
+          type="button"
+          (click)="openReaderPanelFromActions('annotations')"
+        >
+          <mat-icon>ink_highlighter</mat-icon>
+          Highlights and notes
+          @if (annotations.length > 0) {
+            <span class="ml-auto text-xs text-stone-500">
+              {{ annotations.length }}
+            </span>
+          }
+        </button>
+        @if (pageNavigation) {
+          <button
+            mat-button
+            class="w-full"
+            type="button"
+            (click)="openReaderPanelFromActions('thumbnails')"
+          >
+            <mat-icon>view_sidebar</mat-icon>
+            Page thumbnails
+          </button>
+        }
+        <button
+          mat-button
+          class="w-full"
+          type="button"
+          (click)="openReaderPanelFromActions('settings')"
+        >
+          <mat-icon>text_fields</mat-icon>
+          Reader settings
+        </button>
+        <button
+          mat-button
+          class="w-full"
+          type="button"
+          (click)="toggleKeyboardShortcuts()"
+        >
+          <mat-icon>keyboard</mat-icon>
+          Keyboard shortcuts
+        </button>
+        <button
+          mat-button
+          class="w-full"
+          type="button"
+          (click)="toggleImmersiveModeFromActions()"
+        >
+          <mat-icon>{{
+            immersiveMode ? 'fullscreen_exit' : 'fullscreen'
+          }}</mat-icon>
+          {{
+            immersiveMode ? 'Exit immersive reading' : 'Enter immersive reading'
+          }}
+        </button>
+      </nav>
+    </aside>
+  }
 
   @if (immersiveError) {
     <p
@@ -265,6 +431,7 @@
   }
 
   @if (annotationsOpen) {
+    @let shownAnnotations = filteredAnnotations;
     <aside
       #annotationsPanel
       id="reader-annotations-panel"
@@ -272,72 +439,303 @@
       class="absolute top-14 bottom-16 left-0 z-4 w-[min(400px,90vw)] overflow-auto bg-white p-6 shadow-[8px_0_24px_rgb(15_23_42/16%)]"
       aria-label="Highlights and notes"
     >
-      <div class="mb-4 flex items-center justify-between gap-2">
-        <h2 class="m-0">Highlights &amp; notes</h2>
-        <button
-          mat-icon-button
-          type="button"
-          aria-label="Close highlights and notes"
-          (click)="toggleAnnotations()"
-        >
-          <mat-icon>close</mat-icon>
-        </button>
+      <div
+        class="mb-4 bg-white"
+        style="
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          padding-bottom: 0.75rem;
+          border-bottom: 1px solid rgb(231 229 228);
+        "
+      >
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="m-0">Annotations</h2>
+            <p class="m-0 text-xs text-stone-500">
+              {{ annotations.length }}
+              {{ annotations.length === 1 ? 'saved item' : 'saved items' }}
+            </p>
+          </div>
+          <div class="flex items-center gap-1">
+            @if (annotations.length > 0) {
+              <button
+                mat-button
+                type="button"
+                [disabled]="
+                  annotationExportBusy || shownAnnotations.length === 0
+                "
+                [attr.aria-label]="
+                  'Export ' +
+                  shownAnnotations.length +
+                  ' shown ' +
+                  (shownAnnotations.length === 1
+                    ? 'annotation'
+                    : 'annotations') +
+                  ' as Markdown'
+                "
+                (click)="exportShownAnnotations()"
+              >
+                <mat-icon>download</mat-icon>
+                {{ annotationExportBusy ? 'Exporting…' : 'Export shown' }}
+              </button>
+            }
+            <button
+              mat-icon-button
+              type="button"
+              aria-label="Close highlights and notes"
+              (click)="toggleAnnotations()"
+            >
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+        </div>
       </div>
       <p class="text-sm text-stone-600">
-        Select text, then right-click it to create a highlight or attach a note.
+        Select text, then right-click it to highlight, underline, strike
+        through, or add a note.
       </p>
       @if (annotationError) {
         <p class="text-red-700" role="alert">{{ annotationError }}</p>
       }
+      @if (annotationExportMessage) {
+        <p class="text-sm text-emerald-800" role="status" aria-live="polite">
+          {{ annotationExportMessage }}
+        </p>
+      }
       @if (annotations.length === 0) {
-        <p class="text-stone-600">No highlights yet.</p>
+        <p class="text-stone-600">No annotations yet.</p>
       } @else {
-        <div class="grid">
-          @for (annotation of annotations; track annotation.id) {
-            <article class="border-b border-stone-200 py-3">
-              <div class="flex items-start gap-2">
-                <span
-                  class="mt-1 h-4 w-1 shrink-0 rounded-full"
-                  [class.bg-yellow-400]="annotation.color === 'yellow'"
-                  [class.bg-green-400]="annotation.color === 'green'"
-                  [class.bg-blue-400]="annotation.color === 'blue'"
-                  [class.bg-pink-400]="annotation.color === 'pink'"
-                  aria-hidden="true"
-                ></span>
+        <label class="mb-3 grid gap-1" for="annotation-search">
+          <span class="text-sm font-medium">Find in this book</span>
+          <span class="relative">
+            <mat-icon
+              class="pointer-events-none absolute top-2 left-2 text-stone-500"
+              aria-hidden="true"
+            >
+              search
+            </mat-icon>
+            <input
+              #annotationSearchInput
+              id="annotation-search"
+              class="w-full rounded-lg border border-stone-400 py-2 pl-10"
+              style="padding-right: 2.75rem"
+              name="annotationQuery"
+              type="search"
+              autocomplete="off"
+              placeholder="Search quotes, notes, or locations"
+              [(ngModel)]="annotationQuery"
+            />
+            @if (annotationQuery) {
+              <button
+                mat-icon-button
+                type="button"
+                style="
+                  position: absolute;
+                  top: 0;
+                  right: 0;
+                  width: 2.5rem;
+                  height: 2.5rem;
+                "
+                aria-label="Clear annotation search"
+                (click)="clearAnnotationSearch()"
+              >
+                <mat-icon>close</mat-icon>
+              </button>
+            }
+          </span>
+        </label>
+        <label
+          class="mb-3 flex items-center justify-between gap-3 text-sm"
+          for="annotation-sort"
+        >
+          <span class="font-medium">Order annotations</span>
+          <select
+            id="annotation-sort"
+            class="min-w-0 rounded-lg border border-stone-400 bg-white px-3 py-2"
+            name="annotationSort"
+            [(ngModel)]="annotationSort"
+          >
+            <option value="reading-order">Reading order</option>
+            <option value="updated-desc">Recently updated</option>
+          </select>
+        </label>
+        <div
+          class="mb-3 flex flex-wrap gap-2"
+          role="group"
+          aria-label="Filter annotations"
+        >
+          <button
+            class="rounded-full border border-stone-300 px-3 py-1 text-sm"
+            type="button"
+            [class.bg-stone-900]="annotationFilter === 'all'"
+            [class.text-white]="annotationFilter === 'all'"
+            [attr.aria-pressed]="annotationFilter === 'all'"
+            (click)="setAnnotationFilter('all')"
+          >
+            All {{ annotationCount('all') }}
+          </button>
+          <button
+            class="rounded-full border border-stone-300 px-3 py-1 text-sm"
+            type="button"
+            [class.bg-stone-900]="annotationFilter === 'highlight'"
+            [class.text-white]="annotationFilter === 'highlight'"
+            [attr.aria-pressed]="annotationFilter === 'highlight'"
+            (click)="setAnnotationFilter('highlight')"
+          >
+            Highlights {{ annotationCount('highlight') }}
+          </button>
+          <button
+            class="rounded-full border border-stone-300 px-3 py-1 text-sm"
+            type="button"
+            [class.bg-stone-900]="annotationFilter === 'underline'"
+            [class.text-white]="annotationFilter === 'underline'"
+            [attr.aria-pressed]="annotationFilter === 'underline'"
+            (click)="setAnnotationFilter('underline')"
+          >
+            Underlines {{ annotationCount('underline') }}
+          </button>
+          <button
+            class="rounded-full border border-stone-300 px-3 py-1 text-sm"
+            type="button"
+            [class.bg-stone-900]="annotationFilter === 'strikethrough'"
+            [class.text-white]="annotationFilter === 'strikethrough'"
+            [attr.aria-pressed]="annotationFilter === 'strikethrough'"
+            (click)="setAnnotationFilter('strikethrough')"
+          >
+            Strikethrough {{ annotationCount('strikethrough') }}
+          </button>
+          <button
+            class="rounded-full border border-stone-300 px-3 py-1 text-sm"
+            type="button"
+            [class.bg-stone-900]="annotationFilter === 'notes'"
+            [class.text-white]="annotationFilter === 'notes'"
+            [attr.aria-pressed]="annotationFilter === 'notes'"
+            (click)="setAnnotationFilter('notes')"
+          >
+            Notes {{ annotationCount('notes') }}
+          </button>
+        </div>
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <p
+            class="m-0 text-sm text-stone-600"
+            role="status"
+            aria-live="polite"
+            data-testid="annotation-result-summary"
+          >
+            @if (shownAnnotations.length === annotations.length) {
+              {{ annotations.length }}
+              {{ annotations.length === 1 ? 'annotation' : 'annotations' }}
+            } @else {
+              {{ shownAnnotations.length }} of {{ annotations.length }} shown
+            }
+          </p>
+          @if (annotationOverviewCustomized) {
+            <button
+              mat-button
+              type="button"
+              data-testid="reset-annotation-overview"
+              (click)="resetAnnotationOverview()"
+            >
+              Reset view
+            </button>
+          }
+        </div>
+        @if (shownAnnotations.length === 0) {
+          <div
+            class="rounded-lg border border-stone-200 bg-stone-50 p-4 text-sm text-stone-600"
+          >
+            <p class="mt-0 mb-2">
+              No annotations match this search and filter.
+            </p>
+            <button
+              mat-button
+              type="button"
+              (click)="resetAnnotationOverview()"
+            >
+              Show all annotations
+            </button>
+          </div>
+        } @else {
+          <div class="grid gap-2">
+            @for (annotation of shownAnnotations; track annotation.id) {
+              <article
+                class="rounded-lg border border-stone-200 border-l-4 bg-stone-50 p-3"
+                [class.border-l-yellow-500]="annotation.color === 'yellow'"
+                [class.border-l-green-500]="annotation.color === 'green'"
+                [class.border-l-blue-500]="annotation.color === 'blue'"
+                [class.border-l-pink-500]="annotation.color === 'pink'"
+              >
+                <div class="mb-2 flex items-center gap-2 text-xs">
+                  <span
+                    class="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 font-medium text-stone-700"
+                  >
+                    <mat-icon class="text-base" aria-hidden="true">
+                      {{ annotationStyleIcon(annotationStyleOf(annotation)) }}
+                    </mat-icon>
+                    {{ annotationStyleLabel(annotationStyleOf(annotation)) }}
+                  </span>
+                  <span
+                    class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-stone-500"
+                  >
+                    {{ annotationLocationLabel(annotation) }}
+                  </span>
+                </div>
                 <button
-                  class="min-w-0 flex-1 cursor-pointer border-0 bg-transparent text-left text-inherit"
+                  class="w-full cursor-pointer rounded border-0 bg-transparent p-0 text-left text-inherit hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2"
                   type="button"
+                  [attr.aria-label]="
+                    'Go to ' + annotationLocationLabel(annotation)
+                  "
                   (click)="goToAnnotation(annotation)"
                 >
                   <q class="block">{{ annotation.locator.text?.highlight }}</q>
-                  @if (annotation.note) {
-                    <span class="mt-2 block text-sm text-stone-600">
-                      {{ annotation.note }}
+                </button>
+                @if (annotation.note) {
+                  <div
+                    class="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-stone-700"
+                  >
+                    <span
+                      class="mb-1 block text-xs font-semibold text-amber-800"
+                    >
+                      Note
                     </span>
-                  }
-                </button>
-                <button
-                  mat-icon-button
-                  type="button"
-                  aria-label="Edit annotation"
-                  [disabled]="annotationBusy"
-                  (click)="beginEditAnnotation(annotation)"
-                >
-                  <mat-icon>edit_note</mat-icon>
-                </button>
-                <button
-                  mat-icon-button
-                  type="button"
-                  aria-label="Delete annotation"
-                  [disabled]="annotationBusy"
-                  (click)="removeAnnotation(annotation)"
-                >
-                  <mat-icon>delete</mat-icon>
-                </button>
-              </div>
-            </article>
-          }
-        </div>
+                    {{ annotation.note }}
+                  </div>
+                }
+                <div class="mt-2 flex items-center justify-end gap-1">
+                  <button
+                    mat-button
+                    type="button"
+                    [disabled]="annotationBusy"
+                    (click)="goToAnnotation(annotation)"
+                  >
+                    <mat-icon>arrow_forward</mat-icon>
+                    Go to
+                  </button>
+                  <button
+                    mat-icon-button
+                    type="button"
+                    aria-label="Edit annotation"
+                    [disabled]="annotationBusy"
+                    (click)="beginEditAnnotation(annotation)"
+                  >
+                    <mat-icon>edit_note</mat-icon>
+                  </button>
+                  <button
+                    mat-icon-button
+                    type="button"
+                    aria-label="Delete annotation"
+                    [disabled]="annotationBusy"
+                    (click)="removeAnnotation(annotation)"
+                  >
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                </div>
+              </article>
+            }
+          </div>
+        }
       }
     </aside>
   }
@@ -394,7 +792,7 @@
             <button
               class="min-w-0 flex-1 cursor-pointer border-0 bg-transparent py-3 text-left text-inherit"
               type="button"
-              (click)="goTo(item.entry)"
+              (click)="goToTocItem(item)"
             >
               <span>{{ item.displayLabel }}</span>
             </button>
@@ -739,6 +1137,16 @@
         <a mat-stroked-button routerLink="/library">Return to library</a>
       </div>
     }
+    @if (zoomIndicatorPercent !== null) {
+      <output
+        data-testid="reader-zoom-indicator"
+        class="pointer-events-none absolute top-5 left-1/2 z-6 -translate-x-1/2 rounded-full bg-slate-950/85 px-4 py-2 text-sm font-semibold text-white shadow-lg"
+        role="status"
+        aria-live="polite"
+      >
+        {{ zoomIndicatorPercent }}%
+      </output>
+    }
     <div
       #viewport
       data-testid="publication-viewport"
@@ -753,10 +1161,49 @@
       (touchstart)="onPublicationTouchStart($event)"
       (touchend)="onPublicationTouchEnd($event)"
       (touchcancel)="onPublicationTouchCancel()"
+      (contextmenu)="onPublicationContextMenu($event)"
     ></div>
   </section>
 
-  @if (pendingSelection) {
+  @if (annotationStatus) {
+    <section
+      class="absolute right-4 bottom-20 z-9 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-xl border bg-white px-4 py-3 shadow-xl"
+      [class.border-red-300]="annotationStatusIsError"
+      [class.text-red-800]="annotationStatusIsError"
+      [class.border-stone-300]="!annotationStatusIsError"
+      data-testid="annotation-status"
+    >
+      <span
+        class="min-w-0 flex-1"
+        [attr.role]="annotationStatusIsError ? 'alert' : 'status'"
+        [attr.aria-live]="annotationStatusIsError ? 'assertive' : 'polite'"
+        aria-atomic="true"
+      >
+        {{ annotationStatus }}
+      </span>
+      @if (deletedAnnotation) {
+        <button
+          mat-button
+          type="button"
+          [disabled]="annotationBusy"
+          (click)="undoAnnotationRemoval()"
+        >
+          {{ annotationBusy ? 'Restoring…' : 'Undo' }}
+        </button>
+      }
+      <button
+        mat-icon-button
+        type="button"
+        aria-label="Dismiss annotation message"
+        [disabled]="annotationBusy"
+        (click)="dismissAnnotationStatus()"
+      >
+        <mat-icon>close</mat-icon>
+      </button>
+    </section>
+  }
+
+  @if (annotationEditorOpen && pendingSelection) {
     <section
       class="absolute right-4 bottom-20 left-4 z-8 mx-auto grid max-w-xl gap-4 rounded-2xl bg-white p-5 shadow-2xl"
       role="dialog"
@@ -767,7 +1214,7 @@
     >
       <div>
         <h2 id="annotation-editor-title" class="mt-0 mb-2 text-lg">
-          {{ editingAnnotation ? 'Edit highlight' : 'New highlight' }}
+          {{ editingAnnotation ? 'Edit annotation' : 'New annotation' }}
         </h2>
         <q class="block max-h-24 overflow-auto text-stone-700">
           {{ pendingSelection.locator.text?.highlight }}
@@ -775,7 +1222,46 @@
       </div>
 
       <fieldset class="border-0 p-0">
-        <legend class="mb-2 font-medium">Highlight color</legend>
+        <legend class="mb-2 font-medium">Style</legend>
+        <div class="grid grid-cols-3 gap-2">
+          <button
+            class="grid min-w-0 justify-items-center gap-1 rounded-lg border border-stone-300 p-2"
+            type="button"
+            [class.bg-stone-100]="annotationStyle === 'highlight'"
+            [class.border-stone-900]="annotationStyle === 'highlight'"
+            [attr.aria-pressed]="annotationStyle === 'highlight'"
+            (click)="annotationStyle = 'highlight'"
+          >
+            <mat-icon>ink_highlighter</mat-icon>
+            <span class="text-xs">Highlight</span>
+          </button>
+          <button
+            class="grid min-w-0 justify-items-center gap-1 rounded-lg border border-stone-300 p-2"
+            type="button"
+            [class.bg-stone-100]="annotationStyle === 'underline'"
+            [class.border-stone-900]="annotationStyle === 'underline'"
+            [attr.aria-pressed]="annotationStyle === 'underline'"
+            (click)="annotationStyle = 'underline'"
+          >
+            <mat-icon>format_underlined</mat-icon>
+            <span class="text-xs">Underline</span>
+          </button>
+          <button
+            class="grid min-w-0 justify-items-center gap-1 rounded-lg border border-stone-300 p-2"
+            type="button"
+            [class.bg-stone-100]="annotationStyle === 'strikethrough'"
+            [class.border-stone-900]="annotationStyle === 'strikethrough'"
+            [attr.aria-pressed]="annotationStyle === 'strikethrough'"
+            (click)="annotationStyle = 'strikethrough'"
+          >
+            <mat-icon>strikethrough_s</mat-icon>
+            <span class="text-xs">Strikethrough</span>
+          </button>
+        </div>
+      </fieldset>
+
+      <fieldset class="border-0 p-0">
+        <legend class="mb-2 font-medium">Annotation color</legend>
         <div class="grid grid-cols-4 gap-2">
           <button
             class="rounded-lg border border-stone-300 p-2"
@@ -839,7 +1325,7 @@
             [disabled]="annotationBusy"
             (click)="removeEditingAnnotation()"
           >
-            {{ annotationBusy ? 'Deleting…' : 'Delete highlight' }}
+            {{ annotationBusy ? 'Deleting…' : 'Delete annotation' }}
           </button>
         }
         <button
@@ -860,6 +1346,68 @@
         </button>
       </div>
     </section>
+  }
+
+  @if (shortcutsOpen) {
+    <div
+      class="absolute inset-0 z-10 grid place-content-center overflow-auto bg-slate-950/55 p-4"
+      role="presentation"
+    >
+      <section
+        #shortcutsDialog
+        id="reader-keyboard-shortcuts-dialog"
+        class="w-[min(34rem,calc(100vw-2rem))] max-h-[calc(100vh-2rem)] overflow-auto rounded-2xl bg-white p-6 shadow-2xl"
+        tabindex="-1"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reader-keyboard-shortcuts-title"
+        cdkTrapFocus
+        [cdkTrapFocusAutoCapture]="true"
+      >
+        <div class="mb-5 flex items-start justify-between gap-3">
+          <div>
+            <h2 id="reader-keyboard-shortcuts-title" class="m-0 text-xl">
+              Keyboard shortcuts
+            </h2>
+            <p class="mb-0 mt-1 text-sm text-stone-600">
+              These commands work in PDF and EPUB, including while the EPUB page
+              has focus.
+            </p>
+          </div>
+          <button
+            mat-icon-button
+            type="button"
+            aria-label="Close keyboard shortcuts"
+            (click)="toggleKeyboardShortcuts()"
+          >
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+        <dl class="m-0 grid gap-1">
+          @for (shortcut of keyboardShortcuts; track $index) {
+            <div
+              class="grid grid-cols-[minmax(8rem,auto)_minmax(0,1fr)] items-center gap-4 border-b border-stone-200 py-2.5 last:border-b-0"
+            >
+              <dt class="flex flex-wrap items-center gap-1.5">
+                @for (key of shortcut.keys; track $index) {
+                  @if (!$first) {
+                    <span class="text-xs text-stone-400" aria-hidden="true"
+                      >+</span
+                    >
+                  }
+                  <kbd
+                    class="min-w-7 rounded-md border border-stone-300 bg-stone-100 px-2 py-1 text-center font-mono text-xs font-semibold text-stone-800 shadow-sm"
+                  >
+                    {{ key }}
+                  </kbd>
+                }
+              </dt>
+              <dd class="m-0 text-sm text-stone-700">{{ shortcut.label }}</dd>
+            </div>
+          }
+        </dl>
+      </section>
+    </div>
   }
 
   @if (passwordChallenge) {
@@ -952,7 +1500,7 @@
   @if (!errorMessage) {
     <footer
       data-testid="reader-footer"
-      class="z-2 flex min-h-6 flex-wrap items-center justify-center gap-x-2 bg-white/95 px-2 shadow-[0_1px_10px_rgb(15_23_42/10%)]"
+      class="z-2 flex min-h-4 flex-wrap items-center justify-center gap-x-1 bg-white/95 px-1 shadow-[0_1px_10px_rgb(15_23_42/10%)]"
     >
       @if (navigationError) {
         <span class="w-full text-center text-sm text-red-700" role="alert">
@@ -978,33 +1526,86 @@
         </span>
       }
       @if (progressSeekingAvailable) {
-        <label
-          class="flex min-w-10 max-w-3xl flex-1 items-center"
-          for="reader-progress"
-        >
-          <span class="sr-only">Book progress</span>
-          <input
-            id="reader-progress"
-            data-testid="reader-progress-slider"
-            class="h-6 min-h-6 min-w-0 flex-1 cursor-pointer"
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            [value]="overallProgressPercent"
-            [disabled]="navigationBusy"
-            [attr.aria-valuetext]="overallProgressPercent + '% of book'"
-            [attr.aria-describedby]="pageStatus ? 'reader-page-status' : null"
-            (change)="seekToProgress($event)"
-          />
-        </label>
+        <div class="flex min-w-10 max-w-3xl flex-1 items-center">
+          <label class="sr-only" for="reader-progress">Book progress</label>
+          <div
+            class="reader-progress-slider-shell relative flex min-w-0 flex-1 items-center"
+          >
+            <input
+              id="reader-progress"
+              data-testid="reader-progress-slider"
+              class="reader-progress-slider relative z-0 min-w-0 flex-1 cursor-pointer"
+              type="range"
+              min="0"
+              max="100"
+              step="0.01"
+              [value]="displayedProgressPercent"
+              #readerProgressSlider
+              [disabled]="navigationBusy"
+              [attr.aria-valuetext]="displayedProgressPercentLabel"
+              [attr.aria-describedby]="pageStatus ? 'reader-page-status' : null"
+              [style.background-image]="progressSliderTrackBackground"
+              (input)="onProgressSliderInput($event)"
+              (change)="seekToProgress($event)"
+            />
+            @if (hasProgressMilestones) {
+              <div
+                class="reader-progress-milestones pointer-events-none absolute inset-x-0 top-1/2 z-10 -translate-y-1/2"
+                aria-label="Progress chapter milestones"
+                role="group"
+              >
+                @for (
+                  milestone of chapterProgressMilestones;
+                  track milestone.key;
+                  let isFirst = $first;
+                  let isLast = $last
+                ) {
+                  <button
+                    type="button"
+                    class="reader-progress-milestone pointer-events-auto absolute top-1/2 inline-flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 disabled:cursor-not-allowed disabled:opacity-50"
+                    data-testid="reader-progress-milestone"
+                    [style.left.px]="getMilestoneLeftPx(milestone)"
+                    [attr.aria-label]="
+                      `Go to ${milestone.label} (${milestone.value}% of book)`
+                    "
+                    [attr.aria-current]="
+                      activeProgressMilestoneKey === milestone.key
+                        ? 'location'
+                        : null
+                    "
+                    [class.reader-progress-milestone-reached]="
+                      isProgressMilestoneReached(milestone)
+                    "
+                    [class.reader-progress-milestone-active]="
+                      activeProgressMilestoneKey === milestone.key
+                    "
+                    [class.reader-progress-milestone-first]="isFirst"
+                    [class.reader-progress-milestone-last]="isLast"
+                    [disabled]="loading"
+                    (click)="seekToChapterMilestone(milestone, $event)"
+                  >
+                    <span
+                      class="reader-progress-milestone-inner pointer-events-none rounded-full"
+                    ></span>
+                    <span
+                      class="reader-progress-milestone-tooltip pointer-events-none"
+                      aria-hidden="true"
+                    >
+                      {{ milestone.label }} · {{ milestone.value }}%
+                    </span>
+                  </button>
+                }
+              </div>
+            }
+          </div>
+        </div>
       }
       @if (overallProgressPercent !== null) {
         <span
           data-testid="reader-overall-progress"
           class="text-center text-xs whitespace-nowrap text-stone-500"
         >
-          {{ overallProgressPercent }}% of book
+          {{ displayedOverallProgressPercentText }}% of book
         </span>
       }
     </footer>

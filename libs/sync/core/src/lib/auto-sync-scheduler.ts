@@ -14,6 +14,8 @@ export type AutoSyncReason =
   | 'online'
   | 'destination-selected';
 
+export type AutoSyncStatusReason = AutoSyncReason | 'manual';
+
 export type AutoSyncPhase =
   | 'idle'
   | 'scheduled'
@@ -25,7 +27,7 @@ export type AutoSyncPhase =
 
 export interface AutoSyncStatus {
   phase: AutoSyncPhase;
-  reason?: AutoSyncReason;
+  reason?: AutoSyncStatusReason;
   scheduledFor?: string;
   lastAttemptAt?: string;
   lastSuccessAt?: string;
@@ -49,6 +51,7 @@ export interface AutoSyncSchedulerOptions {
   periodicMinimumIntervalMs?: number;
   environment?: AutoSyncEnvironment;
   rateLimitStore?: AutoSyncRateLimitStore;
+  historyStore?: AutoSyncHistoryStore;
 }
 
 export interface AutoSyncRateLimitStore {
@@ -56,6 +59,16 @@ export interface AutoSyncRateLimitStore {
   write(provider: SyncProviderKind, timestamp: number): void;
   readRetryAfter(provider: SyncProviderKind): number | null;
   writeRetryAfter(provider: SyncProviderKind, timestamp: number | null): void;
+}
+
+export interface AutoSyncHistory {
+  lastSuccessAt: string;
+  lastResult: SyncWorkerResult;
+}
+
+export interface AutoSyncHistoryStore {
+  read(provider: SyncProviderKind): AutoSyncHistory | null;
+  write(provider: SyncProviderKind, history: AutoSyncHistory | null): void;
 }
 
 const DEFAULT_QUIET_INTERVAL_MS = 30_000;
@@ -75,11 +88,13 @@ export class AutoSyncScheduler {
   private readonly periodicMinimumIntervalMs: number;
   private readonly environment: AutoSyncEnvironment;
   private readonly rateLimitStore: AutoSyncRateLimitStore;
+  private readonly historyStore: AutoSyncHistoryStore;
   private readonly listeners = new Set<(status: AutoSyncStatus) => void>();
   private readonly providerRetryAfterAt: Partial<
     Record<SyncProviderKind, number>
   > = {};
   private readonly loadedProviderRetryAfter = new Set<SyncProviderKind>();
+  private historyProvider: SyncProviderKind | null = null;
 
   private statusValue: AutoSyncStatus = { phase: 'idle' };
   private started = false;
@@ -108,13 +123,26 @@ export class AutoSyncScheduler {
     this.environment = options.environment ?? browserEnvironment();
     this.rateLimitStore =
       options.rateLimitStore ?? browserAutoSyncRateLimitStore();
+    this.historyStore = options.historyStore ?? browserAutoSyncHistoryStore();
+    const provider = this.selection.current();
+    if (provider) {
+      this.activateHistory(provider);
+    }
   }
 
   status(): AutoSyncStatus {
+    const provider = this.selection.current();
+    if (provider) {
+      this.activateHistory(provider);
+    }
     return this.statusValue;
   }
 
   subscribe(listener: (status: AutoSyncStatus) => void): () => void {
+    const provider = this.selection.current();
+    if (provider) {
+      this.activateHistory(provider);
+    }
     this.listeners.add(listener);
     listener(this.statusValue);
     return () => this.listeners.delete(listener);
@@ -126,6 +154,10 @@ export class AutoSyncScheduler {
     }
 
     this.started = true;
+    const provider = this.selection.current();
+    if (provider) {
+      this.activateHistory(provider);
+    }
     this.unsubscribeActivity = this.activity.subscribe((change) => {
       if (change.kind === 'book') {
         this.requestImmediate('book-change');
@@ -198,11 +230,41 @@ export class AutoSyncScheduler {
     return true;
   }
 
+  recordManualSuccess(
+    result: SyncWorkerResult,
+    completedAt = this.environment.now(),
+  ): void {
+    const provider = this.selection.current();
+    if (!provider) {
+      return;
+    }
+    this.activateHistory(provider);
+    this.clearScheduledTimer();
+    this.queuedReason = null;
+    this.recordSuccess(provider, result, completedAt, 'manual');
+  }
+
+  clearHistory(provider: SyncProviderKind): void {
+    try {
+      this.historyStore.write(provider, null);
+    } catch {
+      // Sync history is presentation state and cannot affect local data.
+    }
+    if (this.historyProvider === provider) {
+      this.updateStatus({
+        lastAttemptAt: undefined,
+        lastSuccessAt: undefined,
+        lastResult: undefined,
+      });
+    }
+  }
+
   requestImmediate(reason: Exclude<AutoSyncReason, 'reading-quiet'>): void {
     const provider = this.selection.current();
     if (!this.started || !provider) {
       return;
     }
+    this.activateHistory(provider);
     if (!this.environment.isOnline()) {
       this.queuedReason = mergeReasons(this.queuedReason, reason);
       this.clearScheduledTimer();
@@ -231,6 +293,7 @@ export class AutoSyncScheduler {
     if (!this.started || !provider) {
       return;
     }
+    this.activateHistory(provider);
     if (!this.environment.isOnline()) {
       this.queuedReason = mergeReasons(this.queuedReason, 'reading-quiet');
       this.clearScheduledTimer();
@@ -358,14 +421,7 @@ export class AutoSyncScheduler {
           // Persistence cannot turn a successful provider sync into a failure.
         }
       }
-      this.updateStatus({
-        phase: 'idle',
-        reason,
-        lastSuccessAt: new Date(completedAt).toISOString(),
-        lastResult: result,
-        transferProgress: undefined,
-        errorMessage: undefined,
-      });
+      this.recordSuccess(provider, result, completedAt, reason);
     } catch (error) {
       if (!this.started) {
         return;
@@ -522,6 +578,53 @@ export class AutoSyncScheduler {
     }
   }
 
+  private activateHistory(provider: SyncProviderKind): void {
+    if (this.historyProvider === provider) {
+      return;
+    }
+    this.historyProvider = provider;
+    let history: AutoSyncHistory | null = null;
+    try {
+      history = this.historyStore.read(provider);
+    } catch {
+      // Missing history persistence never affects synchronization.
+    }
+    this.updateStatus({
+      lastAttemptAt: undefined,
+      lastSuccessAt: history?.lastSuccessAt,
+      lastResult: history?.lastResult,
+    });
+  }
+
+  private recordSuccess(
+    provider: SyncProviderKind,
+    result: SyncWorkerResult,
+    completedAt: number,
+    reason: AutoSyncStatusReason,
+  ): void {
+    const lastSuccessAt = new Date(completedAt).toISOString();
+    const history: AutoSyncHistory = {
+      lastSuccessAt,
+      lastResult: { ...result },
+    };
+    try {
+      this.historyStore.write(provider, history);
+    } catch {
+      // Sync history is presentation state and cannot affect success.
+    }
+    this.updateStatus({
+      phase: 'idle',
+      reason,
+      scheduledFor: undefined,
+      lastAttemptAt:
+        reason === 'manual' ? lastSuccessAt : this.statusValue.lastAttemptAt,
+      lastSuccessAt,
+      lastResult: history.lastResult,
+      transferProgress: undefined,
+      errorMessage: undefined,
+    });
+  }
+
   private updateStatus(status: Partial<AutoSyncStatus>): void {
     this.statusValue = { ...this.statusValue, ...status };
     for (const listener of this.listeners) {
@@ -613,6 +716,63 @@ function browserAutoSyncRateLimitStore(): AutoSyncRateLimitStore {
       }
     },
   };
+}
+
+function browserAutoSyncHistoryStore(): AutoSyncHistoryStore {
+  const historyKey = (provider: SyncProviderKind) =>
+    `omnia-reader.auto-sync.v1.history.${provider}`;
+  return {
+    read: (provider) => {
+      try {
+        const value = globalThis.localStorage?.getItem(historyKey(provider));
+        if (!value) {
+          return null;
+        }
+        const history: unknown = JSON.parse(value);
+        return isAutoSyncHistory(history) ? history : null;
+      } catch {
+        return null;
+      }
+    },
+    write: (provider, history) => {
+      try {
+        if (history) {
+          globalThis.localStorage?.setItem(
+            historyKey(provider),
+            JSON.stringify(history),
+          );
+        } else {
+          globalThis.localStorage?.removeItem(historyKey(provider));
+        }
+      } catch {
+        // History remains available in memory when storage is unavailable.
+      }
+    },
+  };
+}
+
+function isAutoSyncHistory(value: unknown): value is AutoSyncHistory {
+  if (!isRecord(value) || !isRecord(value['lastResult'])) {
+    return false;
+  }
+  const lastSuccessAt = value['lastSuccessAt'];
+  const result = value['lastResult'];
+  return (
+    typeof lastSuccessAt === 'string' &&
+    Number.isFinite(Date.parse(lastSuccessAt)) &&
+    isSyncCount(result['pulled']) &&
+    isSyncCount(result['pushed']) &&
+    isSyncCount(result['conflicts']) &&
+    isSyncCount(result['rejected'])
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSyncCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function providerRetryAfterSeconds(error: unknown): number | null {

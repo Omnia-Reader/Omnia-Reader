@@ -3,6 +3,7 @@ import type { PublicationAnnotation } from './publication-annotation';
 import type { PublicationBookmark } from './publication-bookmark';
 import type {
   PublicationReadingDirection,
+  ReaderCommand,
   ReaderNavigationDirection,
   ReaderZoomDirection,
 } from './reader-navigation';
@@ -112,6 +113,9 @@ export interface ReaderEngine {
   onAnnotationActivated?(listener: (annotationId: string) => void): () => void;
   onNavigationRequested?(
     listener: (direction: ReaderNavigationDirection) => void,
+  ): () => void;
+  onCommandRequested?(
+    listener: (command: ReaderCommand) => boolean,
   ): () => void;
   onZoomRequested?(
     listener: (direction: ReaderZoomDirection) => void,

@@ -6,6 +6,8 @@ import {
 import { vi } from 'vitest';
 import {
   AutoSyncEnvironment,
+  AutoSyncHistory,
+  AutoSyncHistoryStore,
   AutoSyncRateLimitStore,
   AutoSyncScheduler,
 } from './auto-sync-scheduler';
@@ -171,6 +173,133 @@ describe('AutoSyncScheduler', () => {
     secondEnvironment.advance(1);
     await flushPromises();
     expect(secondSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('restores the last successful result across scheduler restarts', async () => {
+    const historyStore = new MemoryHistoryStore();
+    const firstEnvironment = new FakeEnvironment(1_000);
+    const firstScheduler = createScheduler(
+      firstEnvironment,
+      new SyncActivityNotifier(),
+      vi.fn().mockResolvedValue({
+        pulled: 2,
+        pushed: 3,
+        conflicts: 1,
+        rejected: 0,
+      }),
+      new MemoryRateLimitStore(),
+      historyStore,
+    );
+
+    firstScheduler.start();
+    firstEnvironment.advance(0);
+    await flushPromises();
+    firstScheduler.stop();
+
+    const secondScheduler = createScheduler(
+      new FakeEnvironment(2_000),
+      new SyncActivityNotifier(),
+      vi.fn().mockResolvedValue(EMPTY_RESULT),
+      new MemoryRateLimitStore(),
+      historyStore,
+    );
+
+    expect(secondScheduler.status()).toMatchObject({
+      phase: 'idle',
+      lastSuccessAt: new Date(1_000).toISOString(),
+      lastResult: {
+        pulled: 2,
+        pushed: 3,
+        conflicts: 1,
+        rejected: 0,
+      },
+    });
+  });
+
+  it('records manual success globally and clears history for a new destination', () => {
+    const environment = new FakeEnvironment(5_000);
+    const historyStore = new MemoryHistoryStore();
+    const scheduler = createScheduler(
+      environment,
+      new SyncActivityNotifier(),
+      vi.fn(),
+      new MemoryRateLimitStore(),
+      historyStore,
+    );
+
+    scheduler.recordManualSuccess({
+      pulled: 4,
+      pushed: 1,
+      conflicts: 0,
+      rejected: 2,
+    });
+
+    expect(scheduler.status()).toMatchObject({
+      phase: 'idle',
+      reason: 'manual',
+      lastAttemptAt: new Date(5_000).toISOString(),
+      lastSuccessAt: new Date(5_000).toISOString(),
+      lastResult: {
+        pulled: 4,
+        pushed: 1,
+        conflicts: 0,
+        rejected: 2,
+      },
+    });
+    expect(historyStore.read('git')).toEqual({
+      lastSuccessAt: new Date(5_000).toISOString(),
+      lastResult: {
+        pulled: 4,
+        pushed: 1,
+        conflicts: 0,
+        rejected: 2,
+      },
+    });
+
+    scheduler.clearHistory('git');
+
+    expect(scheduler.status().lastSuccessAt).toBeUndefined();
+    expect(scheduler.status().lastResult).toBeUndefined();
+    expect(historyStore.read('git')).toBeNull();
+  });
+
+  it('ignores malformed persisted synchronization history', () => {
+    const localStorage = {
+      getItem: vi.fn().mockReturnValue(
+        JSON.stringify({
+          lastSuccessAt: 'not-a-date',
+          lastResult: {
+            pulled: -1,
+            pushed: 0,
+            conflicts: 0,
+            rejected: 0,
+          },
+        }),
+      ),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    };
+    vi.stubGlobal('localStorage', localStorage);
+    try {
+      const scheduler = new AutoSyncScheduler(
+        { synchronize: vi.fn().mockResolvedValue(EMPTY_RESULT) },
+        {
+          current: () => 'git',
+          select: vi.fn(),
+          clear: vi.fn(),
+        },
+        new SyncActivityNotifier(),
+        {
+          environment: new FakeEnvironment(),
+          rateLimitStore: new MemoryRateLimitStore(),
+        },
+      );
+
+      expect(scheduler.status().lastSuccessAt).toBeUndefined();
+      expect(scheduler.status().lastResult).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('surfaces automatic failures without throwing into local activity', async () => {
@@ -411,6 +540,7 @@ function createScheduler(
   activity: SyncActivityNotifier,
   synchronize: SyncWorker['synchronize'],
   rateLimitStore: AutoSyncRateLimitStore = new MemoryRateLimitStore(),
+  historyStore: AutoSyncHistoryStore = new MemoryHistoryStore(),
 ): AutoSyncScheduler {
   return new AutoSyncScheduler(
     { synchronize },
@@ -425,6 +555,7 @@ function createScheduler(
       quietIntervalMs: 30_000,
       periodicMinimumIntervalMs: 300_000,
       rateLimitStore,
+      historyStore,
     },
   );
 }
@@ -545,6 +676,22 @@ class MemoryRateLimitStore implements AutoSyncRateLimitStore {
       this.retryAfter.delete(provider);
     } else {
       this.retryAfter.set(provider, timestamp);
+    }
+  }
+}
+
+class MemoryHistoryStore implements AutoSyncHistoryStore {
+  private readonly history = new Map<'git' | 'mega', AutoSyncHistory>();
+
+  read(provider: 'git' | 'mega'): AutoSyncHistory | null {
+    return this.history.get(provider) ?? null;
+  }
+
+  write(provider: 'git' | 'mega', history: AutoSyncHistory | null): void {
+    if (history) {
+      this.history.set(provider, structuredClone(history));
+    } else {
+      this.history.delete(provider);
     }
   }
 }

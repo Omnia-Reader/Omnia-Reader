@@ -36,6 +36,18 @@ describe('PublicationAnnotation', () => {
     expect(isPublicationAnnotation(ANNOTATION)).toBe(true);
   });
 
+  it('accepts every decoration style while keeping legacy highlights valid', () => {
+    expect(isPublicationAnnotation({ ...ANNOTATION, style: undefined })).toBe(
+      true,
+    );
+    for (const style of ['highlight', 'underline', 'strikethrough'] as const) {
+      expect(isPublicationAnnotation({ ...ANNOTATION, style })).toBe(true);
+    }
+    expect(
+      isPublicationAnnotation({ ...ANNOTATION, style: 'double-underline' }),
+    ).toBe(false);
+  });
+
   it('requires selected text and a supported color', () => {
     expect(
       isPublicationAnnotation({

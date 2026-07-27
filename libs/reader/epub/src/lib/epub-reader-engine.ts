@@ -12,6 +12,7 @@ import {
   DEFAULT_EPUB_READER_PREFERENCES,
   EpubReaderPreferences,
   keyboardNavigationDirection,
+  keyboardReaderCommand,
   PublicationAnnotation,
   PublicationLayout,
   PublicationLocator,
@@ -19,6 +20,7 @@ import {
   PublicationReadingDirection,
   PublicationSelection,
   ReaderEngine,
+  ReaderCommand,
   ReaderNavigationDirection,
   ReaderPageStatus,
   ReaderPreferences,
@@ -42,6 +44,8 @@ import {
 export type EpubRuntimeLoader = () => Promise<
   typeof import('@likecoin/epub-ts')
 >;
+
+type EpubAnnotationType = 'highlight' | 'underline';
 
 const WHEEL_NAVIGATION_INTERVAL_MS = 400;
 const EPUB_LOCATION_BREAK_SIZE = 1_600;
@@ -86,7 +90,11 @@ export class EpubReaderEngine implements ReaderEngine {
     ...DEFAULT_EPUB_READER_PREFERENCES,
   };
   private annotations: readonly PublicationAnnotation[] = [];
-  private appliedAnnotationCfis = new Set<string>();
+  private appliedAnnotationDecorations: Array<{
+    readonly cfi: string;
+    readonly type: EpubAnnotationType;
+  }> = [];
+  private readonly adjustedStrikethroughMarks = new WeakSet<object>();
   private selectedDocument: Document | null = null;
   private contentObserver: MutationObserver | null = null;
   private selectionMonitor: ReturnType<typeof setInterval> | null = null;
@@ -111,6 +119,9 @@ export class EpubReaderEngine implements ReaderEngine {
   >();
   private readonly navigationRequestListeners = new Set<
     (direction: ReaderNavigationDirection) => void
+  >();
+  private readonly commandRequestListeners = new Set<
+    (command: ReaderCommand) => boolean
   >();
   private readonly zoomRequestListeners = new Set<
     (direction: ReaderZoomDirection) => void
@@ -383,6 +394,17 @@ export class EpubReaderEngine implements ReaderEngine {
       return;
     }
     this.handledKeyboardEvents.add(event);
+    const command = keyboardReaderCommand(event);
+    if (command) {
+      let handled = false;
+      for (const listener of this.commandRequestListeners) {
+        handled = listener(command) || handled;
+      }
+      if (handled) {
+        event.preventDefault();
+      }
+      return;
+    }
     const direction = keyboardNavigationDirection(event, this.readingDirection);
     if (!direction) {
       return;
@@ -684,7 +706,7 @@ export class EpubReaderEngine implements ReaderEngine {
     this.currentSectionFlow = 'paginated';
     this.readerThemeCss = '';
     this.annotations = [];
-    this.appliedAnnotationCfis.clear();
+    this.appliedAnnotationDecorations = [];
     this.selectedDocument = null;
     this.capturedSelectionDocument = null;
     this.capturedSelectionKey = null;
@@ -733,6 +755,13 @@ export class EpubReaderEngine implements ReaderEngine {
   ): () => void {
     this.navigationRequestListeners.add(listener);
     return () => this.navigationRequestListeners.delete(listener);
+  }
+
+  onCommandRequested(
+    listener: (command: ReaderCommand) => boolean,
+  ): () => void {
+    this.commandRequestListeners.add(listener);
+    return () => this.commandRequestListeners.delete(listener);
   }
 
   onZoomRequested(
@@ -1615,14 +1644,14 @@ export class EpubReaderEngine implements ReaderEngine {
     if (!this.rendition) {
       return;
     }
-    for (const cfi of this.appliedAnnotationCfis) {
+    for (const decoration of this.appliedAnnotationDecorations) {
       try {
-        this.rendition.annotations.remove(cfi, 'highlight');
+        this.rendition.annotations.remove(decoration.cfi, decoration.type);
       } catch {
         // A stale CFI must not prevent the remaining annotations from rendering.
       }
     }
-    this.appliedAnnotationCfis.clear();
+    this.appliedAnnotationDecorations = [];
 
     for (const annotation of this.annotations) {
       const cfi = annotation.locator.locations?.fragments?.find((fragment) =>
@@ -1639,19 +1668,34 @@ export class EpubReaderEngine implements ReaderEngine {
             listener(annotation.id);
           }
         };
-        const renderedAnnotation = this.rendition.annotations.highlight(
-          cfi,
-          { annotationId: annotation.id },
-          activateAnnotation,
-          `omnia-annotation-${annotation.color}`,
-          EPUB_ANNOTATION_STYLES[annotation.color],
-        );
+        const style = annotation.style ?? 'highlight';
+        const annotationType: EpubAnnotationType =
+          style === 'highlight' ? 'highlight' : 'underline';
+        const renderedAnnotation =
+          annotationType === 'highlight'
+            ? this.rendition.annotations.highlight(
+                cfi,
+                { annotationId: annotation.id },
+                activateAnnotation,
+                `omnia-annotation-${annotation.color}`,
+                EPUB_HIGHLIGHT_STYLES[annotation.color],
+              )
+            : this.rendition.annotations.underline(
+                cfi,
+                { annotationId: annotation.id },
+                activateAnnotation,
+                `omnia-annotation-${annotation.color}-${style}`,
+                EPUB_LINE_STYLES[annotation.color],
+              );
         const decorateMark = (mark: unknown): void => {
           this.decorateAnnotationMark(mark, annotation, activateAnnotation);
         };
         renderedAnnotation?.on('attach', decorateMark);
         decorateMark(renderedAnnotation?.mark);
-        this.appliedAnnotationCfis.add(cfi);
+        this.appliedAnnotationDecorations.push({
+          cfi,
+          type: annotationType,
+        });
       } catch {
         // Keep a stale or malformed anchor in storage for later repair.
       }
@@ -1663,24 +1707,27 @@ export class EpubReaderEngine implements ReaderEngine {
     annotation: PublicationAnnotation,
     activate: EventListener,
   ): void {
-    const element = (
-      mark as
-        | {
-            element?: Element;
-          }
-        | null
-        | undefined
-    )?.element;
+    const renderedMark = mark as
+      | {
+          element?: Element;
+          render?: () => void;
+        }
+      | null
+      | undefined;
+    const element = renderedMark?.element;
     if (!element) {
       return;
+    }
+    if (annotation.style === 'strikethrough' && renderedMark) {
+      this.installStrikethroughPositioning(renderedMark);
     }
     element.setAttribute('role', 'button');
     element.setAttribute('tabindex', '0');
     element.setAttribute(
       'aria-label',
       annotation.locator.text?.highlight
-        ? `Edit highlight: ${annotation.locator.text.highlight.slice(0, 120)}`
-        : 'Edit highlight',
+        ? `Edit ${annotationStyleLabel(annotation)}: ${annotation.locator.text.highlight.slice(0, 120)}`
+        : `Edit ${annotationStyleLabel(annotation)}`,
     );
     element.addEventListener('contextmenu', activate);
     element.addEventListener('keydown', (event) => {
@@ -1689,6 +1736,25 @@ export class EpubReaderEngine implements ReaderEngine {
         activate(event);
       }
     });
+  }
+
+  private installStrikethroughPositioning(mark: {
+    element?: Element;
+    render?: () => void;
+  }): void {
+    if (this.adjustedStrikethroughMarks.has(mark)) {
+      positionStrikethroughLines(mark.element);
+      return;
+    }
+    this.adjustedStrikethroughMarks.add(mark);
+    const render = mark.render;
+    if (render) {
+      mark.render = () => {
+        render.call(mark);
+        positionStrikethroughLines(mark.element);
+      };
+    }
+    positionStrikethroughLines(mark.element);
   }
 
   private notifySelection(selection: PublicationSelection | null): void {
@@ -1925,7 +1991,7 @@ const EPUB_THEME_PALETTES = {
   dark: { background: '#171717', foreground: '#e7e5e4' },
 } as const;
 
-const EPUB_ANNOTATION_STYLES = {
+const EPUB_HIGHLIGHT_STYLES = {
   yellow: {
     fill: '#facc15',
     'fill-opacity': '0.42',
@@ -1951,6 +2017,65 @@ const EPUB_ANNOTATION_STYLES = {
     cursor: 'pointer',
   },
 } as const;
+
+const EPUB_LINE_COLORS = {
+  yellow: '#ca8a04',
+  green: '#16a34a',
+  blue: '#2563eb',
+  pink: '#db2777',
+} as const;
+
+const EPUB_LINE_STYLES: Record<
+  keyof typeof EPUB_LINE_COLORS,
+  Record<string, string>
+> = {
+  yellow: epubLineStyle(EPUB_LINE_COLORS.yellow),
+  green: epubLineStyle(EPUB_LINE_COLORS.green),
+  blue: epubLineStyle(EPUB_LINE_COLORS.blue),
+  pink: epubLineStyle(EPUB_LINE_COLORS.pink),
+};
+
+function epubLineStyle(stroke: string): Record<string, string> {
+  return {
+    fill: 'transparent',
+    stroke,
+    'stroke-width': '2',
+    'stroke-linecap': 'round',
+    'pointer-events': 'all',
+    cursor: 'pointer',
+  };
+}
+
+function positionStrikethroughLines(element: Element | undefined): void {
+  if (!element) {
+    return;
+  }
+  for (const line of element.querySelectorAll('line')) {
+    const rectangle = line.previousElementSibling;
+    if (rectangle?.localName !== 'rect') {
+      continue;
+    }
+    const top = Number(rectangle.getAttribute('y'));
+    const height = Number(rectangle.getAttribute('height'));
+    if (!Number.isFinite(top) || !Number.isFinite(height)) {
+      continue;
+    }
+    const middle = String(top + height / 2);
+    line.setAttribute('y1', middle);
+    line.setAttribute('y2', middle);
+  }
+}
+
+function annotationStyleLabel(annotation: PublicationAnnotation): string {
+  switch (annotation.style) {
+    case 'underline':
+      return 'underline';
+    case 'strikethrough':
+      return 'strikethrough';
+    default:
+      return 'highlight';
+  }
+}
 
 function quoteFromRange(
   range: Range,

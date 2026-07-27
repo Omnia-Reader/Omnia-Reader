@@ -1,0 +1,63 @@
+import { describe, expect, it, vi } from 'vitest';
+import { BrowserSyncProviderSelection } from './sync-provider-selection';
+
+describe('BrowserSyncProviderSelection', () => {
+  it('persists selections and notifies subscribers immediately', () => {
+    const storage = new MemoryStorage();
+    const selection = new BrowserSyncProviderSelection(storage);
+    const listener = vi.fn();
+    const unsubscribe = selection.subscribe(listener);
+
+    selection.select('git');
+    selection.select('mega');
+
+    expect(listener.mock.calls).toEqual([[null], ['git'], ['mega']]);
+    expect(new BrowserSyncProviderSelection(storage).current()).toBe('mega');
+
+    unsubscribe();
+    selection.clear();
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(selection.current()).toBeNull();
+  });
+
+  it('isolates subscriber failures from a valid selection', () => {
+    const selection = new BrowserSyncProviderSelection(new MemoryStorage());
+    const healthyListener = vi.fn();
+    selection.subscribe(() => {
+      throw new Error('Presentation failed');
+    });
+    selection.subscribe(healthyListener);
+
+    expect(() => selection.select('git')).not.toThrow();
+    expect(selection.current()).toBe('git');
+    expect(healthyListener).toHaveBeenLastCalledWith('git');
+  });
+});
+
+class MemoryStorage implements Storage {
+  private readonly values = new Map<string, string>();
+
+  get length(): number {
+    return this.values.size;
+  }
+
+  clear(): void {
+    this.values.clear();
+  }
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  key(index: number): string | null {
+    return [...this.values.keys()][index] ?? null;
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
+}

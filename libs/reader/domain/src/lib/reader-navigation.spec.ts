@@ -1,5 +1,6 @@
 import {
   keyboardNavigationDirection,
+  keyboardReaderCommand,
   selectionHasText,
   startTouchEventNavigationGesture,
   startTouchNavigationGesture,
@@ -8,6 +9,55 @@ import {
   wheelNavigationDirection,
   wheelZoomDirection,
 } from './reader-navigation';
+
+describe('keyboardReaderCommand', () => {
+  it('maps the reader command palette without intercepting page keys', () => {
+    expect(keyboardReaderCommand(keyboardEvent('t'))).toBe('toc');
+    expect(keyboardReaderCommand(keyboardEvent('/'))).toBe('search');
+    expect(keyboardReaderCommand(keyboardEvent('m'))).toBe('toggle-bookmark');
+    expect(keyboardReaderCommand(keyboardEvent('b'))).toBe('bookmarks');
+    expect(keyboardReaderCommand(keyboardEvent('a'))).toBe('annotations');
+    expect(keyboardReaderCommand(keyboardEvent('o'))).toBe('settings');
+    expect(keyboardReaderCommand(keyboardEvent('f'))).toBe('fullscreen');
+    expect(
+      keyboardReaderCommand({ ...keyboardEvent('?'), shiftKey: true }),
+    ).toBe('shortcuts');
+    expect(
+      keyboardReaderCommand({ ...keyboardEvent('/'), shiftKey: true }),
+    ).toBe('shortcuts');
+    expect(keyboardReaderCommand(keyboardEvent('ArrowRight'))).toBeNull();
+  });
+
+  it('supports platform search and leaves editing or unrelated modifiers alone', () => {
+    expect(
+      keyboardReaderCommand({ ...keyboardEvent('f'), ctrlKey: true }),
+    ).toBe('search');
+    expect(
+      keyboardReaderCommand({ ...keyboardEvent('F'), metaKey: true }),
+    ).toBe('search');
+    expect(
+      keyboardReaderCommand({ ...keyboardEvent('f'), altKey: true }),
+    ).toBeNull();
+    expect(
+      keyboardReaderCommand({ ...keyboardEvent('m'), repeat: true }),
+    ).toBeNull();
+    expect(
+      keyboardReaderCommand({
+        ...keyboardEvent('a'),
+        target: document.createElement('textarea'),
+      }),
+    ).toBeNull();
+  });
+
+  it('allows Escape to dismiss reader UI even when an editor has focus', () => {
+    expect(
+      keyboardReaderCommand({
+        ...keyboardEvent('Escape'),
+        target: document.createElement('input'),
+      }),
+    ).toBe('dismiss');
+  });
+});
 
 describe('keyboardNavigationDirection', () => {
   it('maps horizontal arrows using the publication reading direction', () => {
@@ -251,6 +301,7 @@ function keyboardEvent(key: string) {
     defaultPrevented: false,
     key,
     metaKey: false,
+    repeat: false,
     shiftKey: false,
     target: null,
   };

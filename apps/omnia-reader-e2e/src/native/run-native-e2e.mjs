@@ -36,7 +36,7 @@ async function main() {
     await configurePackagedDesktopActivation(packagedDesktopFile);
   }
 
-  const app = startNativeApp(NATIVE_PDF_FIXTURE);
+  let app = startNativeApp(NATIVE_PDF_FIXTURE);
   let driver;
 
   try {
@@ -46,14 +46,23 @@ async function main() {
 
     await verifyStartupPdfJourney(driver);
     await verifySingleInstanceEpubJourney(driver);
-    await verifyBookDeepLinkJourney(driver);
+    const pdf = await verifyBookDeepLinkJourney(driver);
+    await verifyHardTerminationResume(driver, pdf);
+    await killProcess(app.child);
+    driver = undefined;
+
+    app = startNativeApp(pdf.deepLink);
+    await waitForServer(app, 60_000);
+    driver = await NativeWebDriver.connect();
+    await driver.setTimeouts();
+    await verifyRestoredPdfJourney(driver);
 
     console.log(
       `Native E2E passed: startup open-with, ${
         useDesktopActivation
           ? 'installed desktop activation'
           : 'single-instance forwarding'
-      }, PDF/EPUB rendering, deep-link reopening, and keyboard/button navigation.`,
+      }, PDF/EPUB rendering, deep-link reopening, keyboard/button navigation, and hard-termination progress restoration.`,
     );
   } catch (error) {
     const screenshotPath = join(
@@ -152,10 +161,12 @@ async function verifySingleInstanceEpubJourney(driver) {
 }
 
 async function verifyBookDeepLinkJourney(driver) {
-  const pdfBookId = createHash('sha256')
+  const digest = createHash('sha256')
     .update(await readFile(NATIVE_PDF_FIXTURE))
     .digest('hex');
-  await forwardArgumentToRunningInstance(`omnia-reader://reader/${pdfBookId}`);
+  const bookId = `sha256:${digest}`;
+  const deepLink = `omnia-reader://reader/${digest}`;
+  await forwardArgumentToRunningInstance(deepLink);
   await driver.waitForExactText('Omnia Native PDF Fixture', 30_000);
   await driver.waitForElement(
     '.pdfViewer .page[data-page-number="1"] canvas',
@@ -163,6 +174,70 @@ async function verifyBookDeepLinkJourney(driver) {
   );
   await driver.waitForExactText('Page 1 of 2');
   console.log('✓ exact-edition deep link reopened the existing PDF');
+  return { bookId, deepLink };
+}
+
+async function verifyHardTerminationResume(driver, pdf) {
+  await driver.key(ARROW_RIGHT);
+  await driver.waitForExactText('Page 2 of 2');
+  await driver.waitForAsyncScript(
+    `
+      const [bookId, expectedPage, done] = arguments;
+      const readStore = (databaseName, storeName) =>
+        new Promise((resolve, reject) => {
+          const openRequest = indexedDB.open(databaseName);
+          openRequest.addEventListener('error', () =>
+            reject(openRequest.error ?? new Error('Unable to open IndexedDB'))
+          );
+          openRequest.addEventListener('success', () => {
+            const database = openRequest.result;
+            const request = database
+              .transaction(storeName, 'readonly')
+              .objectStore(storeName)
+              .getAll();
+            request.addEventListener('success', () => {
+              database.close();
+              resolve(request.result);
+            });
+            request.addEventListener('error', () => {
+              database.close();
+              reject(request.error ?? new Error('Unable to read IndexedDB'));
+            });
+          });
+        });
+
+      Promise.all([
+        readStore('omnia-reader', 'progress'),
+        readStore('omnia-reader-sync', 'operations')
+      ]).then(([progressRecords, operations]) => {
+        const progress = progressRecords.find(
+          (record) => record?.bookId === bookId
+        );
+        const localPage = progress?.locator?.locations?.position;
+        const journaled = operations.some(
+          (operation) =>
+            operation?.entity === 'progress' &&
+            operation?.entityId === bookId &&
+            operation?.payload?.locator?.locations?.position === expectedPage
+        );
+        done(localPage === expectedPage && journaled);
+      }, () => done(false));
+    `,
+    [pdf.bookId, 2],
+    30_000,
+    'durable PDF page-two progress and sync journal entry',
+  );
+  console.log('✓ page-two progress and pending sync work are durable');
+}
+
+async function verifyRestoredPdfJourney(driver) {
+  await driver.waitForExactText('Omnia Native PDF Fixture', 30_000);
+  await driver.waitForElement(
+    '.pdfViewer .page[data-page-number="2"] canvas',
+    30_000,
+  );
+  await driver.waitForExactText('Page 2 of 2');
+  console.log('✓ hard-killed native process restored the exact PDF page');
 }
 
 async function verifyEpubChapter(driver, expectedHeading) {
@@ -353,6 +428,19 @@ async function stopProcess(child) {
   ]);
 }
 
+async function killProcess(child) {
+  if (child.exitCode !== null) {
+    return;
+  }
+  child.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
+  await Promise.race([
+    new Promise((resolvePromise) => child.once('exit', resolvePromise)),
+    delay(10_000).then(() => {
+      throw new Error('Native application did not exit after a hard kill');
+    }),
+  ]);
+}
+
 class NativeWebDriver {
   constructor(sessionId) {
     this.sessionId = sessionId;
@@ -422,6 +510,24 @@ class NativeWebDriver {
     );
   }
 
+  async waitForAsyncScript(script, args, timeout, description) {
+    const deadline = Date.now() + timeout;
+    let lastError;
+    while (Date.now() < deadline) {
+      try {
+        if (await this.executeAsync(script, args)) {
+          return;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      await delay(100);
+    }
+    throw new Error(
+      `${description} was not observed within ${timeout}ms${lastError ? `: ${String(lastError)}` : ''}`,
+    );
+  }
+
   async find(selector, using = 'css selector') {
     const value = await this.command('POST', '/element', {
       using,
@@ -478,6 +584,10 @@ class NativeWebDriver {
 
   execute(script, args = []) {
     return this.command('POST', '/execute/sync', { script, args });
+  }
+
+  executeAsync(script, args = []) {
+    return this.command('POST', '/execute/async', { script, args });
   }
 
   async close() {
