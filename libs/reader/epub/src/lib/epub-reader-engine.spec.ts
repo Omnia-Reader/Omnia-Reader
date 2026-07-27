@@ -5,12 +5,17 @@ import {
   PublicationAnnotation,
   PublicationSelection,
 } from '@omnia-reader/reader/domain';
-import { EpubReaderEngine, sanitizePublicationCss } from './epub-reader-engine';
+import {
+  EpubReaderEngine,
+  sanitizeEpubCover,
+  sanitizePublicationCss,
+} from './epub-reader-engine';
 
 describe('EPUB publication CSS sanitization', () => {
   it('removes remote imports and neutralizes remote font URLs without dropping local styles', () => {
     const sanitized = sanitizePublicationCss(`
       @import url("https://fonts.googleapis.com/css2?family=Mulish");
+      @import/**/url("https://fonts.googleapis.com/css2?family=Mulish");
       @font-face {
         font-family: "Remote";
         src: url(https://fonts.invalid/remote.woff2) format("woff2");
@@ -28,7 +33,71 @@ describe('EPUB publication CSS sanitization', () => {
     expect(sanitized).toContain('../fonts/embedded.woff2');
     expect(sanitized).toContain('color: #222');
   });
+
+  it('neutralizes unresolved publication URLs after resource substitution', () => {
+    const sanitized = sanitizePublicationCss(
+      `
+        @font-face {
+          font-family: "Embedded";
+          src:
+            url("blob:http://localhost/font") format("woff2"),
+            url("../fonts/unresolved.woff") format("woff"),
+            url("res://reader/font.ttf") format("truetype");
+        }
+        .icon { mask-image: url("#icon"); }
+      `,
+      { allowRelativeUrls: false },
+    );
+
+    expect(sanitized).toContain('blob:http://localhost/font');
+    expect(sanitized).toContain('url("#icon")');
+    expect(sanitized).not.toContain('../fonts/unresolved.woff');
+    expect(sanitized).not.toContain('res://reader/font.ttf');
+  });
 });
+
+describe('EPUB cover sanitization', () => {
+  it('removes external SVG fonts and active resources before cover decoding', async () => {
+    const sanitized = await sanitizeEpubCover(
+      new Blob(
+        [
+          `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+            <style>
+              @import url("https://fonts.googleapis.com/css2?family=Mulish");
+              @font-face {
+                font-family: Mulish;
+                src: url("https://fonts.gstatic.com/s/mulish/font.woff2");
+              }
+            </style>
+            <script>globalThis.compromised = true</script>
+            <image href="https://tracking.invalid/cover.png"/>
+            <use xlink:href="#safe-shape"/>
+            <text onclick="globalThis.compromised = true" style="fill:url(https://tracking.invalid/pattern)">Cover</text>
+          </svg>`,
+        ],
+        { type: 'image/svg+xml' },
+      ),
+    );
+    const content = await readBlobText(sanitized);
+
+    expect(sanitized.type).toBe('image/svg+xml');
+    expect(content).not.toContain('fonts.googleapis.com');
+    expect(content).not.toContain('fonts.gstatic.com');
+    expect(content).not.toContain('tracking.invalid');
+    expect(content).not.toContain('<script');
+    expect(content).not.toContain('onclick');
+    expect(content).toContain('#safe-shape');
+  });
+});
+
+function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')));
+    reader.addEventListener('error', () => reject(reader.error));
+    reader.readAsText(blob);
+  });
+}
 
 describe('EpubReaderEngine annotations', () => {
   it('captures a CFI text quote and renders persisted annotation styles', async () => {

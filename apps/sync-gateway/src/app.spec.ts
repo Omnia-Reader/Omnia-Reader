@@ -576,7 +576,51 @@ describe('sync gateway', () => {
         url: `/api/sync/${provider}/${documentName}?path=${encodeURIComponent(write.path)}`,
       });
       expect(missingResponse.statusCode).toBe(404);
+      const optionalMissingResponse = await app.inject({
+        method: 'GET',
+        url:
+          `/api/sync/${provider}/${documentName}` +
+          `?path=${encodeURIComponent(write.path)}&optional=true`,
+      });
+      expect(optionalMissingResponse.statusCode).toBe(204);
+      expect(optionalMissingResponse.headers['cache-control']).toBe('no-store');
     }
+    await app.close();
+  });
+
+  it('returns quiet cache-disabled absence for optional object probes', async () => {
+    const app = gateway();
+
+    for (const [provider, objectPath] of [
+      ['github', 'lfs/object'],
+      ['mega', 'object'],
+    ] as const) {
+      const response = await app.inject({
+        method: 'GET',
+        url:
+          `/api/sync/${provider}/${objectPath}/metadata` +
+          '?path=.omnia-reader%2Fv1%2Flibrary%2Fmissing.epub&optional=true',
+      });
+      expect(response.statusCode).toBe(204);
+      expect(response.headers['cache-control']).toBe('no-store');
+    }
+    await app.close();
+  });
+
+  it('rejects malformed optional lookup markers', async () => {
+    const app = gateway();
+
+    const response = await app.inject({
+      method: 'GET',
+      url:
+        '/api/sync/github/file' +
+        '?path=.omnia-reader%2Fv1%2Fmanifest.json&optional=maybe',
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      message: 'Invalid optional lookup marker',
+    });
     await app.close();
   });
 

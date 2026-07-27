@@ -184,8 +184,18 @@ export class EpubReaderEngine implements ReaderEngine {
     HTMLIFrameElement,
     string
   >();
-  private readonly sanitizeContent = (document: Document): void => {
-    sanitizeEpubDocument(document, this.allowedPublicationLinks);
+  private readonly sanitizeContent = (
+    document: Document,
+    section?: Section,
+  ): void => {
+    const resources = this.book?.resources;
+    sanitizeEpubDocument(
+      document,
+      this.allowedPublicationLinks,
+      resources && section
+        ? (css) => resources.substitute(css, section.url)
+        : undefined,
+    );
   };
   private readonly handleRenderedContent = (contents: Contents): void => {
     // A rendition may recycle an iframe and its Document wrapper between
@@ -1063,7 +1073,9 @@ export class EpubReaderEngine implements ReaderEngine {
         return undefined;
       }
       const response = await fetch(coverUrl);
-      return response.ok ? await response.blob() : undefined;
+      return response.ok
+        ? await sanitizeEpubCover(await response.blob())
+        : undefined;
     } catch {
       // Invalid optional artwork must not prevent the publication from opening.
       return undefined;
@@ -2140,6 +2152,7 @@ function epubLocationSectionIndex(location: unknown): number | undefined {
 function sanitizeEpubDocument(
   document: Document,
   allowedLinks: Set<string>,
+  substituteCss?: (value: string) => string,
 ): void {
   document
     .querySelectorAll(
@@ -2156,7 +2169,10 @@ function sanitizeEpubDocument(
 
   for (const style of document.querySelectorAll('style')) {
     const authoredCss = style.textContent ?? '';
-    const sanitizedCss = sanitizePublicationCss(authoredCss);
+    const sanitizedCss = sanitizePublicationCss(
+      substituteCss?.(authoredCss) ?? authoredCss,
+      { allowRelativeUrls: substituteCss === undefined },
+    );
     if (!sanitizedCss.trim()) {
       style.remove();
     } else if (sanitizedCss !== authoredCss) {
@@ -2167,8 +2183,12 @@ function sanitizeEpubDocument(
   for (const element of document.querySelectorAll('*')) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLocaleLowerCase();
-      if (name === 'style' && containsBlockedCssUrl(attribute.value)) {
-        const sanitizedStyle = sanitizePublicationCss(attribute.value);
+      if (name === 'style' && containsCssResourceUrl(attribute.value)) {
+        const substitutedStyle = substituteCss?.(attribute.value);
+        const sanitizedStyle = sanitizePublicationCss(
+          substitutedStyle ?? attribute.value,
+          { allowRelativeUrls: substituteCss === undefined },
+        );
         if (sanitizedStyle.trim()) {
           element.setAttribute(attribute.name, sanitizedStyle);
         } else {
@@ -2235,32 +2255,123 @@ function isPublicationAnchorHref(element: Element, name: string): boolean {
   return name === 'href' && element.localName.toLocaleLowerCase() === 'a';
 }
 
-function containsBlockedCssUrl(value: string): boolean {
-  const normalized = value
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\s+/g, '')
-    .toLocaleLowerCase();
-  return /(?:url\(|@import(?:url\()?)['"]?(?:\/\/|https?:|javascript:|vbscript:|data:text\/html|data:application\/xhtml\+xml)/.test(
-    normalized,
-  );
+function containsCssResourceUrl(value: string): boolean {
+  return /url\s*\(|@import\b/i.test(value);
 }
 
-export function sanitizePublicationCss(value: string): string {
-  const withoutRemoteImports = value.replace(
-    /@import\s+(?:url\(\s*)?(?:(['"])(.*?)\1|([^;\s)]+))\s*\)?[^;]*;/giu,
-    (statement, _quote: string, quotedUrl: string, unquotedUrl: string) => {
-      const url = quotedUrl ?? unquotedUrl ?? '';
-      return isBlockedCssResourceUrl(url) ? '' : statement;
-    },
+export function sanitizePublicationCss(
+  value: string,
+  options: { allowRelativeUrls?: boolean } = {},
+): string {
+  const allowRelativeUrls = options.allowRelativeUrls ?? true;
+  // Imports can activate while the browser parses publication CSS, before a
+  // later DOM hook can inspect the imported stylesheet. EPUBs already expose
+  // their authored stylesheets through <link>, so imports are not required at
+  // this hostile-content boundary.
+  const withoutImports = value.replace(
+    /@import\b(?:[^;'"\\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')*;/giu,
+    '',
   );
 
-  return withoutRemoteImports.replace(
+  return withoutImports.replace(
     /url\(\s*(?:(['"])(.*?)\1|([^)]*))\s*\)/giu,
     (token, _quote: string, quotedUrl: string, unquotedUrl: string) => {
       const url = (quotedUrl ?? unquotedUrl ?? '').trim();
-      return isBlockedCssResourceUrl(url) ? 'url("data:,")' : token;
+      return isBlockedCssResourceUrl(url, allowRelativeUrls)
+        ? 'url("data:,")'
+        : token;
     },
   );
+}
+
+export async function sanitizeEpubCover(cover: Blob): Promise<Blob> {
+  const mediaType = cover.type.toLocaleLowerCase().split(';', 1)[0];
+  if (mediaType !== 'image/svg+xml') {
+    return cover;
+  }
+
+  const document = new DOMParser().parseFromString(
+    await blobText(cover),
+    'image/svg+xml',
+  );
+  if (document.querySelector('parsererror')) {
+    throw new Error('The EPUB cover SVG is malformed');
+  }
+
+  document
+    .querySelectorAll(
+      'script, foreignObject, iframe, object, embed, link, audio, video, source',
+    )
+    .forEach((element) => element.remove());
+
+  for (const style of document.querySelectorAll('style')) {
+    const sanitized = sanitizePublicationCss(
+      (style.textContent ?? '').replace(/@font-face\b[^{}]*\{[^{}]*\}/giu, ''),
+      { allowRelativeUrls: false },
+    );
+    if (sanitized.trim()) {
+      style.textContent = sanitized;
+    } else {
+      style.remove();
+    }
+  }
+
+  for (const element of document.querySelectorAll('*')) {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLocaleLowerCase();
+      if (name.startsWith('on')) {
+        element.removeAttribute(attribute.name);
+        continue;
+      }
+      if (name === 'style' && containsCssResourceUrl(attribute.value)) {
+        element.setAttribute(
+          attribute.name,
+          sanitizePublicationCss(attribute.value, {
+            allowRelativeUrls: false,
+          }),
+        );
+        continue;
+      }
+      if (
+        (name === 'href' || name === 'xlink:href' || name === 'src') &&
+        !isSafeSvgResourceUrl(attribute.value)
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+
+  return new Blob([new XMLSerializer().serializeToString(document)], {
+    type: 'image/svg+xml',
+  });
+}
+
+function isSafeSvgResourceUrl(value: string): boolean {
+  const normalized = normalizePublicationUrl(value);
+  return (
+    normalized.startsWith('#') ||
+    /^data:image\/(?:avif|gif|jpeg|png|webp)(?:;|,)/i.test(normalized)
+  );
+}
+
+function blobText(blob: Blob): Promise<string> {
+  if (typeof blob.text === 'function') {
+    return blob.text();
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Unable to read the EPUB cover'));
+      }
+    });
+    reader.addEventListener('error', () =>
+      reject(reader.error ?? new Error('Unable to read the EPUB cover')),
+    );
+    reader.readAsText(blob);
+  });
 }
 
 async function sanitizeEpubStyleResources(book: Book): Promise<void> {
@@ -2285,7 +2396,9 @@ async function sanitizeEpubStyleResources(book: Book): Promise<void> {
       const authoredCss = isBlockedCssResourceUrl(replacementUrl)
         ? ''
         : await (await fetch(replacementUrl)).text();
-      const sanitizedCss = sanitizePublicationCss(authoredCss);
+      const sanitizedCss = sanitizePublicationCss(authoredCss, {
+        allowRelativeUrls: false,
+      });
       if (sanitizedCss === authoredCss) {
         continue;
       }
@@ -2303,8 +2416,22 @@ async function sanitizeEpubStyleResources(book: Book): Promise<void> {
   }
 }
 
-function isBlockedCssResourceUrl(value: string): boolean {
-  return isUnsafePublicationUrl(value) || isRemotePublicationUrl(value);
+function isBlockedCssResourceUrl(
+  value: string,
+  allowRelativeUrls = true,
+): boolean {
+  if (isUnsafePublicationUrl(value) || isRemotePublicationUrl(value)) {
+    return true;
+  }
+  if (allowRelativeUrls) {
+    return false;
+  }
+  const normalized = normalizePublicationUrl(value);
+  return !(
+    normalized.startsWith('blob:') ||
+    normalized.startsWith('data:') ||
+    normalized.startsWith('#')
+  );
 }
 
 function isDocument(value: unknown): value is Document {

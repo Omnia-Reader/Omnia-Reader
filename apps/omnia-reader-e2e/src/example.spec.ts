@@ -1264,7 +1264,11 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   test.setTimeout(60_000);
   const publicationRequests: string[] = [];
   page.on('request', (request) => {
-    if (request.url().includes('tracking.invalid')) {
+    if (
+      /(?:tracking\.invalid|fonts\.googleapis\.com|fonts\.gstatic\.com)/.test(
+        request.url(),
+      )
+    ) {
       publicationRequests.push(request.url());
     }
   });
@@ -1327,6 +1331,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await expect(
     page.locator('meta[http-equiv="Content-Security-Policy"]'),
   ).toHaveAttribute('content', /object-src 'none'/);
+  await expect(
+    page.locator('meta[http-equiv="Content-Security-Policy"]'),
+  ).toHaveAttribute(
+    'content',
+    /font-src 'self' data: blob: https:\/\/fonts\.gstatic\.com/,
+  );
   await expect(epubFrame.locator('iframe')).toHaveCount(0);
   await expect(
     epubFrame.locator(
@@ -1344,6 +1354,16 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
         ),
     )
     .toBe('applied');
+  await expect
+    .poll(() =>
+      epubFrame.locator('body').evaluate(async (body) => {
+        const loaded = await body.ownerDocument.fonts.load(
+          '16px "Embedded fixture font"',
+        );
+        return loaded.length > 0;
+      }),
+    )
+    .toBe(true);
   await expectEpubViewportToBePaginated(page);
   await expect
     .poll(() =>

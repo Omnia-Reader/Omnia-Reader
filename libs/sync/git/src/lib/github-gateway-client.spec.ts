@@ -240,7 +240,7 @@ describe('GitHubGatewayClient', () => {
     };
     const fetcher = sequenceFetch(
       jsonResponse({ files: [file] }),
-      new Response(null, { status: 404 }),
+      new Response(null, { status: 204 }),
       jsonResponse(file),
     );
     const client = new GitHubGatewayClient({ fetcher });
@@ -261,6 +261,7 @@ describe('GitHubGatewayClient', () => {
     expect(fetcher.mock.calls[0]?.[0]).toContain(
       'prefix=.omnia-reader%2Fv1%2Fprogress',
     );
+    expect(fetcher.mock.calls[1]?.[0]).toContain('optional=true');
     const writeHeaders = new Headers(fetcher.mock.calls[2]?.[1]?.headers);
     expect(writeHeaders.get('X-Omnia-CSRF')).toBe('1');
   });
@@ -317,6 +318,7 @@ describe('GitHubGatewayClient', () => {
     ).resolves.toEqual(object);
 
     expect(fetcher.mock.calls[0]?.[0]).toContain('/lfs/object/metadata?path=');
+    expect(fetcher.mock.calls[0]?.[0]).toContain('optional=true');
     const uploadInit = fetcher.mock.calls[1]?.[1];
     const headers = new Headers(uploadInit?.headers);
     expect(uploadInit?.method).toBe('PUT');

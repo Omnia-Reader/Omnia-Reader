@@ -1,4 +1,11 @@
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 import JSZip from 'jszip';
+
+const resolveFixtureDependency = createRequire(
+  resolve(process.cwd(), 'package.json'),
+).resolve;
 
 export async function createEpubFixture(): Promise<Buffer> {
   const archive = new JSZip();
@@ -34,8 +41,9 @@ export async function createEpubFixture(): Promise<Buffer> {
   </metadata>
   <manifest>
     <item id="nav" href="navigation/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    <item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/>
+    <item id="cover" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/>
     <item id="book-styles" href="styles/book.css" media-type="text/css"/>
+    <item id="book-font" href="fonts/fixture.woff2" media-type="font/woff2"/>
     <item id="chapter-1" href="chapter-1.xhtml" media-type="application/xhtml+xml"/>
     <item id="chapter-2" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
@@ -46,10 +54,27 @@ export async function createEpubFixture(): Promise<Buffer> {
 </package>`,
   );
   archive.file(
-    'OEBPS/cover.png',
-    Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAAEUlEQVR4nGMw1Gs01GtkQKEANVUFQSVf9GgAAAAASUVORK5CYII=',
-      'base64',
+    'OEBPS/cover.svg',
+    `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">
+      <style>
+        @import url("https://fonts.googleapis.com/css2?family=Mulish");
+        @font-face {
+          font-family: "Remote cover font";
+          src: url("https://fonts.gstatic.com/s/mulish/v18/1Ptvg83HX_SGhgqk0gotcqA.woff2") format("woff2");
+        }
+        text { font-family: "Remote cover font", sans-serif; }
+      </style>
+      <rect width="400" height="600" fill="#17324d"/>
+      <text x="200" y="280" fill="#fff" font-size="42" text-anchor="middle">Omnia</text>
+      <text x="200" y="335" fill="#fff" font-size="42" text-anchor="middle">EPUB Fixture</text>
+    </svg>`,
+  );
+  archive.file(
+    'OEBPS/fonts/fixture.woff2',
+    await readFile(
+      resolveFixtureDependency(
+        '@fontsource/roboto/files/roboto-latin-400-normal.woff2',
+      ),
     ),
   );
   archive.file(
@@ -113,11 +138,15 @@ export async function createEpubFixture(): Promise<Buffer> {
   font-family: "Remote fixture font";
   src: url("https://tracking.invalid/remote-font.woff2") format("woff2");
 }
+@font-face {
+  font-family: "Embedded fixture font";
+  src: url("../fonts/fixture.woff2") format("woff2");
+}
 :root {
   --omnia-fixture-safe-style: applied;
 }
 body {
-  font-family: serif;
+  font-family: "Remote fixture font", "Embedded fixture font", serif;
 }`,
   );
   archive.file(

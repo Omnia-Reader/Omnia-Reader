@@ -393,9 +393,11 @@ Base path: `/api/sync/github`
 | `POST`   | `/repository`                                     | Creates private `{ "name": string }`, then selects it when App access exists |
 | `GET`    | `/files?prefix=...`                               | `{ "files": RemoteDocument[] }`                                              |
 | `GET`    | `/file?path=...`                                  | A document; `404` if absent                                                  |
+| `GET`    | `/file?path=...&optional=true`                    | A document; cache-disabled `204` if absent                                   |
 | `PUT`    | `/file`                                           | Creates/replaces a document; `409` on revision mismatch                      |
 | `DELETE` | `/file?path=...&expectedRevision=...&message=...` | Deletes a document; `409` on revision mismatch                               |
 | `GET`    | `/lfs/object/metadata?path=...`                   | Object metadata; `404` if absent                                             |
+| `GET`    | `/lfs/object/metadata?path=...&optional=true`     | Object metadata; cache-disabled `204` if absent                              |
 | `GET`    | `/lfs/object?path=...`                            | Verified publication bytes                                                   |
 | `PUT`    | `/lfs/object?path=...`                            | Uploads/verifies a Git LFS object                                            |
 
@@ -438,9 +440,11 @@ Base path: `/api/sync/mega`
 | `PUT`    | `/folder`                                             | Selects `{ "handle": string }` after server-side authorization     |
 | `GET`    | `/documents?prefix=...`                               | `{ "documents": RemoteDocument[] }`                                |
 | `GET`    | `/document?path=...`                                  | A small JSON document; `404` if absent                             |
+| `GET`    | `/document?path=...&optional=true`                    | A document; cache-disabled `204` if absent                         |
 | `PUT`    | `/document`                                           | Creates/replaces a document; `409` on revision mismatch            |
 | `DELETE` | `/document?path=...&expectedRevision=...&message=...` | Deletes a document; `409` on revision mismatch                     |
 | `GET`    | `/object/metadata?path=...`                           | Publication metadata; `404` if absent                              |
+| `GET`    | `/object/metadata?path=...&optional=true`             | Publication metadata; cache-disabled `204` if absent               |
 | `GET`    | `/object?path=...`                                    | Verified publication bytes                                         |
 | `PUT`    | `/object?path=...`                                    | Uploads/verifies an encrypted MEGA file                            |
 

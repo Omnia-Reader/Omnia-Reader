@@ -97,6 +97,24 @@ describe('MegaGatewayClient', () => {
     expect(headers.get('X-Omnia-CSRF')).toBe('1');
   });
 
+  it('uses quiet optional lookups for missing documents and objects', async () => {
+    const fetcher = sequenceFetch(
+      new Response(null, { status: 204 }),
+      new Response(null, { status: 204 }),
+    );
+    const client = new MegaGatewayClient({ fetcher });
+
+    await expect(
+      client.read('.omnia-reader/v1/missing.json'),
+    ).resolves.toBeNull();
+    await expect(
+      client.headObject('.omnia-reader/v1/library/missing.epub'),
+    ).resolves.toBeNull();
+
+    expect(fetcher.mock.calls[0]?.[0]).toContain('optional=true');
+    expect(fetcher.mock.calls[1]?.[0]).toContain('optional=true');
+  });
+
   it('maps duplicate-revision conflicts and rejects malformed nodes', async () => {
     const conflictClient = new MegaGatewayClient({
       fetcher: mockFetch(new Response(null, { status: 409 })),

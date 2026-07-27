@@ -143,11 +143,11 @@ export class MegaGatewayClient implements MegaGateway {
 
   async read(path: string): Promise<RemoteDocument | null> {
     const response = await this.request(
-      `/document?path=${encodeURIComponent(path)}`,
+      `/document?path=${encodeURIComponent(path)}&optional=true`,
       {},
       [404],
     );
-    if (response.status === 404) {
+    if (response.status === 204 || response.status === 404) {
       return null;
     }
     const value = await responseJson(response);
@@ -191,11 +191,11 @@ export class MegaGatewayClient implements MegaGateway {
 
   async headObject(path: string): Promise<RemoteObject | null> {
     const response = await this.request(
-      `/object/metadata?path=${encodeURIComponent(path)}`,
+      `/object/metadata?path=${encodeURIComponent(path)}&optional=true`,
       {},
       [404],
     );
-    if (response.status === 404) {
+    if (response.status === 204 || response.status === 404) {
       return null;
     }
     const value = await responseJson(response);

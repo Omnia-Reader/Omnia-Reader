@@ -211,15 +211,19 @@ export async function registerProviderRoutes(
     },
   );
 
-  app.get<{ Querystring: { path?: string } }>(
+  app.get<{ Querystring: { path?: string; optional?: string } }>(
     names.documentPath,
     async (request, reply) => {
       const path = logicalSyncPath(request.query.path);
+      const optional = optionalLookup(request.query.optional);
       const sessionId = session(request, reply, cookieName, options);
       const document = await options.adapter.readDocument(sessionId, path);
-      return (
-        document ?? reply.code(404).send({ message: 'Document not found' })
-      );
+      if (document) {
+        return document;
+      }
+      return optional
+        ? reply.header('Cache-Control', 'no-store').code(204).send()
+        : reply.code(404).send({ message: 'Document not found' });
     },
   );
 
@@ -250,13 +254,19 @@ export async function registerProviderRoutes(
     return reply.code(204).send();
   });
 
-  app.get<{ Querystring: { path?: string } }>(
+  app.get<{ Querystring: { path?: string; optional?: string } }>(
     `${names.objectPath}/metadata`,
     async (request, reply) => {
       const path = logicalSyncPath(request.query.path);
+      const optional = optionalLookup(request.query.optional);
       const sessionId = session(request, reply, cookieName, options);
       const object = await options.adapter.headObject(sessionId, path);
-      return object ?? reply.code(404).send({ message: 'Object not found' });
+      if (object) {
+        return object;
+      }
+      return optional
+        ? reply.header('Cache-Control', 'no-store').code(204).send()
+        : reply.code(404).send({ message: 'Object not found' });
     },
   );
 
@@ -355,6 +365,16 @@ function optionalRevision(value: string | undefined): string | undefined {
     throw new GatewayHttpError(400, 'The expected object revision is invalid');
   }
   return value;
+}
+
+function optionalLookup(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  if (value !== 'true') {
+    throw new GatewayHttpError(400, 'Invalid optional lookup marker');
+  }
+  return true;
 }
 
 function authorizationHeaders(reply: FastifyReply): void {

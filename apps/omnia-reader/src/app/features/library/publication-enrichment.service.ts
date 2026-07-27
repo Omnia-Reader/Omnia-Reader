@@ -113,6 +113,7 @@ async function normalizeCover(cover: Blob): Promise<Blob | undefined> {
     return undefined;
   }
 
+  const mediaType = cover.type.toLowerCase().split(';', 1)[0];
   if (typeof globalThis.createImageBitmap === 'function') {
     try {
       const bitmap = await globalThis.createImageBitmap(cover);
@@ -139,11 +140,42 @@ async function normalizeCover(cover: Blob): Promise<Blob | undefined> {
     }
   }
 
-  const mediaType = cover.type.toLowerCase().split(';', 1)[0];
+  if (mediaType === 'image/svg+xml') {
+    return rasterizeSvgCover(cover);
+  }
+
   return SAFE_RASTER_TYPES.has(mediaType) &&
     cover.size <= MAX_UNNORMALIZED_COVER_BYTES
     ? cover
     : undefined;
+}
+
+async function rasterizeSvgCover(cover: Blob): Promise<Blob | undefined> {
+  const url = URL.createObjectURL(cover);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(
+      1,
+      MAX_COVER_WIDTH / image.naturalWidth,
+      MAX_COVER_HEIGHT / image.naturalHeight,
+    );
+    const canvas = globalThis.document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return undefined;
+    }
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return await canvasToBlob(canvas);
+  } catch {
+    return undefined;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 async function canvasToBlob(

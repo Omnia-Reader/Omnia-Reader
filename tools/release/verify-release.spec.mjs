@@ -172,8 +172,8 @@ test('the HTTP CSP preserves the application HTML fallback policy', async () => 
   assert.doesNotMatch(WEB_CONTENT_SECURITY_POLICY, /frame-ancestors/);
   assert.match(
     WEB_CONTENT_SECURITY_POLICY,
-    /font-src 'self' data: blob:/,
-    'Embedded EPUB fonts require local blob URLs without allowing remote font origins',
+    /font-src 'self' data: blob: https:\/\/fonts\.gstatic\.com/,
+    'EPUB fonts may use embedded URLs or the explicitly allowed Google Fonts host',
   );
 
   const tauriConfig = JSON.parse(
@@ -184,8 +184,8 @@ test('the HTTP CSP preserves the application HTML fallback policy', async () => 
   );
   assert.match(
     tauriConfig.app.security.csp,
-    /font-src 'self' data: blob:/,
-    'Tauri must preserve embedded EPUB font rendering',
+    /font-src 'self' data: blob: https:\/\/fonts\.gstatic\.com/,
+    'Tauri must preserve embedded and explicitly allowed Google font rendering',
   );
 });
 

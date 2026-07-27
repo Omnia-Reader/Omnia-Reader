@@ -255,7 +255,14 @@ export class SimulatedSyncGateway {
       const remotePath = url.searchParams.get('path') ?? '';
       const document = this.documents.get(remotePath);
       if (!document) {
-        await this.fulfillJson(route, { message: 'Not found' }, 404);
+        if (url.searchParams.get('optional') === 'true') {
+          await route.fulfill({
+            status: 204,
+            headers: { 'Cache-Control': 'no-store' },
+          });
+        } else {
+          await this.fulfillJson(route, { message: 'Not found' }, 404);
+        }
         return;
       }
       await this.fulfillJson(route, document);
@@ -288,7 +295,14 @@ export class SimulatedSyncGateway {
       const remotePath = url.searchParams.get('path') ?? '';
       const object = this.objects.get(remotePath);
       if (!object) {
-        await this.fulfillJson(route, { message: 'Not found' }, 404);
+        if (url.searchParams.get('optional') === 'true') {
+          await route.fulfill({
+            status: 204,
+            headers: { 'Cache-Control': 'no-store' },
+          });
+        } else {
+          await this.fulfillJson(route, { message: 'Not found' }, 404);
+        }
         return;
       }
       await this.fulfillJson(route, objectMetadata(object));

@@ -193,11 +193,11 @@ export class GitHubGatewayClient implements GitHubGateway {
 
   async read(path: string): Promise<GitFile | null> {
     const response = await this.request(
-      `/file?path=${encodeURIComponent(path)}`,
+      `/file?path=${encodeURIComponent(path)}&optional=true`,
       {},
       [404],
     );
-    if (response.status === 404) {
+    if (response.status === 204 || response.status === 404) {
       return null;
     }
     const value = await responseJson(response);
@@ -244,11 +244,11 @@ export class GitHubGatewayClient implements GitHubGateway {
 
   async headObject(path: string): Promise<RemoteObject | null> {
     const response = await this.request(
-      `/lfs/object/metadata?path=${encodeURIComponent(path)}`,
+      `/lfs/object/metadata?path=${encodeURIComponent(path)}&optional=true`,
       {},
       [404],
     );
-    if (response.status === 404) {
+    if (response.status === 204 || response.status === 404) {
       return null;
     }
     const value = await responseJson(response);
