@@ -7,9 +7,11 @@ import {
   BookRecord,
   LibraryRepository,
   PublicationAnnotation,
+  PublicationLocator,
   PublicationSelection,
   ReaderCommand,
   ReaderEngine,
+  ReaderPageStatus,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
@@ -36,6 +38,7 @@ describe('ReaderPageComponent annotations', () => {
     });
     const callbacks: {
       selection?: (selection: PublicationSelection | null) => void;
+      relocation?: (locator: PublicationLocator) => void;
       annotationActivation?: (annotationId: string) => void;
       navigation?: (direction: 'previous' | 'next') => void;
       command?: (command: ReaderCommand) => void;
@@ -44,6 +47,11 @@ describe('ReaderPageComponent annotations', () => {
     } = {};
     const setAnnotations = vi.fn().mockResolvedValue(undefined);
     const goToProgression = vi.fn().mockResolvedValue(undefined);
+    let currentPageStatus: ReaderPageStatus = {
+      current: 1,
+      total: 2,
+      scope: 'publication',
+    };
     const engine = {
       open: vi.fn().mockResolvedValue({ title: BOOK.title, authors: [] }),
       mount: vi.fn().mockResolvedValue(undefined),
@@ -93,7 +101,11 @@ describe('ReaderPageComponent annotations', () => {
           locator: {
             href: 'chapter-2',
             type: 'application/pdf',
-            locations: { totalProgression: 0.5, position: 2 },
+            locations: {
+              fragments: ['chapter-two'],
+              totalProgression: 0.5,
+              position: 2,
+            },
           },
         },
         {
@@ -126,12 +138,13 @@ describe('ReaderPageComponent annotations', () => {
         type: 'application/pdf',
         locations: { position: 1, totalProgression: 0 },
       }),
-      pageStatus: () => ({
-        current: 1,
-        total: 2,
-        scope: 'publication' as const,
-      }),
-      onRelocated: () => () => undefined,
+      pageStatus: () => currentPageStatus,
+      onRelocated: (listener: (locator: PublicationLocator) => void) => {
+        callbacks.relocation = listener;
+        return () => {
+          delete callbacks.relocation;
+        };
+      },
       onSelection: (
         listener: (selection: PublicationSelection | null) => void,
       ) => {
@@ -472,6 +485,121 @@ describe('ReaderPageComponent annotations', () => {
         .item(3)
         ?.classList.contains('reader-progress-milestone-active'),
     ).toBe(true);
+
+    currentPageStatus = {
+      current: 1,
+      total: 3,
+      scope: 'section',
+    };
+    const nextCallsBeforeKeyboard = (engine.next as ReturnType<typeof vi.fn>)
+      .mock.calls.length;
+    const nextKey = new KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      cancelable: true,
+    });
+    fixture.componentInstance.onDocumentKeydown(nextKey);
+    await vi.waitFor(() =>
+      expect(engine.next).toHaveBeenCalledTimes(nextCallsBeforeKeyboard + 1),
+    );
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.navigationBusy).toBe(false),
+    );
+    expect(nextKey.defaultPrevented).toBe(true);
+    callbacks.relocation?.({
+      href: 'chapter-2',
+      type: 'application/xhtml+xml',
+      locations: {
+        progression: 1 / 3,
+        totalProgression: 0.37,
+      },
+    });
+    fixture.detectChanges();
+    expect(progressMilestones.item(1)?.getAttribute('aria-current')).toBe(
+      'location',
+    );
+    expect(
+      progressMilestones
+        .item(1)
+        ?.classList.contains('reader-progress-milestone-active'),
+    ).toBe(true);
+
+    currentPageStatus = {
+      current: 2,
+      total: 3,
+      scope: 'section',
+    };
+    const nextCallsBeforeWheel = (engine.next as ReturnType<typeof vi.fn>).mock
+      .calls.length;
+    const wheel = new WheelEvent('wheel', {
+      deltaY: 100,
+      cancelable: true,
+    });
+    fixture.componentInstance.onPublicationWheel(wheel);
+    await vi.waitFor(() =>
+      expect(engine.next).toHaveBeenCalledTimes(nextCallsBeforeWheel + 1),
+    );
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.navigationBusy).toBe(false),
+    );
+    expect(wheel.defaultPrevented).toBe(true);
+    callbacks.relocation?.({
+      href: 'chapter-2',
+      type: 'application/xhtml+xml',
+      locations: {
+        progression: 2 / 3,
+        position: 2,
+        totalProgression: 0.496,
+      },
+    });
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="reader-progress-milestone"][aria-current="location"]',
+      ),
+    ).toBeNull();
+
+    currentPageStatus = {
+      current: 1,
+      total: 3,
+      scope: 'section',
+    };
+    const previousCallsBeforeKeyboard = (
+      engine.previous as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    const previousKey = new KeyboardEvent('keydown', {
+      key: 'ArrowLeft',
+      cancelable: true,
+    });
+    fixture.componentInstance.onDocumentKeydown(previousKey);
+    await vi.waitFor(() =>
+      expect(engine.previous).toHaveBeenCalledTimes(
+        previousCallsBeforeKeyboard + 1,
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.navigationBusy).toBe(false),
+    );
+    callbacks.relocation?.({
+      href: 'chapter-2',
+      type: 'application/xhtml+xml',
+      locations: {
+        progression: 1 / 3,
+        totalProgression: 0.37,
+      },
+    });
+    fixture.detectChanges();
+    expect(previousKey.defaultPrevented).toBe(true);
+    expect(progressMilestones.item(1)?.getAttribute('aria-current')).toBe(
+      'location',
+    );
+    engine.next.mockClear();
+    engine.previous.mockClear();
+    (
+      fixture.componentInstance as unknown as {
+        lastWheelNavigationAt: number;
+      }
+    ).lastWheelNavigationAt = Number.NEGATIVE_INFINITY;
+
     expect(
       fixture.nativeElement.querySelector('#reader-progress-milestones'),
     ).toBeNull();

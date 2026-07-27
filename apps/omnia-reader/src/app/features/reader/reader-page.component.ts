@@ -646,6 +646,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     ) {
       return this.pinnedProgressMilestoneKey;
     }
+    if (this.manualProgressPercent === null) {
+      return this.findProgressMilestoneForCurrentPage()?.key ?? null;
+    }
     const percent = this.displayedProgressPercent;
     if (percent === null) {
       return null;
@@ -661,12 +664,81 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     return active?.key ?? null;
   }
 
+  private findProgressMilestoneForCurrentPage(): ReaderProgressMilestone | null {
+    const locator = this.currentLocator;
+    if (!locator) {
+      return null;
+    }
+
+    const exactLocatorKey = locatorKey(locator);
+    const exactLocatorMatch = this.chapterProgressMilestones.find(
+      (milestone) => locatorKey(milestone.locator) === exactLocatorKey,
+    );
+    if (exactLocatorMatch) {
+      return exactLocatorMatch;
+    }
+
+    const currentPosition = finiteAnnotationLocation(
+      locator.locations?.position,
+    );
+    if (currentPosition !== null && this.pageStatus?.scope === 'publication') {
+      const pageMatches = this.chapterProgressMilestones.filter(
+        (milestone) =>
+          finiteAnnotationLocation(milestone.locator.locations?.position) ===
+          currentPosition,
+      );
+      const pageMatch = this.chooseCurrentPageMilestone(pageMatches, locator);
+      if (pageMatch) {
+        return pageMatch;
+      }
+    }
+
+    if (this.pageStatus?.scope !== 'section' || this.pageStatus.current !== 1) {
+      return null;
+    }
+    const sectionHref = locator.href.split('#', 1)[0];
+    if (!sectionHref) {
+      return null;
+    }
+    const sectionMatches = this.chapterProgressMilestones.filter(
+      (milestone) => milestone.locator.href.split('#', 1)[0] === sectionHref,
+    );
+    if (sectionMatches.length === 1) {
+      return sectionMatches[0];
+    }
+    const sectionStartMatches = sectionMatches.filter(
+      (milestone) => !milestone.locator.locations?.fragments?.length,
+    );
+    return this.chooseCurrentPageMilestone(sectionStartMatches, locator);
+  }
+
+  private chooseCurrentPageMilestone(
+    candidates: readonly ReaderProgressMilestone[],
+    locator: PublicationLocator,
+  ): ReaderProgressMilestone | null {
+    if (candidates.length === 0) {
+      return null;
+    }
+    const locatorHref = locator.href.split('#', 1)[0];
+    return (
+      candidates.find(
+        (candidate) => candidate.locator.href.split('#', 1)[0] === locatorHref,
+      ) ??
+      this.findClosestProgressMilestoneByPercent(
+        this.extractProgressPercent(locator) ?? candidates[0].value,
+        candidates,
+      )
+    );
+  }
+
   private findClosestProgressMilestoneByPercent(
     targetPercent: number,
+    candidates: readonly ReaderProgressMilestone[] = this
+      .chapterProgressMilestones,
   ): ReaderProgressMilestone | null {
     let nearest: ReaderProgressMilestone | null = null;
     let nearestDistance = Number.POSITIVE_INFINITY;
-    for (const candidate of this.chapterProgressMilestones) {
+    for (const candidate of candidates) {
       const distance = Math.abs(candidate.value - targetPercent);
       if (distance < nearestDistance) {
         nearestDistance = distance;
