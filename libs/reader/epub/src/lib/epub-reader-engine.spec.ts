@@ -883,7 +883,7 @@ describe('EpubReaderEngine publication compatibility', () => {
       viewport,
       expect.objectContaining({
         layout: 'pre-paginated',
-        method: 'write',
+        method: 'blobUrl',
         flow: 'paginated',
         spread: 'none',
         direction: 'rtl',

@@ -21,10 +21,7 @@ test.beforeEach(async ({ page }) => {
   const failures: string[] = [];
   browserFailures.set(page, failures);
   page.on('console', (message) => {
-    if (
-      message.type() === 'error' &&
-      !isExpectedSandboxInjectionRejection(message.text())
-    ) {
+    if (message.type() === 'error') {
       failures.push(`console: ${message.text()}`);
     }
   });
@@ -249,13 +246,4 @@ async function importPublication(
   await expect(page.getByText(expectedTitle, { exact: true })).toBeVisible({
     timeout: 20_000,
   });
-}
-
-function isExpectedSandboxInjectionRejection(message: string): boolean {
-  return (
-    message.startsWith("Blocked script execution in '") &&
-    message.includes(
-      "the document's frame is sandboxed and the 'allow-scripts' permission is not set",
-    )
-  );
 }

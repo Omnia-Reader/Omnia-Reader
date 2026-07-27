@@ -22,10 +22,7 @@ test.beforeEach(async ({ page }) => {
   const failures: string[] = [];
   browserFailures.set(page, failures);
   page.on('console', (message) => {
-    if (
-      message.type() === 'error' &&
-      !isExpectedSandboxInjectionRejection(message.text())
-    ) {
+    if (message.type() === 'error') {
       failures.push(`console: ${message.text()}`);
     }
   });
@@ -1256,6 +1253,30 @@ test('exports and restores a complete portable library backup', async ({
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   await expect(page.getByText('Portable backup note.')).toBeVisible();
+});
+
+test('loads EPUB chapters from a blob-backed sandbox document', async ({
+  page,
+}) => {
+  await importPublication(
+    page,
+    'omnia-sandbox-fixture.epub',
+    'application/epub+zip',
+    await createEpubFixture(),
+    'Omnia EPUB Fixture',
+  );
+
+  await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByText('Chapter One'),
+  ).toBeVisible({ timeout: 20_000 });
+  const iframe = page.getByTestId('publication-viewport').locator('iframe');
+  await expect(iframe).toHaveAttribute('src', /^blob:/);
+  await expect(iframe).toHaveAttribute('sandbox', /allow-same-origin/);
+  await expect(iframe).not.toHaveAttribute('sandbox', /allow-scripts/);
 });
 
 test('imports an EPUB, navigates chapters, and blocks publication scripts', async ({
@@ -2530,15 +2551,6 @@ async function prepareBinaryStorageForReload(
   }
   await movePublicationToLegacyIndexedDb(page);
   await page.reload();
-}
-
-function isExpectedSandboxInjectionRejection(message: string): boolean {
-  return (
-    message.startsWith("Blocked script execution in '") &&
-    message.includes(
-      "the document's frame is sandboxed and the 'allow-scripts' permission is not set",
-    )
-  );
 }
 
 async function installMockReaderFullscreen(

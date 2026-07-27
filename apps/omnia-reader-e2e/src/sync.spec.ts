@@ -1025,10 +1025,7 @@ function monitorBrowserFailures(page: Page): () => string[] {
     pageFailures.push(`response: ${response.status()} ${response.url()}`);
   });
   page.on('console', (message) => {
-    if (
-      message.type() === 'error' &&
-      !isExpectedSandboxInjectionRejection(message.text())
-    ) {
+    if (message.type() === 'error') {
       consoleFailures.push(message.text());
     }
   });
@@ -1061,14 +1058,5 @@ function isExpectedGatewayFailure(
   return (
     expected &&
     (status !== null || consoleFailure === 'Failed to load resource')
-  );
-}
-
-function isExpectedSandboxInjectionRejection(message: string): boolean {
-  return (
-    message.startsWith("Blocked script execution in '") &&
-    message.includes(
-      "the document's frame is sandboxed and the 'allow-scripts' permission is not set",
-    )
   );
 }

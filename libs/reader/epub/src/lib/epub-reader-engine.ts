@@ -602,13 +602,16 @@ export class EpubReaderEngine implements ReaderEngine {
     viewport.setAttribute('dir', this.readingDirection);
     this.setCurrentSectionPresentation(this.book.spine.get?.() ?? undefined);
     const fixedLayout = this.currentSectionLayout === 'pre-paginated';
+    // Use a blob-backed document so the sandboxed chapter never starts as the
+    // application's inherited same-origin route document. This keeps scripts
+    // disabled without Chrome reporting blocked application script execution.
     // `method` is supported by epub.ts at runtime but is missing from its
     // public RenditionOptions declaration.
     const renditionOptions = {
       width: '100%',
       height: '100%',
       manager: 'default',
-      method: 'write',
+      method: 'blobUrl',
       layout: this.currentSectionLayout,
       flow: this.effectiveFlow(),
       spread: this.effectiveSpread(),
