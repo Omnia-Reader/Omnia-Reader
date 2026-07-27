@@ -4,6 +4,7 @@ import {
 } from './sync-provider-selection';
 import { SyncActivityNotifier } from './sync-activity';
 import { SyncWorker, SyncWorkerResult } from './library-sync-coordinator';
+import { ObjectTransferProgress } from './library-sync-transport';
 
 export type AutoSyncReason =
   | 'startup'
@@ -17,6 +18,8 @@ export type AutoSyncPhase =
   | 'idle'
   | 'scheduled'
   | 'syncing'
+  | 'cancelling'
+  | 'cancelled'
   | 'offline'
   | 'error';
 
@@ -27,6 +30,7 @@ export interface AutoSyncStatus {
   lastAttemptAt?: string;
   lastSuccessAt?: string;
   lastResult?: SyncWorkerResult;
+  transferProgress?: ObjectTransferProgress;
   errorMessage?: string;
 }
 
@@ -50,10 +54,15 @@ export interface AutoSyncSchedulerOptions {
 export interface AutoSyncRateLimitStore {
   read(provider: SyncProviderKind): number | null;
   write(provider: SyncProviderKind, timestamp: number): void;
+  readRetryAfter(provider: SyncProviderKind): number | null;
+  writeRetryAfter(provider: SyncProviderKind, timestamp: number | null): void;
 }
 
 const DEFAULT_QUIET_INTERVAL_MS = 30_000;
 const DEFAULT_PERIODIC_MINIMUM_INTERVAL_MS = 5 * 60_000;
+const DEFAULT_PROVIDER_RETRY_AFTER_MS = 60_000;
+const PROVIDER_RATE_LIMIT_MESSAGE =
+  'The synchronization provider is temporarily rate limiting requests. Local changes are safe and automatic synchronization will retry.';
 
 /**
  * Coalesces automatic synchronization triggers without ever blocking local
@@ -67,6 +76,10 @@ export class AutoSyncScheduler {
   private readonly environment: AutoSyncEnvironment;
   private readonly rateLimitStore: AutoSyncRateLimitStore;
   private readonly listeners = new Set<(status: AutoSyncStatus) => void>();
+  private readonly providerRetryAfterAt: Partial<
+    Record<SyncProviderKind, number>
+  > = {};
+  private readonly loadedProviderRetryAfter = new Set<SyncProviderKind>();
 
   private statusValue: AutoSyncStatus = { phase: 'idle' };
   private started = false;
@@ -78,6 +91,7 @@ export class AutoSyncScheduler {
   > = {};
   private readonly loadedRateLimits = new Set<SyncProviderKind>();
   private activeSync: Promise<SyncWorkerResult> | null = null;
+  private activeSyncController: AbortController | null = null;
   private unsubscribeActivity: (() => void) | null = null;
   private unsubscribeOnline: (() => void) | null = null;
   private unsubscribeOffline: (() => void) | null = null;
@@ -147,6 +161,9 @@ export class AutoSyncScheduler {
     this.started = false;
     this.clearScheduledTimer();
     this.queuedReason = null;
+    this.activeSyncController?.abort(
+      new DOMException('Automatic synchronization stopped', 'AbortError'),
+    );
     this.unsubscribeActivity?.();
     this.unsubscribeOnline?.();
     this.unsubscribeOffline?.();
@@ -157,18 +174,43 @@ export class AutoSyncScheduler {
       phase: 'idle',
       reason: undefined,
       scheduledFor: undefined,
+      transferProgress: undefined,
       errorMessage: undefined,
     });
   }
 
+  cancelActive(): boolean {
+    const controller = this.activeSyncController;
+    if (!controller || controller.signal.aborted) {
+      return false;
+    }
+
+    this.queuedReason = null;
+    controller.abort(
+      new DOMException('Automatic synchronization was cancelled', 'AbortError'),
+    );
+    this.updateStatus({
+      phase: 'cancelling',
+      scheduledFor: undefined,
+      transferProgress: undefined,
+      errorMessage: undefined,
+    });
+    return true;
+  }
+
   requestImmediate(reason: Exclude<AutoSyncReason, 'reading-quiet'>): void {
-    if (!this.started || !this.selection.current()) {
+    const provider = this.selection.current();
+    if (!this.started || !provider) {
       return;
     }
     if (!this.environment.isOnline()) {
       this.queuedReason = mergeReasons(this.queuedReason, reason);
       this.clearScheduledTimer();
-      this.updateStatus({ phase: 'offline', reason });
+      this.updateStatus({
+        phase: 'offline',
+        reason,
+        transferProgress: undefined,
+      });
       return;
     }
     if (this.activeSync) {
@@ -176,7 +218,12 @@ export class AutoSyncScheduler {
       return;
     }
 
-    this.schedule(reason, 0);
+    const retryDelay = this.readProviderRetryDelay(provider);
+    this.schedule(
+      reason,
+      retryDelay,
+      retryDelay > 0 ? PROVIDER_RATE_LIMIT_MESSAGE : undefined,
+    );
   }
 
   requestQuiet(): void {
@@ -187,7 +234,11 @@ export class AutoSyncScheduler {
     if (!this.environment.isOnline()) {
       this.queuedReason = mergeReasons(this.queuedReason, 'reading-quiet');
       this.clearScheduledTimer();
-      this.updateStatus({ phase: 'offline', reason: 'reading-quiet' });
+      this.updateStatus({
+        phase: 'offline',
+        reason: 'reading-quiet',
+        transferProgress: undefined,
+      });
       return;
     }
     if (this.activeSync) {
@@ -202,11 +253,24 @@ export class AutoSyncScheduler {
       lastPeriodicSyncAt === null
         ? now
         : lastPeriodicSyncAt + this.periodicMinimumIntervalMs;
-    const delay = Math.max(this.quietIntervalMs, nextPeriodicAt - now);
-    this.schedule('reading-quiet', delay);
+    const providerRetryDelay = this.readProviderRetryDelay(provider);
+    const delay = Math.max(
+      this.quietIntervalMs,
+      nextPeriodicAt - now,
+      providerRetryDelay,
+    );
+    this.schedule(
+      'reading-quiet',
+      delay,
+      providerRetryDelay > 0 ? PROVIDER_RATE_LIMIT_MESSAGE : undefined,
+    );
   }
 
-  private schedule(reason: AutoSyncReason, delay: number): void {
+  private schedule(
+    reason: AutoSyncReason,
+    delay: number,
+    errorMessage?: string,
+  ): void {
     this.clearScheduledTimer();
     this.scheduledReason = reason;
     const scheduledAt = this.environment.now() + delay;
@@ -219,19 +283,28 @@ export class AutoSyncScheduler {
       phase: 'scheduled',
       reason,
       scheduledFor: new Date(scheduledAt).toISOString(),
-      errorMessage: undefined,
+      transferProgress: undefined,
+      errorMessage,
     });
   }
 
   private async runAutomatic(reason: AutoSyncReason): Promise<void> {
     const provider = this.selection.current();
     if (!this.started || !provider) {
-      this.updateStatus({ phase: 'idle', reason: undefined });
+      this.updateStatus({
+        phase: 'idle',
+        reason: undefined,
+        transferProgress: undefined,
+      });
       return;
     }
     if (!this.environment.isOnline()) {
       this.queuedReason = mergeReasons(this.queuedReason, reason);
-      this.updateStatus({ phase: 'offline', reason });
+      this.updateStatus({
+        phase: 'offline',
+        reason,
+        transferProgress: undefined,
+      });
       return;
     }
     if (this.activeSync) {
@@ -245,17 +318,38 @@ export class AutoSyncScheduler {
       reason,
       scheduledFor: undefined,
       lastAttemptAt: new Date(attemptAt).toISOString(),
+      transferProgress: undefined,
       errorMessage: undefined,
     });
 
-    const activeSync = Promise.resolve().then(() => this.worker.synchronize());
+    const controller = new AbortController();
+    this.activeSyncController = controller;
+    const activeSync = Promise.resolve().then(() =>
+      this.worker.synchronize({
+        signal: controller.signal,
+        onTransferProgress: (progress) => {
+          if (
+            this.started &&
+            this.activeSyncController === controller &&
+            !controller.signal.aborted
+          ) {
+            this.updateStatus({ transferProgress: progress });
+          }
+        },
+      }),
+    );
     this.activeSync = activeSync;
+    let providerRetryDelayMs: number | null = null;
     try {
       const result = await activeSync;
+      if (controller.signal.aborted) {
+        throw controller.signal.reason;
+      }
       if (!this.started) {
         return;
       }
       const completedAt = this.environment.now();
+      this.clearProviderRetryAfter(provider);
       if (reason === 'reading-quiet' && provider === 'git') {
         this.lastPeriodicSyncAt[provider] = completedAt;
         try {
@@ -269,24 +363,62 @@ export class AutoSyncScheduler {
         reason,
         lastSuccessAt: new Date(completedAt).toISOString(),
         lastResult: result,
+        transferProgress: undefined,
         errorMessage: undefined,
       });
     } catch (error) {
       if (!this.started) {
         return;
       }
-      this.updateStatus({
-        phase: 'error',
-        reason,
-        errorMessage:
-          error instanceof Error
-            ? error.message
-            : 'Automatic library synchronization failed.',
-      });
+      if (controller.signal.aborted) {
+        this.queuedReason = null;
+        this.updateStatus({
+          phase: 'cancelled',
+          reason,
+          transferProgress: undefined,
+          errorMessage: undefined,
+        });
+      } else {
+        const retryAfterSeconds = providerRetryAfterSeconds(error);
+        if (retryAfterSeconds !== null) {
+          providerRetryDelayMs = retryAfterSeconds * 1000;
+          this.persistProviderRetryAfter(
+            provider,
+            this.environment.now() + providerRetryDelayMs,
+          );
+        } else {
+          this.updateStatus({
+            phase: 'error',
+            reason,
+            transferProgress: undefined,
+            errorMessage:
+              error instanceof Error
+                ? error.message
+                : 'Automatic library synchronization failed.',
+          });
+        }
+      }
     } finally {
-      this.activeSync = null;
+      if (this.activeSync === activeSync) {
+        this.activeSync = null;
+      }
+      if (this.activeSyncController === controller) {
+        this.activeSyncController = null;
+      }
       if (!this.started) {
         this.queuedReason = null;
+      } else if (controller.signal.aborted) {
+        this.queuedReason = null;
+      } else if (providerRetryDelayMs !== null) {
+        const retryReason = this.queuedReason
+          ? mergeReasons(this.queuedReason, reason)
+          : reason;
+        this.queuedReason = null;
+        this.schedule(
+          retryReason,
+          providerRetryDelayMs,
+          PROVIDER_RATE_LIMIT_MESSAGE,
+        );
       } else {
         const queuedReason = this.queuedReason;
         this.queuedReason = null;
@@ -313,6 +445,7 @@ export class AutoSyncScheduler {
       phase: 'offline',
       reason: this.queuedReason ?? undefined,
       scheduledFor: undefined,
+      transferProgress: undefined,
     });
   }
 
@@ -338,6 +471,55 @@ export class AutoSyncScheduler {
       }
     }
     return this.lastPeriodicSyncAt[provider] ?? null;
+  }
+
+  private readProviderRetryDelay(provider: SyncProviderKind): number {
+    if (!this.loadedProviderRetryAfter.has(provider)) {
+      this.loadedProviderRetryAfter.add(provider);
+      let stored: number | null = null;
+      try {
+        stored = this.rateLimitStore.readRetryAfter(provider);
+      } catch {
+        // Missing storage support falls back to the in-memory deadline.
+      }
+      if (stored !== null) {
+        this.providerRetryAfterAt[provider] = stored;
+      }
+    }
+
+    const retryAfterAt = this.providerRetryAfterAt[provider];
+    if (retryAfterAt === undefined) {
+      return 0;
+    }
+    const delay = retryAfterAt - this.environment.now();
+    if (delay > 0) {
+      return delay;
+    }
+    this.clearProviderRetryAfter(provider);
+    return 0;
+  }
+
+  private persistProviderRetryAfter(
+    provider: SyncProviderKind,
+    retryAfterAt: number,
+  ): void {
+    this.loadedProviderRetryAfter.add(provider);
+    this.providerRetryAfterAt[provider] = retryAfterAt;
+    try {
+      this.rateLimitStore.writeRetryAfter(provider, retryAfterAt);
+    } catch {
+      // Persistence cannot turn provider backoff into a sync failure.
+    }
+  }
+
+  private clearProviderRetryAfter(provider: SyncProviderKind): void {
+    this.loadedProviderRetryAfter.add(provider);
+    delete this.providerRetryAfterAt[provider];
+    try {
+      this.rateLimitStore.writeRetryAfter(provider, null);
+    } catch {
+      // Persistence is an optimization, never a sync prerequisite.
+    }
   }
 
   private updateStatus(status: Partial<AutoSyncStatus>): void {
@@ -377,12 +559,14 @@ function browserEnvironment(): AutoSyncEnvironment {
 }
 
 function browserAutoSyncRateLimitStore(): AutoSyncRateLimitStore {
-  const key = (provider: SyncProviderKind) =>
+  const periodicKey = (provider: SyncProviderKind) =>
     `omnia-reader.auto-sync.v1.last-periodic.${provider}`;
+  const retryAfterKey = (provider: SyncProviderKind) =>
+    `omnia-reader.auto-sync.v1.retry-after.${provider}`;
   return {
     read: (provider) => {
       try {
-        const value = globalThis.localStorage?.getItem(key(provider));
+        const value = globalThis.localStorage?.getItem(periodicKey(provider));
         if (!value) {
           return null;
         }
@@ -394,12 +578,60 @@ function browserAutoSyncRateLimitStore(): AutoSyncRateLimitStore {
     },
     write: (provider, timestamp) => {
       try {
-        globalThis.localStorage?.setItem(key(provider), String(timestamp));
+        globalThis.localStorage?.setItem(
+          periodicKey(provider),
+          String(timestamp),
+        );
       } catch {
         // Rate-limit persistence is an optimization, never a sync prerequisite.
       }
     },
+    readRetryAfter: (provider) => {
+      try {
+        const value = globalThis.localStorage?.getItem(retryAfterKey(provider));
+        if (!value) {
+          return null;
+        }
+        const timestamp = Number(value);
+        return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
+      } catch {
+        return null;
+      }
+    },
+    writeRetryAfter: (provider, timestamp) => {
+      try {
+        if (timestamp === null) {
+          globalThis.localStorage?.removeItem(retryAfterKey(provider));
+        } else {
+          globalThis.localStorage?.setItem(
+            retryAfterKey(provider),
+            String(timestamp),
+          );
+        }
+      } catch {
+        // Provider backoff remains active in memory when storage is unavailable.
+      }
+    },
   };
+}
+
+function providerRetryAfterSeconds(error: unknown): number | null {
+  if (!error || typeof error !== 'object' || !('status' in error)) {
+    return null;
+  }
+  if ((error as { status?: unknown }).status !== 429) {
+    return null;
+  }
+  const value = (error as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+  if (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= 86_400
+  ) {
+    return value;
+  }
+  return DEFAULT_PROVIDER_RETRY_AFTER_MS / 1000;
 }
 
 function listen(

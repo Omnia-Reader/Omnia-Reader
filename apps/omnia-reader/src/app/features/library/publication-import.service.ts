@@ -5,7 +5,10 @@ import {
   BookSource,
   NewSyncOperation,
 } from '@omnia-reader/reader/domain';
-import { createBookSyncManifest } from '@omnia-reader/sync/core';
+import {
+  BOOK_SYNC_EXCLUSIONS,
+  createBookSyncManifest,
+} from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 
@@ -43,6 +46,7 @@ export class PublicationImportService {
   private readonly repository = inject(LIBRARY_REPOSITORY);
   private readonly syncJournal = inject(SYNC_OPERATION_JOURNAL);
   private readonly enrichment = inject(PublicationEnrichmentService);
+  private readonly syncExclusions = inject(BOOK_SYNC_EXCLUSIONS);
   private readonly importedListeners = new Set<
     (books: readonly BookRecord[]) => void
   >();
@@ -66,6 +70,7 @@ export class PublicationImportService {
         imported = await this.repository.importBook(source);
         const isDuplicate = existingBookIds.has(imported.id);
         const book = await this.enrichment.validateAndEnrich(imported);
+        this.syncExclusions.include(book.id);
         books.push(book);
         (isDuplicate ? duplicates : added).push(book);
         existingBookIds.add(book.id);
@@ -73,7 +78,7 @@ export class PublicationImportService {
           entity: 'book',
           entityId: book.id,
           operation: 'upsert',
-          payload: createBookSyncManifest(book),
+          payload: createBookSyncManifest(book, new Date().toISOString()),
         });
       } catch (error) {
         if (imported && !existingBookIds.has(imported.id)) {

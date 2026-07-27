@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   gatewaySessionStoresFromEnvironment,
   type SharedRedisClient,
@@ -15,6 +18,10 @@ describe('gatewaySessionStoresFromEnvironment', () => {
       authorizationState: 'github-state',
     });
     await expect(stores.mega?.get('session-a')).resolves.toBeNull();
+    await expect(
+      stores.githubRevocations?.revoke(42, 'delivery-memory'),
+    ).resolves.toBe(true);
+    await expect(stores.githubRevocations?.generation(42)).resolves.toBe(1);
     await stores.close();
   });
 
@@ -48,11 +55,62 @@ describe('gatewaySessionStoresFromEnvironment', () => {
     await expect(stores.mega?.get('session-a')).resolves.toEqual({
       authorizationState: 'mega-state',
     });
+    await expect(
+      stores.githubRevocations?.revoke(42, 'delivery-redis'),
+    ).resolves.toBe(true);
+    await expect(stores.githubRevocations?.generation(42)).resolves.toBe(1);
     expect(client.keys().some((key) => key.includes('session-a'))).toBe(false);
+    expect(client.keys().some((key) => key.includes('delivery-redis'))).toBe(
+      false,
+    );
+    expect(client.keys().some((key) => key.endsWith(':42'))).toBe(false);
 
     await stores.close();
     await stores.close();
     expect(client.destroyCount).toBe(1);
+  });
+
+  it('persists encrypted sessions for a restarted single-node gateway', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'omnia-sync-stores-'));
+    const configured = environment({
+      OMNIA_SYNC_SESSION_DIRECTORY: directory,
+    });
+
+    try {
+      const first = await gatewaySessionStoresFromEnvironment(configured);
+      await first.github?.set('session-a', {
+        authorizationState: 'github-state',
+      });
+      await first.close();
+
+      const restarted = await gatewaySessionStoresFromEnvironment(configured);
+      await expect(restarted.github?.get('session-a')).resolves.toEqual({
+        authorizationState: 'github-state',
+      });
+      await expect(restarted.mega?.get('session-a')).resolves.toBeNull();
+      await restarted.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not mix file persistence with Redis or production webhooks', async () => {
+    await expect(
+      gatewaySessionStoresFromEnvironment(
+        environment({
+          OMNIA_SYNC_REDIS_URL: 'redis://127.0.0.1:6379',
+          OMNIA_SYNC_SESSION_DIRECTORY: '.session-data',
+        }),
+      ),
+    ).rejects.toThrow('either OMNIA_SYNC_REDIS_URL');
+    await expect(
+      gatewaySessionStoresFromEnvironment(
+        environment({
+          OMNIA_SYNC_SESSION_DIRECTORY: '.session-data',
+          OMNIA_GITHUB_WEBHOOK_SECRET: 'x'.repeat(32),
+        }),
+      ),
+    ).rejects.toThrow('webhooks require the Redis');
   });
 
   it('requires TLS for a non-loopback Redis service', async () => {
@@ -98,6 +156,14 @@ describe.skipIf(!process.env['OMNIA_SYNC_REDIS_TEST_URL'])(
             authorizationState: 'replayed-state',
           }),
         ).rejects.toThrow('Provider session is invalid');
+        await expect(
+          first.githubRevocations?.revoke(42, 'delivery-shared'),
+        ).resolves.toBe(true);
+        await expect(second.githubRevocations?.generation(42)).resolves.toBe(1);
+        await expect(
+          second.githubRevocations?.revoke(42, 'delivery-shared'),
+        ).resolves.toBe(false);
+        await expect(first.githubRevocations?.generation(42)).resolves.toBe(1);
         await first.github?.delete('session-b');
       } finally {
         await first.close();
@@ -164,9 +230,24 @@ class FakeSharedRedisClient implements SharedRedisClient {
   }
 
   async eval(
-    _script: string,
+    script: string,
     options: { keys: string[]; arguments: string[] },
   ): Promise<unknown> {
+    if (script.includes("redis.call('SET', KEYS[2], '1'")) {
+      const [generationKey, deliveryKey] = options.keys;
+      const [deliveryTtl] = options.arguments;
+      if (this.records.has(deliveryKey)) {
+        return [0, Number((await this.get(generationKey)) ?? '0')];
+      }
+      await this.set(deliveryKey, '1', { PX: Number(deliveryTtl) });
+      const generation = Number((await this.get(generationKey)) ?? '0') + 1;
+      this.records.set(generationKey, {
+        value: String(generation),
+        expiresAt: Number.POSITIVE_INFINITY,
+      });
+      return [1, generation];
+    }
+
     const [sourceKey, replacementKey] = options.keys;
     const [value, ttl] = options.arguments;
     if (!this.records.has(sourceKey)) {

@@ -8,6 +8,7 @@ import {
   type DocumentWriteRequest,
   type RemoteDocument,
   type RemoteObject,
+  type RemoteObjectDelete,
   type RemoteObjectDownload,
   type RemoteObjectUpload,
 } from './gateway-contract.js';
@@ -515,6 +516,37 @@ export class MegaSyncGatewayAdapter implements CredentialSyncGatewayAdapter {
     } catch (error) {
       await this.safeRemove(context, published.handle);
       throw error;
+    }
+  }
+
+  async deleteObject(
+    sessionId: string,
+    request: RemoteObjectDelete,
+  ): Promise<void> {
+    const context = await this.context(sessionId);
+    const current = await this.resolveObject(sessionId, context, request.path);
+    if (!current) {
+      return;
+    }
+    if (
+      request.expectedRevision !== undefined &&
+      request.expectedRevision !== current.revision
+    ) {
+      throw objectConflict();
+    }
+    const candidates = await this.fileCandidates(
+      sessionId,
+      context,
+      request.path,
+    );
+    for (const candidate of candidates) {
+      await this.authenticatedBridgeCall(sessionId, context.state, () =>
+        this.options.bridge.removeFile(
+          context.sdkSession,
+          context.folder.handle,
+          candidate.handle,
+        ),
+      );
     }
   }
 

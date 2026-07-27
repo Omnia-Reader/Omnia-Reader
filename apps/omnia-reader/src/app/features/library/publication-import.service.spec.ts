@@ -7,6 +7,10 @@ import {
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
+import {
+  BOOK_SYNC_EXCLUSIONS,
+  BookSyncExclusions,
+} from '@omnia-reader/sync/core';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 import { PublicationImportService } from './publication-import.service';
 
@@ -38,6 +42,11 @@ describe('PublicationImportService', () => {
   const enrichment = {
     validateAndEnrich: vi.fn().mockResolvedValue(book),
   };
+  const syncExclusions = {
+    exclude: vi.fn(),
+    include: vi.fn(),
+    isExcluded: vi.fn(),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,6 +70,10 @@ describe('PublicationImportService', () => {
           provide: PublicationEnrichmentService,
           useValue: enrichment,
         },
+        {
+          provide: BOOK_SYNC_EXCLUSIONS,
+          useValue: syncExclusions as unknown as BookSyncExclusions,
+        },
       ],
     });
   });
@@ -78,6 +91,7 @@ describe('PublicationImportService', () => {
     });
     expect(repository.importBook).toHaveBeenCalledWith(source);
     expect(enrichment.validateAndEnrich).toHaveBeenCalledWith(book);
+    expect(syncExclusions.include).toHaveBeenCalledWith(book.id);
     expect(journal.append).toHaveBeenCalledWith(
       expect.objectContaining({
         entity: 'book',

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
+  AuthorizationHttpError,
   GatewayHttpError,
   type DocumentWriteRequest,
   type SyncGatewayAdapter,
@@ -70,6 +71,7 @@ export async function registerProviderRoutes(
     '/auth/start',
     async (request, reply) => {
       const sessionId = session(request, reply, cookieName, options);
+      authorizationHeaders(reply);
       const target = await options.adapter.authorizationUrl(
         sessionId,
         safeReturnPath(request.query.returnTo),
@@ -139,13 +141,27 @@ export async function registerProviderRoutes(
             typeof entry[1] === 'string' && entry[1].length <= 4096,
         ),
       );
-      const returnTo = await options.adapter.completeAuthorization(
-        sessionId,
-        replacementSessionId,
-        parameters,
-      );
-      setSessionCookie(reply, cookieName, replacementSessionId, options);
-      return reply.redirect(safeReturnPath(returnTo));
+      authorizationHeaders(reply);
+      try {
+        const returnTo = await options.adapter.completeAuthorization(
+          sessionId,
+          replacementSessionId,
+          parameters,
+        );
+        setSessionCookie(reply, cookieName, replacementSessionId, options);
+        return reply.redirect(safeReturnPath(returnTo));
+      } catch (error) {
+        if (!(error instanceof GatewayHttpError)) {
+          throw error;
+        }
+        clearSessionCookie(reply, cookieName, options);
+        const outcome =
+          error instanceof AuthorizationHttpError ? error.outcome : 'failed';
+        return reply.redirect(
+          `/settings/sync?syncAuth=${options.kind}-${outcome}`,
+          303,
+        );
+      }
     },
   );
 
@@ -281,6 +297,20 @@ export async function registerProviderRoutes(
       });
     },
   );
+
+  app.delete<{
+    Querystring: { path?: string; expectedRevision?: string };
+  }>(names.objectPath, async (request, reply) => {
+    requireSameOriginMutation(request);
+    const path = logicalSyncPath(request.query.path);
+    const expectedRevision = optionalRevision(request.query.expectedRevision);
+    const sessionId = session(request, reply, cookieName, options);
+    await options.adapter.deleteObject(sessionId, {
+      path,
+      ...(expectedRevision ? { expectedRevision } : {}),
+    });
+    return reply.code(204).send();
+  });
 }
 
 function boundedStringRecord(value: unknown): Record<string, string> {
@@ -295,6 +325,16 @@ function boundedStringRecord(value: unknown): Record<string, string> {
         entry[1].length <= 4096,
     ),
   );
+}
+
+function optionalRevision(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value.length === 0 || value.length > 1024 || value.includes('\0')) {
+    throw new GatewayHttpError(400, 'The expected object revision is invalid');
+  }
+  return value;
 }
 
 function authorizationHeaders(reply: FastifyReply): void {
@@ -408,6 +448,19 @@ function setSessionCookie(
     secure: options.secureCookies,
     sameSite: 'lax',
     maxAge: 60 * 60 * 12,
+  });
+}
+
+function clearSessionCookie(
+  reply: FastifyReply,
+  cookieName: string,
+  options: ProviderRouteOptions,
+): void {
+  reply.clearCookie(cookieName, {
+    path: `/api/sync/${options.kind}`,
+    httpOnly: true,
+    secure: options.secureCookies,
+    sameSite: 'lax',
   });
 }
 

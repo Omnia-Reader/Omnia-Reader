@@ -62,6 +62,17 @@
           "optimization": false,
           "extractLicenses": false,
           "sourceMap": true
+        },
+        "local-development": {
+          "optimization": false,
+          "extractLicenses": false,
+          "sourceMap": true,
+          "fileReplacements": [
+            {
+              "replace": "apps/omnia-reader/src/app/app-capability-flags.ts",
+              "with": "apps/omnia-reader/src/app/app-capability-flags.local.ts"
+            }
+          ]
         }
       },
       "defaultConfiguration": "production"
@@ -79,9 +90,12 @@
         },
         "development": {
           "buildTarget": "omnia-reader:build:development"
+        },
+        "local": {
+          "buildTarget": "omnia-reader:build:local-development"
         }
       },
-      "defaultConfiguration": "development"
+      "defaultConfiguration": "local"
     },
     "test": {
       "executor": "@angular/build:unit-test",

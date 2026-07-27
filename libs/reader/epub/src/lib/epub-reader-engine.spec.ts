@@ -5,7 +5,30 @@ import {
   PublicationAnnotation,
   PublicationSelection,
 } from '@omnia-reader/reader/domain';
-import { EpubReaderEngine } from './epub-reader-engine';
+import { EpubReaderEngine, sanitizePublicationCss } from './epub-reader-engine';
+
+describe('EPUB publication CSS sanitization', () => {
+  it('removes remote imports and neutralizes remote font URLs without dropping local styles', () => {
+    const sanitized = sanitizePublicationCss(`
+      @import url("https://fonts.googleapis.com/css2?family=Mulish");
+      @font-face {
+        font-family: "Remote";
+        src: url(https://fonts.invalid/remote.woff2) format("woff2");
+      }
+      @font-face {
+        font-family: "Embedded";
+        src: url("../fonts/embedded.woff2") format("woff2");
+      }
+      body { color: #222; background-image: url("//tracking.invalid/pixel"); }
+    `);
+
+    expect(sanitized).not.toContain('fonts.googleapis.com');
+    expect(sanitized).not.toContain('fonts.invalid');
+    expect(sanitized).not.toContain('tracking.invalid');
+    expect(sanitized).toContain('../fonts/embedded.woff2');
+    expect(sanitized).toContain('color: #222');
+  });
+});
 
 describe('EpubReaderEngine annotations', () => {
   it('captures a CFI text quote and renders persisted highlights', async () => {
@@ -126,10 +149,11 @@ describe('EpubReaderEngine annotations', () => {
       '<a href="javascript:globalThis.compromised=true">Unsafe link</a>' +
       '<a id="internal" href="chapter-2.xhtml#target">Safe link</a>' +
       '<a id="external" href="https://example.com/reference">External link</a>' +
+      '<link id="remote-styles" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish">' +
       '<img id="tracker" src="https://tracking.invalid/pixel.png" srcset="//tracking.invalid/pixel-2.png 2x">' +
       '<form id="form" action="https://tracking.invalid/submit"><button formaction="/submit">Submit</button></form>' +
-      '<div id="styled" style="background:url(https://tracking.invalid/background.png)">Styled</div>' +
-      '<style>@import "https://tracking.invalid/publication.css";</style>';
+      '<div id="styled" style="color: red; background:url(https://tracking.invalid/background.png)">Styled</div>' +
+      '<style>body { color: black } @import "https://tracking.invalid/publication.css";</style>';
     sanitizeContent?.(unsafeDocument);
     expect(unsafeDocument.querySelector('script')).toBeNull();
     expect(unsafeDocument.querySelector('iframe')).toBeNull();
@@ -165,10 +189,16 @@ describe('EpubReaderEngine annotations', () => {
     expect(
       unsafeDocument.querySelector('#form button')?.hasAttribute('formaction'),
     ).toBe(false);
-    expect(unsafeDocument.querySelector('#styled')?.hasAttribute('style')).toBe(
-      false,
+    expect(unsafeDocument.querySelector('#remote-styles')).toBeNull();
+    expect(unsafeDocument.querySelector('#styled')?.getAttribute('style')).toBe(
+      'color: red; background:url("data:,")',
     );
-    expect(unsafeDocument.querySelector('style')).toBeNull();
+    expect(unsafeDocument.querySelector('style')?.textContent).toContain(
+      'body { color: black }',
+    );
+    expect(unsafeDocument.querySelector('style')?.textContent).not.toContain(
+      'tracking.invalid',
+    );
     const navigation: string[] = [];
     const zoom: string[] = [];
     engine.onNavigationRequested((direction) => navigation.push(direction));

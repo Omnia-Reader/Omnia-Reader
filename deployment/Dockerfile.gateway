@@ -1,0 +1,49 @@
+ARG NODE_IMAGE=node:26.5.0-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb
+
+FROM ${NODE_IMAGE} AS build
+
+WORKDIR /source
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+RUN npx nx build sync-gateway --configuration production --skip-nx-cache
+
+FROM ${NODE_IMAGE} AS dependencies
+
+WORKDIR /app
+COPY --from=build /source/dist/apps/sync-gateway/package.json ./
+COPY --from=build /source/dist/apps/sync-gateway/package-lock.json ./
+
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force
+
+FROM ${NODE_IMAGE} AS runtime
+
+ARG OMNIA_VERSION=0.1.0
+ARG OMNIA_REVISION=unknown
+
+LABEL org.opencontainers.image.title="Omnia Reader synchronization gateway" \
+      org.opencontainers.image.description="Same-origin GitHub, Git LFS, and MEGA synchronization gateway" \
+      org.opencontainers.image.source="https://github.com/omnia-reader/omnia-reader" \
+      org.opencontainers.image.version="${OMNIA_VERSION}" \
+      org.opencontainers.image.revision="${OMNIA_REVISION}"
+
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3333
+
+WORKDIR /app
+COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /source/dist/apps/sync-gateway/main.js ./
+COPY --from=build --chown=node:node /source/dist/apps/sync-gateway/package.json ./
+
+USER node
+
+EXPOSE 3333
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3333/healthz').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+
+ENTRYPOINT ["node", "main.js"]

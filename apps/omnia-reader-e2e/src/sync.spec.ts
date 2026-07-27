@@ -104,12 +104,8 @@ const scenarios: readonly SyncScenario[] = [
     title: 'Omnia EPUB Fixture',
     publication: () => createEpubFixture(),
     navigate: async (page) => {
-      await page
-        .getByRole('button', { name: 'Toggle table of contents' })
-        .click();
-      await page
-        .getByRole('button', { name: 'Chapter Two', exact: true })
-        .click();
+      await ensureTableOfContentsOpen(page);
+      await page.getByRole('button', { name: /^\d+\s+Chapter Two$/ }).click();
       await expectEpubChapter(page, 'Chapter Two');
       await expect
         .poll(() => storedProgressHref(page), { timeout: 20_000 })
@@ -124,12 +120,8 @@ const scenarios: readonly SyncScenario[] = [
     highlightText: 'second EPUB fixture',
     annotationNote: 'MEGA synchronized EPUB annotation.',
     navigateToSecondDeviceState: async (page) => {
-      await page
-        .getByRole('button', { name: 'Toggle table of contents' })
-        .click();
-      await page
-        .getByRole('button', { name: 'Chapter One', exact: true })
-        .click();
+      await ensureTableOfContentsOpen(page);
+      await page.getByRole('button', { name: /^\d+\s+Chapter One$/ }).click();
       await expectEpubChapter(page, 'Chapter One');
       await expect
         .poll(() => storedProgressHref(page), { timeout: 20_000 })
@@ -154,6 +146,38 @@ const scenarios: readonly SyncScenario[] = [
   },
 ];
 
+test('offers GitHub App installation before account authorization', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git', { authenticated: false });
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
+
+  await expect(
+    page.getByRole('link', { name: 'Install GitHub App' }),
+  ).toHaveAttribute(
+    'href',
+    'https://github.test/apps/omnia-reader/installations/new',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Connect GitHub' }),
+  ).toBeEnabled();
+});
+
+test('returns a cancelled GitHub authorization to Sync Settings', async ({
+  page,
+}) => {
+  await page.goto('/settings/sync?syncAuth=github-denied');
+
+  await expect(page.getByRole('alert')).toContainText(
+    'GitHub authorization was cancelled. Your local library is unchanged.',
+  );
+  await expect(page).toHaveURL('/settings/sync');
+});
+
 test('creates and selects a private GitHub synchronization repository', async ({
   context,
   page,
@@ -176,6 +200,292 @@ test('creates and selects a private GitHub synchronization repository', async ({
     ),
   ).toBeVisible();
   await expect(page.locator('select').first()).toHaveValue('2');
+});
+
+test('recovers when GitHub forbids repository creation', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git', {
+    forbidRepositoryCreation: true,
+  });
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
+  await page
+    .getByRole('textbox', { name: 'Repository name' })
+    .fill('omnia-reader-private');
+  await page.getByRole('button', { name: 'Create private repository' }).click();
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText(
+    'Grant the App Contents read and write access',
+  );
+  await expect(alert).toContainText('Administration read and write access');
+  await expect(alert).toContainText('Your local library is unchanged');
+  await expect(alert).not.toContainText('Provider-controlled');
+  await expect(page.getByTestId('github-permission-recovery')).toHaveAttribute(
+    'href',
+    'https://github.test/apps/omnia-reader/installations/new',
+  );
+});
+
+test('offers reconnection when GitHub authorization is revoked', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git', {
+    expireGitHubAuthorizationOnRepositories: true,
+  });
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText(
+    'Your provider session expired. Connect again to sync.',
+  );
+  await expect(alert).not.toContainText('Provider-controlled');
+  await expect(
+    page.getByRole('button', { name: 'Connect GitHub' }),
+  ).toBeEnabled();
+});
+
+test('backs off safely when GitHub rate limits repository access', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git', {
+    rateLimitGitHubRepositories: true,
+  });
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText(
+    'GitHub is temporarily rate limiting synchronization',
+  );
+  await expect(alert).toContainText('Try again in about 2 minutes');
+  await expect(alert).toContainText('pending changes remain safe');
+  await expect(alert).not.toContainText('Provider-controlled');
+  await expect(page.getByTestId('github-permission-recovery')).toHaveCount(0);
+});
+
+test('cancels an automatic publication upload without losing queued local work', async ({
+  context,
+  page,
+}) => {
+  const publication = await createPdfFixture();
+  const gateway = new SimulatedSyncGateway('mega', {
+    holdFirstObjectUpload: true,
+    expectedPublication: publication,
+  });
+  await gateway.install(context);
+
+  try {
+    await page.goto('/settings/sync');
+    await page.getByRole('button', { name: /^MEGA/ }).click();
+    await expect(
+      page.getByRole('button', { name: 'Sync books and progress' }),
+    ).toBeEnabled();
+    await page.getByRole('link', { name: 'Library', exact: true }).click();
+
+    await importPublication(
+      page,
+      'automatic-cancel.pdf',
+      'application/pdf',
+      publication,
+      'Omnia PDF Fixture',
+    );
+    await gateway.waitForObjectUploadStart();
+
+    await page.getByRole('link', { name: 'Settings' }).click();
+    await page.getByRole('link', { name: 'Configure library sync' }).click();
+
+    const automaticStatus = page.getByTestId('automatic-sync-status');
+    await expect(
+      automaticStatus.getByRole('button', {
+        name: 'Cancel automatic sync',
+      }),
+    ).toBeVisible();
+    await expect(
+      automaticStatus.getByText(/Uploading publication:/),
+    ).toBeVisible();
+    await expect(automaticStatus.locator('progress')).toBeVisible();
+    await expect(
+      page.getByText(/1 local change is waiting to sync/),
+    ).toBeVisible();
+
+    await automaticStatus
+      .getByRole('button', { name: 'Cancel automatic sync' })
+      .click();
+    gateway.releaseObjectUpload();
+
+    await expect(automaticStatus).toContainText(
+      'Automatic synchronization cancelled',
+    );
+    await expect(automaticStatus).toContainText(
+      'Local changes are safe and remain queued',
+    );
+    await expect(
+      page.getByText(/1 local change is waiting to sync/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Sync books and progress' }),
+    ).toBeEnabled();
+  } finally {
+    gateway.releaseObjectUpload();
+  }
+});
+
+test('keeps a remotely backed-up publication removed from this device', async ({
+  context,
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const publication = await createPdfFixture();
+  const gateway = new SimulatedSyncGateway('mega', {
+    expectedPublication: publication,
+  });
+  await gateway.install(context);
+  const browserFailures = monitorBrowserFailures(page);
+
+  await page.goto('/');
+  await importPublication(
+    page,
+    'local-removal.pdf',
+    'application/pdf',
+    publication,
+    'Omnia PDF Fixture',
+  );
+
+  await page.goto('/settings/sync');
+  await selectProvider(page, { providerButtonName: /^MEGA/ });
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+  const remoteDocuments = gateway.documentPaths();
+  const remoteObjects = gateway.objectPaths();
+  expect(remoteDocuments.some((path) => path.endsWith('/book.json'))).toBe(
+    true,
+  );
+  expect(remoteObjects.some((path) => path.endsWith('.pdf'))).toBe(true);
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Remove Omnia PDF Fixture' }).click();
+  const confirmation = page.getByRole('dialog');
+  await expect(confirmation).toContainText(
+    'A synchronized copy stays in your selected remote backup',
+  );
+  await confirmation.getByRole('button', { name: 'Remove book' }).click();
+  await expect(
+    page.getByText('Omnia PDF Fixture', { exact: true }),
+  ).toHaveCount(0);
+
+  await page.goto('/settings/sync');
+  await expect(
+    page.getByRole('button', { name: 'Sync books and progress' }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+  await page.goto('/');
+  await expect(
+    page.getByText('Omnia PDF Fixture', { exact: true }),
+  ).toHaveCount(0);
+  expect(gateway.documentPaths()).toEqual(remoteDocuments);
+  expect(gateway.objectPaths()).toEqual(remoteObjects);
+  expect(browserFailures()).toEqual([]);
+});
+
+test('deletes a remote publication backup without deleting the local copy', async ({
+  context,
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const publication = await createPdfFixture();
+  const gateway = new SimulatedSyncGateway('mega', {
+    expectedPublication: publication,
+  });
+  await gateway.install(context);
+  const browserFailures = monitorBrowserFailures(page);
+
+  await page.goto('/');
+  await importPublication(
+    page,
+    'remote-deletion.pdf',
+    'application/pdf',
+    publication,
+    'Omnia PDF Fixture',
+  );
+  await page.goto('/settings/sync');
+  await selectProvider(page, { providerButtonName: /^MEGA/ });
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+
+  const manifestPath = gateway
+    .documentPaths()
+    .find((path) => path.endsWith('/book.json'));
+  expect(manifestPath).toBeDefined();
+  expect(gateway.objectPaths()).toHaveLength(1);
+  await expect(
+    page.getByRole('button', {
+      name: 'Delete remote backup for Omnia PDF Fixture',
+    }),
+  ).toBeVisible();
+
+  await page
+    .getByRole('button', {
+      name: 'Delete remote backup for Omnia PDF Fixture',
+    })
+    .click();
+  const confirmation = page.getByRole('dialog');
+  await expect(confirmation).toContainText(
+    'It does not delete a copy already stored on this device',
+  );
+  await confirmation
+    .getByRole('button', { name: 'Delete remote backup' })
+    .click();
+
+  await expect(page.getByRole('status')).toContainText(
+    'Copies already stored on devices remain available',
+  );
+  await expect(
+    page.getByText('No publication files are stored in this sync destination'),
+  ).toBeVisible();
+  expect(gateway.objectPaths()).toEqual([]);
+  expect(
+    JSON.parse(gateway.documentContent(manifestPath as string) ?? '{}'),
+  ).toMatchObject({
+    schemaVersion: 1,
+    deleted: true,
+  });
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+  expect(gateway.objectPaths()).toEqual([]);
+  await page.goto('/');
+  await expect(
+    page.getByText('Omnia PDF Fixture', { exact: true }),
+  ).toBeVisible();
+  expect(browserFailures()).toEqual([]);
 });
 
 for (const scenario of scenarios) {
@@ -464,8 +774,9 @@ async function verifyInterruptedGitUpload(
   page: Page,
   gateway: SimulatedSyncGateway,
 ): Promise<void> {
-  await page.getByRole('button', { name: 'Sync books and progress' }).click();
-  await expect(page.getByRole('alert')).toContainText(
+  const automaticStatus = page.getByTestId('automatic-sync-status');
+  await expect(automaticStatus).toContainText('Automatic sync needs attention');
+  await expect(automaticStatus).toContainText(
     'Simulated interrupted publication upload',
   );
   expect(
@@ -543,6 +854,18 @@ async function expectEpubChapter(page: Page, chapter: string): Promise<void> {
       .frameLocator('iframe')
       .getByRole('heading', { name: chapter, exact: true }),
   ).toBeVisible({ timeout: 20_000 });
+}
+
+async function ensureTableOfContentsOpen(page: Page): Promise<void> {
+  const toggle = page.getByRole('button', {
+    name: 'Toggle table of contents',
+  });
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+    await toggle.click();
+  }
+  await expect(
+    page.getByRole('complementary', { name: 'Table of contents' }),
+  ).toBeVisible();
 }
 
 async function storedProgressPage(page: Page): Promise<number | null> {

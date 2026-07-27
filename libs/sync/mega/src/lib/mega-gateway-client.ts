@@ -1,6 +1,11 @@
 import {
+  BrowserObjectUploadRequester,
+  browserObjectDownloadBlob,
+  browserObjectUploadRequest,
   DocumentWriteRequest,
   LibrarySyncTransport,
+  ObjectDeleteRequest,
+  ObjectDownloadOptions,
   ObjectUploadRequest,
   RemoteDocument,
   RemoteObject,
@@ -52,6 +57,7 @@ export interface MegaGatewayClientOptions {
   fetcher?: typeof fetch;
   redirect?: (url: string) => void;
   currentPath?: () => string;
+  uploadRequester?: BrowserObjectUploadRequester;
 }
 
 const DEFAULT_BASE_URL = '/api/sync/mega';
@@ -63,6 +69,7 @@ export class MegaGatewayClient implements MegaGateway {
   private readonly fetcher: typeof fetch;
   private readonly redirect: (url: string) => void;
   private readonly currentPath: () => string;
+  private readonly uploadRequester: BrowserObjectUploadRequester;
 
   constructor(options: MegaGatewayClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
@@ -74,6 +81,8 @@ export class MegaGatewayClient implements MegaGateway {
       options.currentPath ??
       (() =>
         `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`);
+    this.uploadRequester =
+      options.uploadRequester ?? browserObjectUploadRequest;
   }
 
   async session(): Promise<MegaGatewaySession> {
@@ -179,27 +188,41 @@ export class MegaGatewayClient implements MegaGateway {
     return value;
   }
 
-  async downloadObject(path: string): Promise<Blob> {
+  async downloadObject(
+    path: string,
+    options: ObjectDownloadOptions = {},
+  ): Promise<Blob> {
     const response = await this.request(
       `/object?path=${encodeURIComponent(path)}`,
+      { signal: options.signal },
     );
-    return response.blob();
+    return browserObjectDownloadBlob(response, path, options);
   }
 
   async uploadObject(request: ObjectUploadRequest): Promise<RemoteObject> {
-    const response = await this.request(
-      `/object?path=${encodeURIComponent(request.path)}`,
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': request.mediaType,
-          'X-Omnia-SHA256': request.sha256,
-          'X-Omnia-Size': String(request.size),
-        },
-        body: request.content,
-      },
-      [409],
-    );
+    const headers = new Headers({
+      Accept: 'application/json',
+      'Content-Type': request.mediaType,
+      [CSRF_HEADER]: '1',
+      'X-Omnia-SHA256': request.sha256,
+      'X-Omnia-Size': String(request.size),
+    });
+    const path = `/object?path=${encodeURIComponent(request.path)}`;
+    const response = request.onProgress
+      ? await this.uploadRequester(`${this.baseUrl}${path}`, headers, request)
+      : await this.request(
+          path,
+          {
+            method: 'PUT',
+            headers,
+            body: request.content,
+            signal: request.signal,
+          },
+          [409],
+        );
+    if (!response.ok && response.status !== 409) {
+      throw await gatewayError(response);
+    }
     if (response.status === 409) {
       throw new SyncConflictError('The remote MEGA object changed');
     }
@@ -208,6 +231,21 @@ export class MegaGatewayClient implements MegaGateway {
       throw new MegaGatewayProtocolError();
     }
     return value;
+  }
+
+  async deleteObject(request: ObjectDeleteRequest): Promise<void> {
+    const parameters = new URLSearchParams({ path: request.path });
+    if (request.expectedRevision) {
+      parameters.set('expectedRevision', request.expectedRevision);
+    }
+    const response = await this.request(
+      `/object?${parameters.toString()}`,
+      { method: 'DELETE' },
+      [404, 409],
+    );
+    if (response.status === 409) {
+      throw new SyncConflictError('The remote MEGA object changed');
+    }
   }
 
   private async request(

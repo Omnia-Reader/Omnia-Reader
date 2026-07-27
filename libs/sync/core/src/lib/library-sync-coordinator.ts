@@ -1,3 +1,5 @@
+import { ObjectTransferProgressListener } from './library-sync-transport';
+
 export interface SyncWorkerResult {
   pulled: number;
   pushed: number;
@@ -5,8 +7,13 @@ export interface SyncWorkerResult {
   rejected: number;
 }
 
+export interface SyncWorkerOptions {
+  signal?: AbortSignal;
+  onTransferProgress?: ObjectTransferProgressListener;
+}
+
 export interface SyncWorker {
-  synchronize(): Promise<SyncWorkerResult>;
+  synchronize(options?: SyncWorkerOptions): Promise<SyncWorkerResult>;
 }
 
 export interface LibrarySyncResult extends SyncWorkerResult {
@@ -35,24 +42,31 @@ export class LibrarySyncCoordinator implements SyncWorker {
 
   constructor(private readonly workers: LibrarySyncWorkers) {}
 
-  synchronize(): Promise<LibrarySyncResult> {
+  synchronize(options: SyncWorkerOptions = {}): Promise<LibrarySyncResult> {
     if (!this.activeSync) {
-      this.activeSync = this.runSynchronization().finally(() => {
+      this.activeSync = this.runSynchronization(options).finally(() => {
         this.activeSync = null;
       });
     }
     return this.activeSync;
   }
 
-  private async runSynchronization(): Promise<LibrarySyncResult> {
-    const schema = await this.workers.schema.synchronize();
-    const books = await this.workers.books.synchronize();
-    const progress = await this.workers.progress.synchronize();
+  private async runSynchronization(
+    options: SyncWorkerOptions,
+  ): Promise<LibrarySyncResult> {
+    throwIfSyncAborted(options.signal);
+    const schema = await this.workers.schema.synchronize(options);
+    throwIfSyncAborted(options.signal);
+    const books = await this.workers.books.synchronize(options);
+    throwIfSyncAborted(options.signal);
+    const progress = await this.workers.progress.synchronize(options);
+    throwIfSyncAborted(options.signal);
     const bookmarks = this.workers.bookmarks
-      ? await this.workers.bookmarks.synchronize()
+      ? await this.workers.bookmarks.synchronize(options)
       : EMPTY_SYNC_RESULT;
+    throwIfSyncAborted(options.signal);
     const annotations = this.workers.annotations
-      ? await this.workers.annotations.synchronize()
+      ? await this.workers.annotations.synchronize(options)
       : EMPTY_SYNC_RESULT;
     return {
       pulled:
@@ -99,3 +113,12 @@ const EMPTY_SYNC_RESULT: SyncWorkerResult = {
   conflicts: 0,
   rejected: 0,
 };
+
+export function throwIfSyncAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('Synchronization was cancelled', 'AbortError');
+}

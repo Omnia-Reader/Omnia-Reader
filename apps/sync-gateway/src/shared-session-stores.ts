@@ -1,7 +1,14 @@
+import { resolve } from 'node:path';
 import { createClient } from 'redis';
+import {
+  MemoryGitHubAuthorizationRevocationStore,
+  RedisGitHubAuthorizationRevocationStore,
+  type GitHubAuthorizationRevocationStore,
+} from './github-authorization-revocations.js';
 import type { GitHubSessionState } from './github-adapter.js';
 import type { MegaSessionState } from './mega-adapter.js';
 import {
+  EncryptedFileSessionStore,
   EncryptedMemorySessionStore,
   EncryptedRedisSessionStore,
   type GatewaySessionStore,
@@ -11,6 +18,7 @@ import {
 
 export interface GatewaySessionStores {
   github?: GatewaySessionStore<GitHubSessionState>;
+  githubRevocations?: GitHubAuthorizationRevocationStore;
   mega?: GatewaySessionStore<MegaSessionState>;
   close(): Promise<void>;
 }
@@ -32,6 +40,7 @@ const PROVIDER_KEYS = [
   'OMNIA_GITHUB_CLIENT_SECRET',
   'OMNIA_GITHUB_PRIVATE_KEY',
   'OMNIA_GITHUB_CALLBACK_URL',
+  'OMNIA_GITHUB_INSTALLATION_URL',
   'OMNIA_MEGA_SDK_BRIDGE_URL',
   'OMNIA_MEGA_SDK_BRIDGE_TOKEN',
   'OMNIA_MEGA_LOGIN_URL',
@@ -57,9 +66,39 @@ export async function gatewaySessionStoresFromEnvironment(
     environment['OMNIA_SYNC_SESSION_TTL_MS'],
   );
   const redisUrl = environment['OMNIA_SYNC_REDIS_URL'];
+  const sessionDirectory = environment['OMNIA_SYNC_SESSION_DIRECTORY'];
+  if (redisUrl && sessionDirectory) {
+    throw new TypeError(
+      'Configure either OMNIA_SYNC_REDIS_URL or OMNIA_SYNC_SESSION_DIRECTORY, not both',
+    );
+  }
+  if (sessionDirectory) {
+    if (sessionDirectory.includes('\0')) {
+      throw new TypeError('OMNIA_SYNC_SESSION_DIRECTORY is invalid');
+    }
+    if (environment['OMNIA_GITHUB_WEBHOOK_SECRET']) {
+      throw new TypeError(
+        'GitHub webhooks require the Redis synchronization session store',
+      );
+    }
+    const directory = resolve(sessionDirectory);
+    return {
+      github: new EncryptedFileSessionStore(keys, {
+        filePath: resolve(directory, 'github-sessions.json'),
+        ttlMs,
+      }),
+      githubRevocations: new MemoryGitHubAuthorizationRevocationStore(),
+      mega: new EncryptedFileSessionStore(keys, {
+        filePath: resolve(directory, 'mega-sessions.json'),
+        ttlMs,
+      }),
+      close: async () => undefined,
+    };
+  }
   if (!redisUrl) {
     return {
       github: new EncryptedMemorySessionStore(keys, { ttlMs }),
+      githubRevocations: new MemoryGitHubAuthorizationRevocationStore(),
       mega: new EncryptedMemorySessionStore(keys, { ttlMs }),
       close: async () => undefined,
     };
@@ -99,6 +138,9 @@ export async function gatewaySessionStoresFromEnvironment(
     github: new EncryptedRedisSessionStore(client, keys, {
       prefix: `${prefix}:github`,
       ttlMs,
+    }),
+    githubRevocations: new RedisGitHubAuthorizationRevocationStore(client, {
+      prefix: `${prefix}:github-revocations`,
     }),
     mega: new EncryptedRedisSessionStore(client, keys, {
       prefix: `${prefix}:mega`,

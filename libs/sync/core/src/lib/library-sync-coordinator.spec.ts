@@ -88,4 +88,34 @@ describe('LibrarySyncCoordinator', () => {
     );
     expect(child).not.toHaveBeenCalled();
   });
+
+  it('propagates transfer controls and stops before the next worker after cancellation', async () => {
+    const controller = new AbortController();
+    const books = vi.fn<SyncWorker['synchronize']>();
+    const onTransferProgress = vi.fn();
+    const coordinator = new LibrarySyncCoordinator({
+      schema: {
+        synchronize: async (options) => {
+          expect(options).toMatchObject({
+            signal: controller.signal,
+            onTransferProgress,
+          });
+          controller.abort(
+            new DOMException('Synchronization cancelled', 'AbortError'),
+          );
+          return { pulled: 0, pushed: 0, conflicts: 0, rejected: 0 };
+        },
+      },
+      books: { synchronize: books },
+      progress: { synchronize: vi.fn() },
+    });
+
+    await expect(
+      coordinator.synchronize({
+        signal: controller.signal,
+        onTransferProgress,
+      }),
+    ).rejects.toThrow(/cancel/i);
+    expect(books).not.toHaveBeenCalled();
+  });
 });

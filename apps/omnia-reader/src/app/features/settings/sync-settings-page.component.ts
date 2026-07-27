@@ -8,12 +8,16 @@ import {
 } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
+import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import {
   AUTO_SYNC_SCHEDULER,
   AutoSyncStatus,
   LIBRARY_SYNC_SERVICE,
+  ObjectTransferProgress,
+  REMOTE_BOOK_BACKUP_SERVICE,
+  RemoteBookBackup,
   SYNC_PROVIDER_SELECTION,
   SyncProviderKind,
 } from '@omnia-reader/sync/core';
@@ -30,6 +34,8 @@ import {
   MegaGatewayError,
   MegaGatewaySession,
 } from '@omnia-reader/sync/mega';
+import { firstValueFrom } from 'rxjs';
+import { DeleteRemoteBookDialogComponent } from './delete-remote-book-dialog.component';
 
 @Component({
   selector: 'omnia-sync-settings-page',
@@ -43,7 +49,10 @@ export class SyncSettingsPageComponent implements OnInit {
   private readonly megaGateway = inject(MEGA_GATEWAY);
   private readonly providerSelection = inject(SYNC_PROVIDER_SELECTION);
   private readonly sync = inject(LIBRARY_SYNC_SERVICE);
+  private readonly remoteBookBackups = inject(REMOTE_BOOK_BACKUP_SERVICE);
   private readonly autoSync = inject(AUTO_SYNC_SCHEDULER);
+  private readonly dialog = inject(MatDialog);
+  private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -55,22 +64,72 @@ export class SyncSettingsPageComponent implements OnInit {
     git: true,
     mega: true,
   };
-  gitSession: GitHubGatewaySession = { authenticated: false };
+  gitSession: GitHubGatewaySession = {
+    configured: false,
+    authenticated: false,
+  };
   megaSession: MegaGatewaySession = { authenticated: false };
   repositories: readonly GitHubRepository[] = [];
   repositoryInstallationSettingsUrl: string | null = null;
   folders: readonly MegaFolder[] = [];
+  remoteBackups: readonly RemoteBookBackup[] = [];
   errorMessage: string | null = null;
   statusMessage: string | null = null;
+  transferProgress: ObjectTransferProgress | null = null;
+  manualSyncController: AbortController | null = null;
   automaticSyncStatus: AutoSyncStatus = this.autoSync.status();
 
   async ngOnInit(): Promise<void> {
+    const authorizationOutcome = githubAuthorizationOutcome(this.router.url);
     const unsubscribe = this.autoSync.subscribe((status) => {
       this.automaticSyncStatus = status;
       this.changeDetector.markForCheck();
     });
     this.destroyRef.onDestroy(unsubscribe);
+    this.destroyRef.onDestroy(() => {
+      this.manualSyncController?.abort(
+        new DOMException('Synchronization was cancelled', 'AbortError'),
+      );
+    });
     await this.refresh();
+    if (authorizationOutcome) {
+      this.errorMessage = authorizationOutcome.message;
+      await this.router.navigateByUrl(authorizationOutcome.cleanUrl, {
+        replaceUrl: true,
+      });
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  get transferProgressPercent(): number {
+    return transferProgressPercent(this.transferProgress);
+  }
+
+  get transferProgressLabel(): string | null {
+    return transferProgressLabel(this.transferProgress);
+  }
+
+  get automaticSyncBusy(): boolean {
+    return (
+      this.automaticSyncStatus.phase === 'syncing' ||
+      this.automaticSyncStatus.phase === 'cancelling'
+    );
+  }
+
+  get automaticTransferProgressPercent(): number {
+    return transferProgressPercent(
+      this.automaticSyncStatus.transferProgress ?? null,
+    );
+  }
+
+  get automaticTransferProgressLabel(): string | null {
+    return transferProgressLabel(
+      this.automaticSyncStatus.transferProgress ?? null,
+    );
+  }
+
+  get configuredDestination(): boolean {
+    return this.hasConfiguredDestination();
   }
 
   async chooseProvider(provider: SyncProviderKind): Promise<void> {
@@ -79,15 +138,26 @@ export class SyncSettingsPageComponent implements OnInit {
     this.errorMessage = null;
     this.statusMessage = null;
     this.repositoryInstallationSettingsUrl = null;
-    await this.runBusy(() => this.refreshProvider());
+    await this.runBusy(async () => {
+      await this.refreshProvider();
+      if (this.hasConfiguredDestination()) {
+        const providerName = provider === 'git' ? 'Git + LFS' : 'MEGA';
+        this.statusMessage =
+          `${providerName} selected. ` +
+          'Automatic library synchronization queued.';
+        this.autoSync.requestImmediate('destination-selected');
+      }
+    });
   }
 
-  connect(): void {
-    if (this.selectedProvider === 'git') {
-      this.gitGateway.beginAuthorization('/settings/sync');
-    } else if (this.selectedProvider === 'mega') {
-      this.megaGateway.beginAuthorization('/settings/sync');
-    }
+  async connect(): Promise<void> {
+    await this.runBusy(async () => {
+      if (this.selectedProvider === 'git') {
+        await this.gitGateway.beginAuthorization('/settings/sync');
+      } else if (this.selectedProvider === 'mega') {
+        this.megaGateway.beginAuthorization('/settings/sync');
+      }
+    });
   }
 
   async selectRepository(event: Event): Promise<void> {
@@ -101,6 +171,7 @@ export class SyncSettingsPageComponent implements OnInit {
 
     await this.runBusy(async () => {
       this.gitSession = await this.gitGateway.selectRepository(repositoryId);
+      await this.refreshRemoteBackups();
       this.repositoryInstallationSettingsUrl = null;
       this.statusMessage =
         `Sync repository set to ${repository.fullName}. ` +
@@ -116,6 +187,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.repositories = await this.gitGateway.repositories();
       this.repositoryInstallationSettingsUrl = result.installationSettingsUrl;
       if (result.selected) {
+        await this.refreshRemoteBackups();
         this.statusMessage =
           `Created and selected private repository ${result.repository.fullName}. ` +
           'Initial library synchronization queued.';
@@ -132,6 +204,7 @@ export class SyncSettingsPageComponent implements OnInit {
     await this.runBusy(async () => {
       this.repositories = await this.gitGateway.repositories();
       this.gitSession = await this.gitGateway.session();
+      this.repositoryInstallationSettingsUrl = null;
       this.statusMessage = 'GitHub repositories refreshed.';
     });
   }
@@ -147,6 +220,7 @@ export class SyncSettingsPageComponent implements OnInit {
 
     await this.runBusy(async () => {
       this.megaSession = await this.megaGateway.selectFolder(handle);
+      await this.refreshRemoteBackups();
       this.statusMessage =
         `MEGA sync folder set to ${folder.path}. ` +
         'Initial library synchronization queued.';
@@ -155,28 +229,72 @@ export class SyncSettingsPageComponent implements OnInit {
   }
 
   async syncNow(): Promise<void> {
-    if (!this.hasConfiguredDestination()) {
+    if (
+      !this.hasConfiguredDestination() ||
+      this.busy ||
+      this.automaticSyncBusy
+    ) {
       return;
     }
 
+    const controller = new AbortController();
+    this.manualSyncController = controller;
+    this.transferProgress = null;
     await this.runBusy(async () => {
-      const result = await this.sync.synchronize();
-      await this.refreshPendingCount();
-      this.statusMessage =
-        `Sync complete: ${result.pulled} pulled, ${result.pushed} pushed` +
-        (result.conflicts ? `, ${result.conflicts} conflicts retried` : '') +
-        (result.rejected
-          ? `, ${result.rejected} invalid changes skipped`
-          : '') +
-        '.';
+      try {
+        const result = await this.sync.synchronize({
+          signal: controller.signal,
+          onTransferProgress: (progress) => {
+            this.transferProgress = progress;
+            this.changeDetector.markForCheck();
+          },
+        });
+        await this.refreshPendingCount();
+        await this.refreshRemoteBackups();
+        this.statusMessage =
+          `Sync complete: ${result.pulled} pulled, ${result.pushed} pushed` +
+          (result.conflicts ? `, ${result.conflicts} conflicts retried` : '') +
+          (result.rejected
+            ? `, ${result.rejected} invalid changes skipped`
+            : '') +
+          '.';
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          throw error;
+        }
+        this.statusMessage =
+          'Synchronization cancelled. Local changes are safe and remain queued.';
+      } finally {
+        if (this.manualSyncController === controller) {
+          this.manualSyncController = null;
+          this.transferProgress = null;
+        }
+        this.changeDetector.markForCheck();
+      }
     });
+  }
+
+  cancelSync(): void {
+    if (!this.manualSyncController?.signal.aborted) {
+      this.statusMessage = 'Cancelling synchronization…';
+      this.manualSyncController?.abort(
+        new DOMException('Synchronization was cancelled', 'AbortError'),
+      );
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  cancelAutomaticSync(): void {
+    if (this.autoSync.cancelActive()) {
+      this.changeDetector.markForCheck();
+    }
   }
 
   async disconnect(): Promise<void> {
     await this.runBusy(async () => {
       if (this.selectedProvider === 'git') {
         await this.gitGateway.disconnect();
-        this.gitSession = { authenticated: false };
+        this.gitSession = { configured: false, authenticated: false };
       } else if (this.selectedProvider === 'mega') {
         await this.megaGateway.disconnect();
         this.megaSession = { authenticated: false };
@@ -186,9 +304,51 @@ export class SyncSettingsPageComponent implements OnInit {
       this.repositories = [];
       this.repositoryInstallationSettingsUrl = null;
       this.folders = [];
+      this.remoteBackups = [];
       this.statusMessage =
         'Sync disconnected. Local books and reading progress are unchanged.';
     });
+  }
+
+  async requestRemoteBackupDeletion(backup: RemoteBookBackup): Promise<void> {
+    if (
+      this.busy ||
+      this.automaticSyncBusy ||
+      !this.hasConfiguredDestination()
+    ) {
+      return;
+    }
+    const confirmed = await firstValueFrom(
+      this.dialog
+        .open<DeleteRemoteBookDialogComponent, RemoteBookBackup, boolean>(
+          DeleteRemoteBookDialogComponent,
+          {
+            data: backup,
+            autoFocus: 'first-tabbable',
+            restoreFocus: true,
+            width: 'min(34rem, calc(100vw - 2rem))',
+          },
+        )
+        .afterClosed(),
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await this.runBusy(async () => {
+      await this.remoteBookBackups.deleteBackup(backup.manifest.bookId);
+      await Promise.all([
+        this.refreshPendingCount(),
+        this.refreshRemoteBackups(),
+      ]);
+      this.statusMessage =
+        `Remote backup for “${backup.manifest.title}” deleted. ` +
+        'Copies already stored on devices remain available.';
+    });
+  }
+
+  formatRemoteBackupSize(backup: RemoteBookBackup): string {
+    return formatBytes(backup.manifest.size);
   }
 
   private async refresh(): Promise<void> {
@@ -227,6 +387,7 @@ export class SyncSettingsPageComponent implements OnInit {
   private async refreshProvider(): Promise<void> {
     if (this.selectedProvider === 'git') {
       this.gitSession = await this.gitGateway.session();
+      this.gatewayAvailable.git = this.gitSession.configured;
       this.repositories = this.gitSession.authenticated
         ? await this.gitGateway.repositories()
         : [];
@@ -236,6 +397,15 @@ export class SyncSettingsPageComponent implements OnInit {
         ? await this.megaGateway.folders()
         : [];
     }
+    if (this.hasConfiguredDestination()) {
+      await this.refreshRemoteBackups();
+    } else {
+      this.remoteBackups = [];
+    }
+  }
+
+  private async refreshRemoteBackups(): Promise<void> {
+    this.remoteBackups = await this.remoteBookBackups.list();
   }
 
   private hasConfiguredDestination(): boolean {
@@ -250,6 +420,53 @@ export class SyncSettingsPageComponent implements OnInit {
   }
 
   private handleError(error: unknown): void {
+    if (
+      (error instanceof GitHubGatewayError ||
+        error instanceof MegaGatewayError) &&
+      error.status === 429
+    ) {
+      this.repositoryInstallationSettingsUrl = null;
+      const providerName =
+        this.selectedProvider === 'git'
+          ? 'GitHub'
+          : this.selectedProvider === 'mega'
+            ? 'MEGA'
+            : 'The synchronization provider';
+      this.errorMessage =
+        `${providerName} is temporarily rate limiting synchronization. ` +
+        `${retryAfterMessage(error)} ` +
+        'Your local library is unchanged and pending changes remain safe.';
+      return;
+    }
+    if (
+      error instanceof GitHubGatewayError &&
+      error.status === 503 &&
+      error.message.includes('not configured')
+    ) {
+      this.gatewayAvailable.git = false;
+      this.gitSession = { configured: false, authenticated: false };
+      this.errorMessage =
+        'GitHub App authentication is not configured on this sync gateway. Configure the GitHub App credentials and restart the gateway.';
+      return;
+    }
+    if (
+      error instanceof GitHubGatewayError &&
+      error.status >= 500 &&
+      error.status <= 504
+    ) {
+      this.gatewayAvailable.git = false;
+      this.errorMessage =
+        'The GitHub sync gateway is unavailable. For local development, start the sync-enabled app with “npm run start:full”.';
+      return;
+    }
+    if (error instanceof GitHubGatewayError && error.status === 403) {
+      this.repositoryInstallationSettingsUrl = this.gitSession.configured
+        ? this.gitSession.installationUrl
+        : null;
+      this.errorMessage =
+        'GitHub denied repository access. Grant the App Contents read and write access. To create repositories, also grant Administration read and write access, approve the updated installation permissions, then refresh the repository list. Your local library is unchanged.';
+      return;
+    }
     if (
       (error instanceof GitHubGatewayError ||
         error instanceof MegaGatewayError) &&
@@ -268,7 +485,13 @@ export class SyncSettingsPageComponent implements OnInit {
       error.status === 401
     ) {
       if (this.selectedProvider === 'git') {
-        this.gitSession = { authenticated: false };
+        this.gitSession = this.gitSession.configured
+          ? {
+              configured: true,
+              authenticated: false,
+              installationUrl: this.gitSession.installationUrl,
+            }
+          : { configured: false, authenticated: false };
       } else if (this.selectedProvider === 'mega') {
         this.megaSession = { authenticated: false };
       }
@@ -282,4 +505,100 @@ export class SyncSettingsPageComponent implements OnInit {
         : 'Library sync is temporarily unavailable.';
     this.changeDetector.markForCheck();
   }
+}
+
+function retryAfterMessage(error: unknown): string {
+  const seconds =
+    error && typeof error === 'object' && 'retryAfterSeconds' in error
+      ? error.retryAfterSeconds
+      : undefined;
+  if (
+    typeof seconds !== 'number' ||
+    !Number.isSafeInteger(seconds) ||
+    seconds < 1 ||
+    seconds > 86_400
+  ) {
+    return 'Try again later.';
+  }
+  if (seconds < 60) {
+    return `Try again in about ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`;
+  }
+  const minutes = Math.ceil(seconds / 60);
+  return `Try again in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`;
+}
+
+interface GitHubAuthorizationOutcome {
+  cleanUrl: string;
+  message: string;
+}
+
+function githubAuthorizationOutcome(
+  routerUrl: string,
+): GitHubAuthorizationOutcome | null {
+  const url = new URL(routerUrl, 'https://omnia-reader.invalid');
+  const outcome = url.searchParams.get('syncAuth');
+  const message =
+    outcome === 'github-denied'
+      ? 'GitHub authorization was cancelled. Your local library is unchanged.'
+      : outcome === 'github-invalid'
+        ? 'GitHub authorization could not be verified. Please connect GitHub again.'
+        : outcome === 'github-failed'
+          ? 'GitHub authorization could not be completed. Please try again.'
+          : null;
+  if (!message) {
+    return null;
+  }
+  url.searchParams.delete('syncAuth');
+  return {
+    cleanUrl: `${url.pathname}${url.search}${url.hash}`,
+    message,
+  };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) {
+    return '0 bytes';
+  }
+  if (bytes < 1024) {
+    return `${Math.ceil(bytes)} bytes`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KiB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+}
+
+function transferProgressPercent(
+  progress: ObjectTransferProgress | null,
+): number {
+  if (!progress || progress.totalBytes <= 0) {
+    return 0;
+  }
+  return Math.min(
+    100,
+    Math.max(0, (progress.transferredBytes / progress.totalBytes) * 100),
+  );
+}
+
+function transferProgressLabel(
+  progress: ObjectTransferProgress | null,
+): string | null {
+  if (!progress) {
+    return null;
+  }
+  const action =
+    progress.direction === 'upload'
+      ? 'Uploading publication'
+      : 'Downloading publication';
+  if (progress.totalBytes <= 0) {
+    return `${action}: ${formatBytes(progress.transferredBytes)} transferred`;
+  }
+  return (
+    `${action}: ${formatBytes(progress.transferredBytes)} of ` +
+    `${formatBytes(progress.totalBytes)}` +
+    ` (${Math.round(transferProgressPercent(progress))}%)`
+  );
 }

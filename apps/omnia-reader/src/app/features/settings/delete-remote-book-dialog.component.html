@@ -1,0 +1,33 @@
+<h2 mat-dialog-title>
+  Delete the remote backup of “{{ backup.manifest.title }}”?
+</h2>
+
+<mat-dialog-content class="!text-stone-900">
+  <p class="mt-0 text-stone-900">
+    This permanently removes the synchronized EPUB or PDF from the selected
+    provider. It does not delete a copy already stored on this device.
+  </p>
+  <p class="mb-0 text-sm text-stone-600">
+    Other devices will stop synchronizing this exact edition. Import the same
+    file again on a device if you later want to create a new remote backup.
+  </p>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button
+    class="!text-stone-900"
+    mat-button
+    type="button"
+    [mat-dialog-close]="false"
+  >
+    Keep remote backup
+  </button>
+  <button
+    class="!text-red-950"
+    mat-button
+    type="button"
+    [mat-dialog-close]="true"
+  >
+    Delete remote backup
+  </button>
+</mat-dialog-actions>

@@ -35,6 +35,7 @@ export async function createEpubFixture(): Promise<Buffer> {
   <manifest>
     <item id="nav" href="navigation/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/>
+    <item id="book-styles" href="styles/book.css" media-type="text/css"/>
     <item id="chapter-1" href="chapter-1.xhtml" media-type="application/xhtml+xml"/>
     <item id="chapter-2" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
@@ -86,6 +87,7 @@ export async function createEpubFixture(): Promise<Buffer> {
   <head>
     <title>Chapter One</title>
     <meta http-equiv="refresh" content="0;url=https://tracking.invalid/refresh"/>
+    <link rel="stylesheet" href="styles/book.css"/>
     <link rel="stylesheet" href="https://tracking.invalid/publication.css"/>
     <style>@import "https://tracking.invalid/imported.css";</style>
   </head>
@@ -103,6 +105,20 @@ export async function createEpubFixture(): Promise<Buffer> {
     ${longChapter}
   </body>
 </html>`,
+  );
+  archive.file(
+    'OEBPS/styles/book.css',
+    `@import url("https://fonts.googleapis.com/css2?family=Mulish");
+@font-face {
+  font-family: "Remote fixture font";
+  src: url("https://tracking.invalid/remote-font.woff2") format("woff2");
+}
+:root {
+  --omnia-fixture-safe-style: applied;
+}
+body {
+  font-family: serif;
+}`,
   );
   archive.file(
     'OEBPS/chapter-2.xhtml',

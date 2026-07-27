@@ -245,6 +245,40 @@ describe('MegaSyncGatewayAdapter', () => {
     expect(fixture.bridge.fileCount()).toBe(1);
   });
 
+  it('revision-deletes every matching publication node idempotently', async () => {
+    const fixture = createFixture();
+    const sessionId = await authenticatedFolder(fixture);
+    const path = '.omnia-reader/v1/books/ab/delete/edition.epub';
+    const bytes = Buffer.from('EPUB remote deletion');
+    const sha256 = digest(bytes);
+    const uploaded = await fixture.adapter.uploadObject(sessionId, {
+      path,
+      mediaType: 'application/epub+zip',
+      size: bytes.byteLength,
+      sha256,
+      content: Readable.from(bytes),
+    });
+    fixture.bridge.seed(path, bytes.toString(), 'duplicate-handle');
+    const current = await fixture.adapter.headObject(sessionId, path);
+
+    await expect(
+      fixture.adapter.deleteObject(sessionId, {
+        path,
+        expectedRevision: 'stale-revision',
+      }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    await fixture.adapter.deleteObject(sessionId, {
+      path,
+      expectedRevision: current?.revision ?? uploaded.revision,
+    });
+
+    expect(fixture.bridge.visibleFiles(path)).toEqual([]);
+    await expect(
+      fixture.adapter.deleteObject(sessionId, { path }),
+    ).resolves.toBeUndefined();
+  });
+
   it('invalidates the encrypted gateway session when the SDK session expires', async () => {
     const fixture = createFixture();
     const sessionId = await authenticatedFolder(fixture);

@@ -1,4 +1,8 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  EncryptedFileSessionStore,
   EncryptedMemorySessionStore,
   EncryptedRedisSessionStore,
   type RedisSessionClient,
@@ -95,12 +99,67 @@ describe('EncryptedRedisSessionStore', () => {
   });
 });
 
+describe('EncryptedFileSessionStore', () => {
+  it('restores encrypted sessions after the gateway store is recreated', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'omnia-sync-session-'));
+    const filePath = join(directory, 'github-sessions.json');
+    const key = Buffer.alloc(32, 7);
+
+    try {
+      const first = fileStore(filePath, [key]);
+      await first.set('session-a', { token: 'secret' });
+
+      const serialized = await readFile(filePath, 'utf8');
+      expect(serialized).not.toContain('session-a');
+      expect(serialized).not.toContain('secret');
+
+      const restarted = fileStore(filePath, [key]);
+      await expect(restarted.get('session-a')).resolves.toEqual({
+        token: 'secret',
+      });
+      await restarted.move('session-a', 'session-b', { token: 'rotated' });
+      await expect(first.get('session-a')).resolves.toBeNull();
+      await expect(first.get('session-b')).resolves.toEqual({
+        token: 'rotated',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when the persisted envelope is malformed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'omnia-sync-session-'));
+    const filePath = join(directory, 'github-sessions.json');
+
+    try {
+      await writeFile(filePath, '{"version":1,"records":{"unsafe":{}}}');
+      const store = fileStore(filePath, [Buffer.alloc(32, 7)]);
+      await expect(store.get('session-a')).rejects.toThrow(
+        'persistent synchronization session store is invalid',
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 function redisStore(
   client: RedisSessionClient,
   keys: readonly Buffer[],
 ): EncryptedRedisSessionStore<{ token: string }> {
   return new EncryptedRedisSessionStore(client, keys, {
     prefix: 'omnia:sync:test',
+    ttlMs: 100,
+    random: () => Buffer.alloc(12, 9),
+  });
+}
+
+function fileStore(
+  filePath: string,
+  keys: readonly Buffer[],
+): EncryptedFileSessionStore<{ token: string }> {
+  return new EncryptedFileSessionStore(keys, {
+    filePath,
     ttlMs: 100,
     random: () => Buffer.alloc(12, 9),
   });

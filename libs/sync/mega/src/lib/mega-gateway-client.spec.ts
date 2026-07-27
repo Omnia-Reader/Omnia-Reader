@@ -114,6 +114,44 @@ describe('MegaGatewayClient', () => {
       MegaGatewayProtocolError,
     );
   });
+
+  it('revision-deletes a publication object with CSRF protection', async () => {
+    const fetcher = mockFetch(new Response(null, { status: 204 }));
+    const client = new MegaGatewayClient({ fetcher });
+    const path = '.omnia-reader/v1/books/id/publication.epub';
+
+    await client.deleteObject({
+      path,
+      expectedRevision: 'node-revision',
+    });
+
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(url).toContain('/object?');
+    expect(url).toContain(`path=${encodeURIComponent(path)}`);
+    expect(url).toContain('expectedRevision=node-revision');
+    expect(init?.method).toBe('DELETE');
+    expect(init?.credentials).toBe('include');
+    expect(new Headers(init?.headers).get('X-Omnia-CSRF')).toBe('1');
+  });
+
+  it('treats a missing object as deleted and maps revision conflicts', async () => {
+    const missingClient = new MegaGatewayClient({
+      fetcher: mockFetch(new Response(null, { status: 404 })),
+    });
+    await expect(
+      missingClient.deleteObject({ path: 'publication.epub' }),
+    ).resolves.toBeUndefined();
+
+    const conflictClient = new MegaGatewayClient({
+      fetcher: mockFetch(new Response(null, { status: 409 })),
+    });
+    await expect(
+      conflictClient.deleteObject({
+        path: 'publication.epub',
+        expectedRevision: 'stale',
+      }),
+    ).rejects.toBeInstanceOf(SyncConflictError);
+  });
 });
 
 function jsonResponse(value: unknown, status = 200): Response {

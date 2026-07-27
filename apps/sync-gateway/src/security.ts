@@ -48,8 +48,7 @@ export function logicalSyncPath(value: unknown): string {
     value.length === 0 ||
     value.length > MAX_PATH_LENGTH ||
     value.includes('\\') ||
-    value.includes('\0') ||
-    value.includes('%')
+    value.includes('\0')
   ) {
     throw new GatewayHttpError(400, 'Invalid synchronization path');
   }
@@ -57,13 +56,35 @@ export function logicalSyncPath(value: unknown): string {
   const segments = value.split('/');
   if (
     segments.some(
-      (segment) => segment.length === 0 || segment === '.' || segment === '..',
+      (segment) =>
+        segment.length === 0 ||
+        segment === '.' ||
+        segment === '..' ||
+        hasUnsafePercentEncoding(segment),
     ) ||
     (value !== SYNC_ROOT && !value.startsWith(`${SYNC_ROOT}/`))
   ) {
     throw new GatewayHttpError(400, 'Invalid synchronization path');
   }
   return value;
+}
+
+function hasUnsafePercentEncoding(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== '%') {
+      continue;
+    }
+    const encodedByte = value.slice(index + 1, index + 3);
+    if (!/^[a-f0-9]{2}$/i.test(encodedByte)) {
+      return true;
+    }
+    const byte = Number.parseInt(encodedByte, 16);
+    if (byte === 0 || byte === 0x25 || byte === 0x2f || byte === 0x5c) {
+      return true;
+    }
+    index += 2;
+  }
+  return false;
 }
 
 export function safeReturnPath(value: unknown): string {

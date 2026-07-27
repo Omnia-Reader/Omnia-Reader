@@ -38,6 +38,17 @@
         ],
         "parallel": false
       }
+    },
+    "native-linux-package": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "options": {
+        "commands": [
+          "npm run tauri -- build --debug --bundles deb --features native-e2e",
+          "node apps/omnia-reader-e2e/src/native/run-linux-package-e2e.mjs"
+        ],
+        "parallel": false
+      }
     }
   }
 }

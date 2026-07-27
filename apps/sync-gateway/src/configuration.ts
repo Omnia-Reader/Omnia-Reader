@@ -5,6 +5,10 @@ import {
 } from './github-adapter.js';
 import type { SyncGatewayAdapter } from './gateway-contract.js';
 import {
+  MemoryGitHubAuthorizationRevocationStore,
+  type GitHubAuthorizationRevocationStore,
+} from './github-authorization-revocations.js';
+import {
   MegaSyncGatewayAdapter,
   type MegaAdapterOptions,
   type MegaSessionState,
@@ -19,6 +23,7 @@ import {
   sessionEncryptionKeys,
 } from './session-store.js';
 import { UnconfiguredSyncGatewayAdapter } from './unconfigured-adapter.js';
+import type { GitHubWebhookOptions } from './github-webhook.js';
 
 const GITHUB_PROVIDER_KEYS = [
   'OMNIA_GITHUB_APP_ID',
@@ -26,6 +31,7 @@ const GITHUB_PROVIDER_KEYS = [
   'OMNIA_GITHUB_CLIENT_SECRET',
   'OMNIA_GITHUB_PRIVATE_KEY',
   'OMNIA_GITHUB_CALLBACK_URL',
+  'OMNIA_GITHUB_INSTALLATION_URL',
 ] as const;
 
 const GITHUB_KEYS = [
@@ -43,8 +49,17 @@ const MEGA_KEYS = [...MEGA_PROVIDER_KEYS, 'OMNIA_SYNC_SESSION_KEY'] as const;
 
 export function githubAdapterFromEnvironment(
   environment: NodeJS.ProcessEnv,
-  overrides: Pick<GitHubAdapterOptions, 'fetcher' | 'now' | 'randomState'> & {
+  overrides: Pick<
+    GitHubAdapterOptions,
+    | 'fetcher'
+    | 'now'
+    | 'randomState'
+    | 'requestTimeoutMs'
+    | 'transferTimeoutMs'
+    | 'onUserTokenRevocationFailure'
+  > & {
     sessions?: GatewaySessionStore<GitHubSessionState>;
+    revocations?: GitHubAuthorizationRevocationStore;
   } = {},
 ): SyncGatewayAdapter {
   const configured = GITHUB_PROVIDER_KEYS.filter((key) => environment[key]);
@@ -66,6 +81,21 @@ export function githubAdapterFromEnvironment(
   ) {
     throw new TypeError('The GitHub callback URL must use HTTPS');
   }
+  const installationUrl = githubInstallationUrl(
+    environment['OMNIA_GITHUB_INSTALLATION_URL'] as string,
+  );
+  const requestTimeoutMs = optionalDuration(
+    environment['OMNIA_GITHUB_REQUEST_TIMEOUT_MS'],
+    1_000,
+    5 * 60 * 1000,
+    'OMNIA_GITHUB_REQUEST_TIMEOUT_MS',
+  );
+  const transferTimeoutMs = optionalDuration(
+    environment['OMNIA_GITHUB_TRANSFER_TIMEOUT_MS'],
+    60_000,
+    24 * 60 * 60 * 1000,
+    'OMNIA_GITHUB_TRANSFER_TIMEOUT_MS',
+  );
   return new GitHubSyncGatewayAdapter({
     appId: environment['OMNIA_GITHUB_APP_ID'] as string,
     clientId: environment['OMNIA_GITHUB_CLIENT_ID'] as string,
@@ -75,6 +105,7 @@ export function githubAdapterFromEnvironment(
       '\n',
     ),
     callbackUrl: callbackUrl.toString(),
+    installationUrl,
     sessions:
       overrides.sessions ??
       new EncryptedMemorySessionStore(
@@ -83,8 +114,73 @@ export function githubAdapterFromEnvironment(
           environment['OMNIA_SYNC_SESSION_PREVIOUS_KEYS'],
         ),
       ),
+    revocations:
+      overrides.revocations ?? new MemoryGitHubAuthorizationRevocationStore(),
+    ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
+    ...(transferTimeoutMs === undefined ? {} : { transferTimeoutMs }),
     ...overrides,
   });
+}
+
+export function githubWebhookFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+  revocations: GitHubAuthorizationRevocationStore | undefined,
+): GitHubWebhookOptions | undefined {
+  const secret = environment['OMNIA_GITHUB_WEBHOOK_SECRET'];
+  if (secret === undefined) {
+    return undefined;
+  }
+  const missing = GITHUB_KEYS.filter((key) => !environment[key]);
+  if (missing.length > 0 || !revocations) {
+    throw new TypeError(
+      `GitHub webhook configuration requires complete synchronization configuration${
+        missing.length > 0 ? `: ${missing.join(', ')}` : ''
+      }`,
+    );
+  }
+  const secretBytes = Buffer.byteLength(secret, 'utf8');
+  if (secretBytes < 32 || secretBytes > 1024 || secret.includes('\0')) {
+    throw new TypeError('The GitHub webhook secret is invalid');
+  }
+  return { secret, revocations };
+}
+
+function githubInstallationUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new TypeError('The GitHub installation URL is invalid');
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
+    throw new TypeError(
+      'The GitHub installation URL must use HTTPS and omit credentials or fragments',
+    );
+  }
+  return url.toString();
+}
+
+function optionalDuration(
+  value: string | undefined,
+  minimum: number,
+  maximum: number,
+  name: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!/^[0-9]+$/.test(value)) {
+    throw new TypeError(`${name} is invalid`);
+  }
+  const duration = Number(value);
+  if (
+    !Number.isSafeInteger(duration) ||
+    duration < minimum ||
+    duration > maximum
+  ) {
+    throw new TypeError(`${name} is invalid`);
+  }
+  return duration;
 }
 
 export function megaAdapterFromEnvironment(

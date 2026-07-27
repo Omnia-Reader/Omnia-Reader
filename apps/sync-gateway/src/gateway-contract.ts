@@ -36,6 +36,11 @@ export interface RemoteObjectUpload {
   content: Readable;
 }
 
+export interface RemoteObjectDelete {
+  path: string;
+  expectedRevision?: string;
+}
+
 export interface CredentialAuthorizationPage {
   provider: string;
   state: string;
@@ -73,6 +78,7 @@ export interface SyncGatewayAdapter {
     sessionId: string,
     upload: RemoteObjectUpload,
   ): Promise<RemoteObject>;
+  deleteObject(sessionId: string, request: RemoteObjectDelete): Promise<void>;
 }
 
 export interface CredentialSyncGatewayAdapter extends SyncGatewayAdapter {
@@ -109,8 +115,30 @@ export class GatewayHttpError extends Error {
   constructor(
     readonly statusCode: number,
     message: string,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = 'GatewayHttpError';
+    if (
+      retryAfterSeconds !== undefined &&
+      (!Number.isSafeInteger(retryAfterSeconds) ||
+        retryAfterSeconds < 1 ||
+        retryAfterSeconds > 86_400)
+    ) {
+      throw new TypeError('Retry-After must be between 1 second and 24 hours');
+    }
+  }
+}
+
+export type AuthorizationFailureOutcome = 'denied' | 'invalid' | 'failed';
+
+export class AuthorizationHttpError extends GatewayHttpError {
+  constructor(
+    statusCode: number,
+    message: string,
+    readonly outcome: AuthorizationFailureOutcome,
+  ) {
+    super(statusCode, message);
+    this.name = 'AuthorizationHttpError';
   }
 }

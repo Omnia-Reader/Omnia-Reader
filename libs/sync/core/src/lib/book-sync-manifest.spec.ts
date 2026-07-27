@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   bookManifestPath,
   bookObjectPath,
+  createBookSyncDeletionTombstone,
   createBookSyncManifest,
+  isBookSyncDeletionTombstone,
+  isBookSyncDocument,
   isBookSyncManifest,
   manifestBookRecord,
 } from './book-sync-manifest';
@@ -34,6 +37,42 @@ describe('book sync manifest', () => {
     expect(bookManifestPath(book.id)).toContain('sha256%3A');
     expect(isBookSyncManifest(manifest)).toBe(true);
     expect(manifestBookRecord(manifest)).toEqual(book);
+  });
+
+  it('creates and validates a durable remote-deletion tombstone', () => {
+    const tombstone = createBookSyncDeletionTombstone(
+      book,
+      '2026-07-25T02:00:00.000Z',
+      '1.0.0',
+    );
+
+    expect(tombstone).toEqual({
+      schemaVersion: 1,
+      deleted: true,
+      bookId: book.id,
+      format: 'epub',
+      objectPath: bookObjectPath(book.id, 'epub'),
+      deletedAt: '2026-07-25T02:00:00.000Z',
+      appVersion: '1.0.0',
+    });
+    expect(isBookSyncDeletionTombstone(tombstone)).toBe(true);
+    expect(isBookSyncDocument(tombstone)).toBe(true);
+    expect(isBookSyncManifest(tombstone)).toBe(false);
+  });
+
+  it.each([
+    ['wrong object path', { objectPath: '../publication.epub' }],
+    ['invalid timestamp', { deletedAt: 'today' }],
+    ['missing discriminator', { deleted: false }],
+    ['unsupported format', { format: 'mobi' }],
+  ])('rejects a tombstone with %s', (_label, patch) => {
+    const tombstone = {
+      ...createBookSyncDeletionTombstone(book, '2026-07-25T02:00:00.000Z'),
+      ...patch,
+    };
+
+    expect(isBookSyncDeletionTombstone(tombstone)).toBe(false);
+    expect(isBookSyncDocument(tombstone)).toBe(false);
   });
 
   it.each([

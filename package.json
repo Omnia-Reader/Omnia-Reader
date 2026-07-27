@@ -4,7 +4,7 @@
   "license": "MIT",
   "scripts": {
     "start": "nx serve omnia-reader --port=4300",
-    "start:full": "nx run-many -t serve -p sync-gateway omnia-reader --parallel=2",
+    "start:full": "nx run-many -t serve -p sync-gateway omnia-reader --parallel=2 --configuration=development",
     "gateway:start": "nx serve sync-gateway",
     "tauri": "tauri",
     "native:dev": "tauri dev",
@@ -14,6 +14,8 @@
     "android:dev": "tauri android dev",
     "android:build": "tauri android build",
     "performance:e2e": "nx run omnia-reader-e2e:performance",
+    "container:build": "docker compose --file deployment/compose.yaml build --parallel",
+    "container:smoke": "bash deployment/smoke.sh",
     "release:test": "node --test tools/release/verify-release.spec.mjs",
     "release:verify": "node tools/release/verify-release.mjs"
   },

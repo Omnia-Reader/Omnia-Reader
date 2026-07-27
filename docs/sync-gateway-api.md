@@ -1,8 +1,8 @@
 # Omnia Reader Sync Gateway Contract
 
-Status: GitHub/Git LFS and MEGA gateway adapters plus native MEGA bridge source implemented; live-provider validation pending
+Status: GitHub/Git LFS and MEGA gateway adapters plus reference same-origin container deployment implemented; live-provider validation pending
 Version: 1
-Last updated: 2026-07-25
+Last updated: 2026-07-27
 
 ## Purpose
 
@@ -38,11 +38,37 @@ Angular development proxy with `npm run start:full`. Both providers fail closed
 when their required configuration is absent; the service never accepts partial
 credentials or pretends that remote data was synchronized.
 
+### Production container deployment
+
+`deployment/compose.yaml` builds digest-pinned, non-root web and gateway images.
+Nginx is the only published service and proxies `/api/sync` to the internal
+gateway, preserving the browser's same-origin cookie and CSRF boundary. Request
+and response buffering are disabled so large EPUB/PDF bodies remain streamed.
+Both containers use read-only root filesystems, drop Linux capabilities, expose
+health checks, and stop gracefully.
+
+Copy `deployment/gateway.env.example` to the ignored
+`deployment/gateway.env`, replace the placeholders for the providers being
+enabled, and validate the exact production route:
+
+```sh
+npm run container:smoke
+docker compose --file deployment/compose.yaml up --detach --build
+```
+
+The smoke gate builds both images, waits for both health checks, verifies the
+application security headers, probes the gateway through the Nginx proxy, and
+proves that an unconfigured GitHub provider reports a safe unauthenticated
+session. Production still requires an HTTPS edge, a shared Redis session store
+for restart and replica continuity, credentialed provider conformance tests,
+and deployment-specific image scanning, signing, and publication.
+
 ### GitHub App configuration
 
-The GitHub adapter uses the GitHub App web authorization flow, rotates the
-provider session after its state-bound callback, discovers repositories through
-the user's app installations, and exchanges an app JWT for a one-hour
+The GitHub adapter uses the GitHub App web authorization flow with an S256 PKCE
+challenge, stores the one-time verifier only in its encrypted provider session,
+rotates that session after its state-bound callback, discovers repositories
+through the user's app installations, and exchanges an app JWT for a one-hour
 installation token scoped to the selected repository and `contents: write`.
 Configure:
 
@@ -52,15 +78,122 @@ OMNIA_GITHUB_CLIENT_ID=<GitHub App client ID>
 OMNIA_GITHUB_CLIENT_SECRET=<GitHub App client secret>
 OMNIA_GITHUB_PRIVATE_KEY=<PEM private key; literal \n is accepted>
 OMNIA_GITHUB_CALLBACK_URL=https://reader.example/api/sync/github/auth/callback
+OMNIA_GITHUB_INSTALLATION_URL=https://github.com/apps/<app-slug>/installations/new
+OMNIA_GITHUB_REQUEST_TIMEOUT_MS=60000
+OMNIA_GITHUB_TRANSFER_TIMEOUT_MS=21600000
+OMNIA_GITHUB_WEBHOOK_SECRET=<independent random secret; production webhook only>
 OMNIA_SYNC_SESSION_KEY=<base64 encoding of exactly 32 random bytes>
 ```
 
 Generate a session key with `openssl rand -base64 32`. The application stores
 user, refresh, and installation tokens only inside AES-256-GCM encrypted,
-12-hour server sessions. Without Redis the checked-in store is process-local
-and deliberately ephemeral.
+12-hour server sessions. Without a configured persistent store, the checked-in
+store is process-local and deliberately ephemeral.
+
+`OMNIA_GITHUB_REQUEST_TIMEOUT_MS` is optional and bounds OAuth, GitHub API,
+Git LFS batch, and LFS verification requests; it defaults to 60 seconds and may
+be configured from 1 second through 5 minutes.
+`OMNIA_GITHUB_TRANSFER_TIMEOUT_MS` independently bounds whole LFS object
+uploads and downloads; it defaults to 6 hours and may be configured from
+1 minute through 24 hours so operators can preserve large-book support on slow
+links. A deadline returns an application-owned `504`, while transport failures
+return `502`; provider or network details are not exposed.
+
+Expiring GitHub user tokens are refreshed during the final minute of their
+lifetime. Concurrent requests in one gateway process share the same rotation,
+and a successful refresh is accepted only when GitHub returns a complete new
+access-token and refresh-token pair. A definitive `bad_refresh_token` response
+consumes the encrypted provider session once and requires the user to connect
+again; malformed or temporarily unavailable provider responses retain the
+session for a later bounded retry.
+
+Disconnect removes local session authority before using GitHub's single-token
+revocation endpoint for that session's user access token. It does not revoke
+the user's application grant or other devices' tokens. A refresh that finishes
+after disconnect has already consumed the session also revokes its newly
+rotated access token instead of leaving an orphaned credential. Provider
+revocation is bounded and best-effort: an unavailable GitHub endpoint is
+reported only in safe gateway logs, while the local session remains deleted.
+
+Production deployments should activate the GitHub App webhook at
+`https://reader.example/api/sync/github/webhook` and configure the same
+independent, random secret in `OMNIA_GITHUB_WEBHOOK_SECRET`. The gateway
+validates the exact raw request body with HMAC-SHA256 before parsing it,
+accepts only the `github_app_authorization` `revoked` payload for a valid
+sender, and deduplicates GitHub's `X-GitHub-Delivery` identifier. A valid
+revocation advances that user's authorization generation, invalidating every
+encrypted session on its next access without scanning or exposing session
+records. Reauthorization records the new generation and remains valid.
+
+A user-scoped GitHub API `401` also consumes the matching encrypted provider
+session and requires reconnection. Before doing so, the adapter re-reads the
+session and retries once when another request has already rotated the user
+token. If the selected repository is no longer accessible to the App, the
+adapter clears only that matching stale destination and returns `403`, allowing
+a concurrent repository reselection to win. A GitHub App JWT authentication
+failure instead returns an application-owned `502` and preserves the selected
+destination for a later retry.
+
+GitHub primary rate-limit `403` responses with
+`X-RateLimit-Remaining: 0` and secondary `429` responses are distinct from
+repository permission failures. The gateway converts both to an application-
+owned `429`, derives a bounded delay from `Retry-After` or
+`X-RateLimit-Reset`, and returns only that delay in a standard `Retry-After`
+header. Provider-controlled messages and the remaining-account quota are not
+forwarded. The Angular client persists the retry deadline and delays queued
+automatic work across restarts; manual retry and all local reading remain
+available.
+
+For local development:
+
+1. In GitHub **Settings → Developer settings → GitHub Apps**, create an App
+   with homepage URL `http://localhost:4300` and callback URL
+   `http://localhost:4300/api/sync/github/auth/callback`. Set its setup URL to
+   `http://localhost:4300/settings/sync` and enable **Redirect on update** so
+   installation changes return to the same Settings flow.
+2. Webhooks may remain inactive for loopback-only development because GitHub
+   cannot reach the gateway. Under repository permissions grant
+   **Contents: Read and write**. Grant
+   **Administration: Read and write** only when Omnia Reader should create a
+   private repository on the user's behalf.
+3. Leave **Request user authorization (OAuth) during installation** disabled.
+   Omnia Reader starts its state-bound user authorization separately after
+   installation; combining the callbacks would bypass the gateway-generated
+   authorization state.
+4. Generate a private key and record the App ID, client ID, and a new client
+   secret. Prefer expiring user authorization tokens; the gateway rotates their
+   refresh tokens without exposing either token to the browser.
+5. Copy `apps/sync-gateway/.env.local.example` to
+   `apps/sync-gateway/.env.local`, replace every placeholder, and generate the
+   session key with `openssl rand -base64 32`. Set
+   `OMNIA_GITHUB_INSTALLATION_URL` to the App's public installation URL:
+   `https://github.com/apps/<app-slug>/installations/new`.
+6. Run `npm run start:full`, open `/settings/sync`, select **Git + LFS**, and
+   use **Install GitHub App** before **Connect GitHub**. An all-repositories
+   installation can immediately see a repository created by Omnia Reader. A
+   selected-repositories installation requires granting the newly created
+   repository afterward. `npm start` intentionally runs the local-only reader
+   without the sync gateway.
+
+The session endpoint reports `{ "configured": false, "authenticated": false }`
+when no GitHub App credentials are present. The Settings page keeps the user in
+the app and explains the missing setup instead of navigating to a failed
+authorization response.
 
 ### Shared session store and key rotation
+
+For localhost or a single gateway process, persist the encrypted session
+envelopes across restarts in a gateway-owned directory:
+
+```text
+OMNIA_SYNC_SESSION_DIRECTORY=apps/sync-gateway/.session-data
+```
+
+The directory contains separate GitHub and MEGA files, uses hashed browser
+session identifiers, and never stores provider tokens as plaintext. It is not
+a shared or distributed store. Do not mount it into multiple gateway replicas,
+and do not use it with the GitHub webhook because webhook revocation state
+must be shared atomically.
 
 Use Redis when more than one gateway replica serves the same origin:
 
@@ -79,6 +212,13 @@ it as a Redis key. Redis owns expiry. Session-ID rotation uses one atomic Lua
 operation that consumes the old record exactly once, so concurrent callback
 replays cannot mint another replacement session.
 
+The same Redis connection stores hashed GitHub user and delivery identifiers
+for webhook-driven authorization generations. Applying a delivery and
+advancing its generation is one atomic Lua operation, so retries and concurrent
+replicas cannot apply the same GitHub delivery twice. User generations remain
+monotonic so reauthorization and later revocations cannot reuse an old
+generation; delivery deduplication records expire after their replay window.
+
 `OMNIA_SYNC_SESSION_KEY` is always the current encryption key. During a rolling
 rotation, put up to three older keys in
 `OMNIA_SYNC_SESSION_PREVIOUS_KEYS`, newest first. Reads made with an older key
@@ -90,7 +230,11 @@ MEGA credentials as a session key.
 The GitHub App must be installed on the repositories a user may select. It
 needs repository Contents read/write permission for synchronization and
 Administration read/write permission if users may create a private sync
-repository from Omnia Reader. The adapter:
+repository from Omnia Reader. If GitHub denies repository listing, selection,
+or creation with `403`, the Settings page links to the validated App
+installation URL so the user can approve the updated permissions and refresh
+the repository list. Provider-controlled error details are not rendered, and
+the local library remains unchanged. The adapter:
 
 1. Validates OAuth `state`, exchanges the callback code, and rotates the
    HttpOnly session.
@@ -100,12 +244,15 @@ repository from Omnia Reader. The adapter:
 4. Requests a basic Git LFS batch action for immutable EPUB/PDF bytes, streams
    and verifies the exact SHA-256 and length, invokes the LFS verification
    action when supplied, and only then commits `.gitattributes` and the
-   canonical pointer.
+   canonical pointer. Transfer actions must use credential-free HTTPS URLs,
+   omit fragments, and provide only bounded end-to-end headers; explicit
+   loopback/private literal-IP targets and hop-by-hop or request-framing
+   headers are rejected before any object request.
 5. Can create an initialized private repository through `POST /user/repos`.
    When the App installation covers all repositories, the new destination is
    selected immediately. For installations limited to selected repositories,
-   the user is sent to GitHub installation settings to grant access before
-   refreshing the list.
+   the user is sent through the configured App installation URL to grant access
+   before refreshing the list.
 
 Live credentialed GitHub integration tests, Redis HA/backup monitoring, and
 provider quota/rate-limit deployment monitoring remain release gates.
@@ -227,9 +374,11 @@ Base path: `/api/sync/github`
 
 | Method   | Path                                  | Result                                                                       |
 | -------- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| `GET`    | `/session`                            | Authenticated user and selected repository, or `{ "authenticated": false }`  |
+| `GET`    | `/session`                            | Provider configuration, authenticated user, and selected repository          |
 | `GET`    | `/auth/start?returnTo=/settings/sync` | Starts GitHub App authorization                                              |
-| `DELETE` | `/session`                            | Revokes/deletes the gateway session                                          |
+| `GET`    | `/auth/callback`                      | Validates GitHub state, rotates the session, and returns to Sync Settings    |
+| `POST`   | `/webhook`                            | Validates a signed revocation and invalidates that user's sessions           |
+| `DELETE` | `/session`                            | Deletes the local session and revokes its GitHub user token                  |
 | `GET`    | `/repositories`                       | `{ "repositories": GitHubRepository[] }`                                     |
 | `PUT`    | `/repository`                         | Selects `{ "repositoryId": number }`                                         |
 | `POST`   | `/repository`                         | Creates private `{ "name": string }`, then selects it when App access exists |
@@ -239,6 +388,15 @@ Base path: `/api/sync/github`
 | `GET`    | `/lfs/object/metadata?path=...`       | Object metadata; `404` if absent                                             |
 | `GET`    | `/lfs/object?path=...`                | Verified publication bytes                                                   |
 | `PUT`    | `/lfs/object?path=...`                | Uploads/verifies a Git LFS object                                            |
+
+OAuth callback failures never render provider responses directly. The gateway
+validates `state`, discards provider-controlled error descriptions, clears the
+pending browser session, and redirects to `/settings/sync` with one bounded
+outcome: `github-denied`, `github-invalid`, or `github-failed`. The Angular
+route presents an actionable message and immediately removes that status from
+the URL with history replacement. Successful exchanges additionally require
+the original server-side PKCE verifier; the browser receives only the derived
+S256 challenge and no provider token or verifier.
 
 The gateway owns `.gitattributes` with:
 
@@ -298,13 +456,19 @@ only `dumpSession` output in the encrypted server-side record.
 - `404`: gateway/provider feature not configured or selected item absent.
 - `409`: optimistic revision conflict or ambiguous duplicate provider node.
 - `413`: publication exceeds the deployment limit.
-- `429`: local/provider rate or transfer quota reached.
+- `429`: local/provider rate or transfer quota reached. When the provider
+  supplies a usable deadline, the response includes a bounded integer
+  `Retry-After` value between one second and 24 hours.
+- `502`: provider or GitHub App authentication failed upstream while the local
+  session remains retryable.
 - `507`: provider storage quota exhausted.
 
 ## References
 
 - [GitHub App user authorization](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app)
 - [GitHub App installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
+- [Installing a GitHub App from a third party](https://docs.github.com/en/apps/using-github-apps/installing-a-github-app-from-a-third-party)
+- [GitHub App setup URL](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url)
 - [GitHub repository contents API](https://docs.github.com/en/rest/repos/contents)
 - [Git LFS pointer specification](https://github.com/git-lfs/git-lfs/blob/main/docs/spec.md)
 - [Git LFS batch API](https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md)

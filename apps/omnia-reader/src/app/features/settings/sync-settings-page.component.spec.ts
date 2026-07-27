@@ -1,22 +1,32 @@
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { MatDialog } from '@angular/material/dialog';
+import { provideRouter, Router } from '@angular/router';
 import {
   AUTO_SYNC_SCHEDULER,
+  AutoSyncStatus,
   LIBRARY_SYNC_SERVICE,
+  ObjectTransferProgress,
+  REMOTE_BOOK_BACKUP_SERVICE,
+  RemoteBookBackup,
   SYNC_PROVIDER_SELECTION,
+  SyncWorkerOptions,
   SyncProviderKind,
   SyncProviderSelection,
 } from '@omnia-reader/sync/core';
 import {
   GITHUB_GATEWAY,
   GitHubGateway,
+  GitHubGatewayError,
   SYNC_OPERATION_JOURNAL,
 } from '@omnia-reader/sync/git';
 import { MEGA_GATEWAY, MegaGateway } from '@omnia-reader/sync/mega';
+import { of } from 'rxjs';
 import { vi } from 'vitest';
 import { SyncSettingsPageComponent } from './sync-settings-page.component';
 
 describe('SyncSettingsPageComponent', () => {
+  const installationUrl =
+    'https://github.test/apps/omnia-reader/installations/new';
   let selected: SyncProviderKind | null;
   let selection: SyncProviderSelection;
   let git: GitHubGateway;
@@ -29,14 +39,56 @@ describe('SyncSettingsPageComponent', () => {
   });
   const autoSync = {
     status: vi.fn().mockReturnValue({ phase: 'idle' }),
-    subscribe: vi.fn((listener: (status: { phase: string }) => void) => {
-      listener({ phase: 'idle' });
-      return vi.fn();
-    }),
+    subscribe: vi.fn(),
     requestImmediate: vi.fn(),
+    cancelActive: vi.fn(),
   };
+  const remoteBackup: RemoteBookBackup = {
+    manifest: {
+      schemaVersion: 1,
+      bookId: 'sha256:remote-book',
+      format: 'epub',
+      fileName: 'remote-book.epub',
+      mediaType: 'application/epub+zip',
+      title: 'Remote book',
+      authors: ['Reader Example'],
+      size: 2048,
+      sha256: 'a'.repeat(64),
+      objectPath: '.omnia-reader/v1/books/sha256:remote-book/publication.epub',
+      importedAt: '2026-07-26T12:00:00.000Z',
+      updatedAt: '2026-07-26T12:00:00.000Z',
+      appVersion: '1.0.0',
+    },
+    revision: 'revision-1',
+  };
+  const listRemoteBackups = vi.fn();
+  const deleteRemoteBackup = vi.fn();
+  const dialogOpen = vi.fn();
+  let autoSyncListener: ((status: AutoSyncStatus) => void) | null;
 
   beforeEach(async () => {
+    synchronize.mockReset().mockResolvedValue({
+      pulled: 2,
+      pushed: 1,
+      conflicts: 0,
+      rejected: 0,
+    });
+    autoSyncListener = null;
+    autoSync.status.mockReset().mockReturnValue({ phase: 'idle' });
+    autoSync.subscribe
+      .mockReset()
+      .mockImplementation((listener: (status: AutoSyncStatus) => void) => {
+        autoSyncListener = listener;
+        listener({ phase: 'idle' });
+        return vi.fn();
+      });
+    autoSync.requestImmediate.mockReset();
+    autoSync.cancelActive.mockReset().mockReturnValue(true);
+    listRemoteBackups.mockReset().mockResolvedValue([remoteBackup]);
+    deleteRemoteBackup.mockReset().mockResolvedValue(null);
+    dialogOpen.mockReset().mockReturnValue({
+      afterClosed: () => of(false),
+    });
     selected = 'mega';
     selection = {
       current: () => selected,
@@ -48,7 +100,11 @@ describe('SyncSettingsPageComponent', () => {
       }),
     };
     git = gatewayStub({
-      session: vi.fn().mockResolvedValue({ authenticated: false }),
+      session: vi.fn().mockResolvedValue({
+        configured: true,
+        authenticated: false,
+        installationUrl,
+      }),
       repositories: vi.fn().mockResolvedValue([]),
     }) as unknown as GitHubGateway;
     mega = gatewayStub({
@@ -94,7 +150,15 @@ describe('SyncSettingsPageComponent', () => {
         { provide: GITHUB_GATEWAY, useValue: git },
         { provide: MEGA_GATEWAY, useValue: mega },
         { provide: LIBRARY_SYNC_SERVICE, useValue: { synchronize } },
+        {
+          provide: REMOTE_BOOK_BACKUP_SERVICE,
+          useValue: {
+            list: listRemoteBackups,
+            deleteBackup: deleteRemoteBackup,
+          },
+        },
         { provide: AUTO_SYNC_SCHEDULER, useValue: autoSync },
+        { provide: MatDialog, useValue: { open: dialogOpen } },
       ],
     }).compileComponents();
   });
@@ -116,6 +180,32 @@ describe('SyncSettingsPageComponent', () => {
     expect(fixture.componentInstance.statusMessage).toContain('2 pulled');
   });
 
+  it('shows the scheduled automatic retry after provider rate limiting', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    autoSyncListener?.({
+      phase: 'scheduled',
+      reason: 'startup',
+      scheduledFor: '2026-07-27T12:02:00.000Z',
+      errorMessage:
+        'The synchronization provider is temporarily rate limiting requests. Local changes are safe and automatic synchronization will retry.',
+    });
+    fixture.detectChanges();
+
+    const status = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="automatic-sync-status"]',
+    );
+    expect(status?.textContent).toContain('temporarily rate limiting requests');
+    expect(status?.textContent).toContain('Next attempt');
+    expect(status?.textContent).not.toContain(
+      'will sync after reading settles',
+    );
+  });
+
   it('changes the active transport before loading another provider', async () => {
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();
@@ -126,6 +216,247 @@ describe('SyncSettingsPageComponent', () => {
     expect(selection.select).toHaveBeenCalledWith('git');
     expect(git.session).toHaveBeenCalled();
     expect(fixture.componentInstance.selectedProvider).toBe('git');
+  });
+
+  it('explains missing GitHub App configuration without leaving Settings', async () => {
+    selected = 'git';
+    vi.mocked(git.session).mockResolvedValue({
+      configured: false,
+      authenticated: false,
+    });
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const warning = (
+      fixture.nativeElement as HTMLElement
+    ).querySelector<HTMLElement>('[data-testid="github-sync-unconfigured"]');
+    const connectButton = [
+      ...fixture.nativeElement.querySelectorAll('button'),
+    ].find((button: HTMLButtonElement) =>
+      button.textContent?.includes('Connect GitHub'),
+    ) as HTMLButtonElement | undefined;
+
+    expect(warning?.textContent).toContain('GitHub App setup required');
+    expect(warning?.textContent).toContain('npm run start:full');
+    expect(connectButton).toBeUndefined();
+    expect(git.beginAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('keeps a failed gateway connection inside Settings with a recovery action', async () => {
+    selected = 'git';
+    vi.mocked(git.beginAuthorization).mockRejectedValue(
+      new GitHubGatewayError(500, 'GitHub sync gateway request failed (500)'),
+    );
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.connect();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.errorMessage).toContain(
+      'npm run start:full',
+    );
+    expect(fixture.componentInstance.gatewayAvailable.git).toBe(false);
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="sync-error"]',
+      )?.textContent,
+    ).toContain('GitHub sync gateway is unavailable');
+  });
+
+  it('offers reconnection after GitHub revokes the provider session', async () => {
+    selected = 'git';
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository: {
+        id: 99,
+        fullName: 'reader/library',
+        private: true,
+        defaultBranch: 'main',
+        canPush: true,
+      },
+    });
+    vi.mocked(git.repositories).mockRejectedValue(
+      new GitHubGatewayError(401, 'Provider-controlled revocation detail'),
+    );
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const alert = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="sync-error"]',
+    );
+    const connectButton = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ].find((button) => button.textContent?.includes('Connect GitHub'));
+
+    expect(alert?.textContent).toContain(
+      'Your provider session expired. Connect again to sync.',
+    );
+    expect(alert?.textContent).not.toContain('Provider-controlled');
+    expect(fixture.componentInstance.gitSession).toEqual({
+      configured: true,
+      authenticated: false,
+      installationUrl,
+    });
+    expect(connectButton).toBeTruthy();
+    expect(autoSync.requestImmediate).not.toHaveBeenCalled();
+  });
+
+  it('shows a safe retry delay when GitHub rate limits repository access', async () => {
+    selected = 'git';
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository: null,
+    });
+    vi.mocked(git.repositories).mockRejectedValue(
+      new GitHubGatewayError(429, 'Provider-controlled rate-limit detail', 120),
+    );
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const alert = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="sync-error"]',
+    );
+    expect(alert?.textContent).toContain(
+      'GitHub is temporarily rate limiting synchronization',
+    );
+    expect(alert?.textContent).toContain('Try again in about 2 minutes');
+    expect(alert?.textContent).toContain('pending changes remain safe');
+    expect(alert?.textContent).not.toContain('Provider-controlled');
+    expect(fixture.componentInstance.gatewayAvailable.git).toBe(true);
+    expect(
+      fixture.componentInstance.repositoryInstallationSettingsUrl,
+    ).toBeNull();
+    expect(autoSync.requestImmediate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      outcome: 'github-denied',
+      message:
+        'GitHub authorization was cancelled. Your local library is unchanged.',
+    },
+    {
+      outcome: 'github-invalid',
+      message:
+        'GitHub authorization could not be verified. Please connect GitHub again.',
+    },
+    {
+      outcome: 'github-failed',
+      message: 'GitHub authorization could not be completed. Please try again.',
+    },
+  ])(
+    'shows $outcome without retaining OAuth status in the URL',
+    async ({ outcome, message }) => {
+      const router = TestBed.inject(Router);
+      vi.spyOn(router, 'url', 'get').mockReturnValue(
+        `/settings/sync?syncAuth=${outcome}`,
+      );
+      const navigate = vi
+        .spyOn(router, 'navigateByUrl')
+        .mockResolvedValue(true);
+      const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+      fixture.detectChanges();
+      await vi.waitFor(() =>
+        expect(fixture.componentInstance.loading).toBe(false),
+      );
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.errorMessage).toBe(message);
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          '[data-testid="sync-error"]',
+        )?.textContent,
+      ).toContain(message);
+      expect(navigate).toHaveBeenCalledWith('/settings/sync', {
+        replaceUrl: true,
+      });
+    },
+  );
+
+  it('separates GitHub App installation from account authorization', async () => {
+    selected = 'git';
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const onboarding = (
+      fixture.nativeElement as HTMLElement
+    ).querySelector<HTMLElement>('[data-testid="github-onboarding"]');
+    const installLink = onboarding?.querySelector<HTMLAnchorElement>('a');
+
+    expect(onboarding?.textContent).toContain('Install GitHub App');
+    expect(onboarding?.textContent).toContain('Connect GitHub');
+    expect(installLink?.href).toBe(installationUrl);
+    expect(installLink?.target).toBe('');
+  });
+
+  it('offers installation recovery when no repositories are accessible', async () => {
+    selected = 'git';
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository: null,
+    });
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const warning = (
+      fixture.nativeElement as HTMLElement
+    ).querySelector<HTMLElement>('[data-testid="github-no-repositories"]');
+
+    expect(warning?.textContent).toContain('No repositories are available');
+    expect(warning?.querySelector<HTMLAnchorElement>('a')?.href).toBe(
+      installationUrl,
+    );
+  });
+
+  it('queues automatic synchronization when the selected provider already has a destination', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.chooseProvider('mega');
+
+    expect(selection.select).toHaveBeenCalledWith('mega');
+    expect(autoSync.requestImmediate).toHaveBeenCalledWith(
+      'destination-selected',
+    );
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'Automatic library synchronization queued',
+    );
   });
 
   it('prevents provider changes until the initial session refresh completes', async () => {
@@ -194,7 +525,9 @@ describe('SyncSettingsPageComponent', () => {
       canPush: true,
     };
     const authenticatedSession = {
+      configured: true as const,
       authenticated: true as const,
+      installationUrl,
       user: { id: 42, login: 'reader', avatarUrl: '' },
       repository,
     };
@@ -224,6 +557,201 @@ describe('SyncSettingsPageComponent', () => {
       'Created and selected private repository',
     );
   });
+
+  it('offers GitHub App permission recovery after repository creation is forbidden', async () => {
+    selected = 'git';
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository: null,
+    });
+    vi.mocked(git.createRepository).mockRejectedValue(
+      new GitHubGatewayError(403, 'Provider-controlled permission detail'),
+    );
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.createRepository('omnia-reader-library');
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.errorMessage).toContain(
+      'Grant the App Contents read and write access',
+    );
+    expect(fixture.componentInstance.errorMessage).toContain(
+      'Administration read and write access',
+    );
+    expect(fixture.componentInstance.errorMessage).toContain(
+      'Your local library is unchanged',
+    );
+    expect(fixture.componentInstance.errorMessage).not.toContain(
+      'Provider-controlled',
+    );
+    const recoveryLink = (
+      fixture.nativeElement as HTMLElement
+    ).querySelector<HTMLAnchorElement>(
+      '[data-testid="github-permission-recovery"]',
+    );
+    expect(recoveryLink?.href).toBe(installationUrl);
+    expect(autoSync.requestImmediate).not.toHaveBeenCalled();
+  });
+
+  it('shows byte progress and safely cancels a manual synchronization', async () => {
+    let options: SyncWorkerOptions | undefined;
+    synchronize.mockImplementationOnce(
+      async (receivedOptions?: SyncWorkerOptions) => {
+        options = receivedOptions;
+        receivedOptions?.onTransferProgress?.({
+          direction: 'upload',
+          path: '.omnia-reader/v1/books/id/publication.epub',
+          transferredBytes: 512,
+          totalBytes: 1024,
+        });
+        await new Promise<void>((_resolve, reject) => {
+          receivedOptions?.signal?.addEventListener(
+            'abort',
+            () => reject(receivedOptions.signal?.reason),
+            { once: true },
+          );
+        });
+        return {
+          pulled: 0,
+          pushed: 0,
+          conflicts: 0,
+          rejected: 0,
+        };
+      },
+    );
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    const syncPromise = fixture.componentInstance.syncNow();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.transferProgress).toMatchObject({
+        transferredBytes: 512,
+      } satisfies Partial<ObjectTransferProgress>),
+    );
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain(
+      'Uploading publication: 512 bytes of 1.0 KiB (50%)',
+    );
+    fixture.componentInstance.cancelSync();
+    await syncPromise;
+    fixture.detectChanges();
+
+    expect(options?.signal?.aborted).toBe(true);
+    expect(fixture.componentInstance.manualSyncController).toBeNull();
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'Synchronization cancelled',
+    );
+    expect(fixture.nativeElement.textContent).toContain(
+      'Local changes are safe and remain queued',
+    );
+  });
+
+  it('shows automatic transfer progress and safely cancels it', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    autoSyncListener?.({
+      phase: 'syncing',
+      reason: 'book-change',
+      transferProgress: {
+        direction: 'download',
+        path: '.omnia-reader/v1/books/id/publication.pdf',
+        transferredBytes: 512,
+        totalBytes: 1024,
+      },
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain(
+      'Downloading publication: 512 bytes of 1.0 KiB (50%)',
+    );
+    const cancelButton = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ].find((button) =>
+      button.textContent?.includes('Cancel automatic sync'),
+    ) as HTMLButtonElement | undefined;
+    expect(cancelButton).toBeDefined();
+    cancelButton?.click();
+    expect(autoSync.cancelActive).toHaveBeenCalledTimes(1);
+
+    autoSyncListener?.({
+      phase: 'cancelled',
+      reason: 'book-change',
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain(
+      'Automatic synchronization cancelled',
+    );
+    expect(fixture.nativeElement.textContent).toContain(
+      'Local changes are safe and remain queued',
+    );
+  });
+
+  it('lists publication backups stored in the selected destination', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const backupSection = (
+      fixture.nativeElement as HTMLElement
+    ).querySelector<HTMLElement>('[data-testid="remote-book-backups"]');
+    expect(backupSection?.textContent).toContain('Remote book');
+    expect(backupSection?.textContent).toContain('Reader Example');
+    expect(backupSection?.textContent).toContain('2.0 KiB');
+  });
+
+  it('deletes a remote backup only after explicit confirmation', async () => {
+    dialogOpen.mockReturnValue({
+      afterClosed: () => of(true),
+    });
+    listRemoteBackups
+      .mockResolvedValueOnce([remoteBackup])
+      .mockResolvedValueOnce([]);
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.requestRemoteBackupDeletion(remoteBackup);
+    fixture.detectChanges();
+
+    expect(deleteRemoteBackup).toHaveBeenCalledWith('sha256:remote-book');
+    expect(fixture.componentInstance.remoteBackups).toEqual([]);
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'Copies already stored on devices remain available',
+    );
+  });
+
+  it('keeps a remote backup when deletion is cancelled', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.requestRemoteBackupDeletion(remoteBackup);
+
+    expect(deleteRemoteBackup).not.toHaveBeenCalled();
+  });
 });
 
 function gatewayStub(overrides: Record<string, unknown>) {
@@ -234,6 +762,7 @@ function gatewayStub(overrides: Record<string, unknown>) {
     headObject: vi.fn(),
     downloadObject: vi.fn(),
     uploadObject: vi.fn(),
+    deleteObject: vi.fn(),
     selectRepository: vi.fn(),
     createRepository: vi.fn(),
     selectFolder: vi.fn(),

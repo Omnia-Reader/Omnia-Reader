@@ -25,8 +25,11 @@ import {
   AUTO_SYNC_SCHEDULER,
   AnnotationSyncService,
   AutoSyncScheduler,
+  BOOK_SYNC_EXCLUSIONS,
   BookSyncService,
   BookmarkSyncService,
+  BookSyncExclusions,
+  BrowserBookSyncExclusions,
   BrowserSyncProviderSelection,
   LibrarySyncCoordinator,
   LibrarySyncManifestService,
@@ -35,6 +38,8 @@ import {
   NotifyingSyncOperationJournal,
   ProgressDocumentRepository,
   ProgressSyncService,
+  REMOTE_BOOK_BACKUP_SERVICE,
+  RemoteBookBackupService,
   SelectedLibrarySyncTransport,
   SyncActivityNotifier,
   SYNC_PROVIDER_SELECTION,
@@ -84,14 +89,23 @@ function createLibrarySyncService(
   remote: LibrarySyncTransport,
   journal: SyncOperationJournal,
   repository: LibraryRepository & ProgressDocumentRepository,
+  exclusions: BookSyncExclusions,
 ): SyncWorker {
   return new LibrarySyncCoordinator({
     schema: new LibrarySyncManifestService(remote),
-    books: new BookSyncService(remote, journal, repository),
+    books: new BookSyncService(remote, journal, repository, { exclusions }),
     progress: new ProgressSyncService(remote, journal, repository),
     bookmarks: new BookmarkSyncService(remote, journal, repository),
     annotations: new AnnotationSyncService(remote, journal, repository),
   });
+}
+
+function createRemoteBookBackupService(
+  remote: LibrarySyncTransport,
+  journal: SyncOperationJournal,
+  exclusions: BookSyncExclusions,
+): RemoteBookBackupService {
+  return new RemoteBookBackupService(remote, journal, exclusions);
 }
 
 function createSelectedSyncTransport(
@@ -208,6 +222,10 @@ export const appConfig: ApplicationConfig = {
       provide: ReaderEngineRegistry,
       useFactory: createReaderEngineRegistry,
     },
+    {
+      provide: BOOK_SYNC_EXCLUSIONS,
+      useFactory: () => new BrowserBookSyncExclusions(),
+    },
     ...(REMOTE_SYNC_ENABLED
       ? [
           SyncActivityNotifier,
@@ -240,6 +258,16 @@ export const appConfig: ApplicationConfig = {
               ACTIVE_SYNC_TRANSPORT,
               SYNC_OPERATION_JOURNAL,
               LIBRARY_REPOSITORY,
+              BOOK_SYNC_EXCLUSIONS,
+            ],
+          },
+          {
+            provide: REMOTE_BOOK_BACKUP_SERVICE,
+            useFactory: createRemoteBookBackupService,
+            deps: [
+              ACTIVE_SYNC_TRANSPORT,
+              SYNC_OPERATION_JOURNAL,
+              BOOK_SYNC_EXCLUSIONS,
             ],
           },
           {

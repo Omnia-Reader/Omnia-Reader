@@ -424,6 +424,18 @@ fn desktop_argument_paths(
     arguments
         .into_iter()
         .filter_map(|argument| {
+            if let Some(argument) = argument.to_str() {
+                if let Ok(url) = tauri::Url::parse(argument) {
+                    if url.scheme() == "file" {
+                        return url
+                            .to_file_path()
+                            .ok()
+                            .filter(|path| path.is_file())
+                            .map(FilePath::Path);
+                    }
+                    return None;
+                }
+            }
             let path = if argument.is_absolute() {
                 argument
             } else {
@@ -586,7 +598,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{deep_link_book_id, safe_backup_file_name};
+    use super::{deep_link_book_id, desktop_argument_paths, safe_backup_file_name, FilePath, Uuid};
+    use std::fs::{create_dir_all, remove_dir_all, write};
+    use std::path::PathBuf;
 
     #[test]
     fn backup_file_names_are_confined_and_normalized() {
@@ -625,5 +639,34 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn desktop_publication_arguments_accept_paths_and_file_urls_only() {
+        let fixture_directory =
+            std::env::temp_dir().join(format!("omnia-reader-arguments-{}", Uuid::new_v4()));
+        create_dir_all(&fixture_directory).unwrap();
+        let fixture = fixture_directory.join("publication with spaces.epub");
+        write(&fixture, b"PK\x03\x04").unwrap();
+        let file_url = tauri::Url::from_file_path(&fixture).unwrap();
+
+        let resolved = desktop_argument_paths(
+            [
+                PathBuf::from("publication with spaces.epub"),
+                PathBuf::from(file_url.as_str()),
+                PathBuf::from("https://example.com/publication.epub"),
+                PathBuf::from("missing.pdf"),
+            ],
+            &fixture_directory,
+        );
+
+        assert_eq!(resolved.len(), 2);
+        for path in resolved {
+            match path {
+                FilePath::Path(path) => assert_eq!(path, fixture),
+                FilePath::Url(_) => panic!("desktop arguments must resolve to local paths"),
+            }
+        }
+        remove_dir_all(fixture_directory).unwrap();
     }
 }

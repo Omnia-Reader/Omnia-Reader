@@ -3,15 +3,11 @@ import {
   SyncOperation,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
+import { REMOTE_SYNC_ENABLED } from './app-capability-flags';
+
+export { REMOTE_SYNC_ENABLED } from './app-capability-flags';
 
 const SYNC_PROVIDER_STORAGE_KEY = 'omnia-reader.sync-provider';
-
-/**
- * GitHub synchronization now has a supported OAuth/session deployment path.
- * Keep the capability explicit so a local-only distribution can still replace
- * this value at build time without changing persistence contracts.
- */
-export const REMOTE_SYNC_ENABLED = true;
 
 /**
  * Discard the obsolete provider choice from builds where remote synchronization

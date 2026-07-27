@@ -1,6 +1,7 @@
 import { buildSyncGateway } from './app.js';
 import {
   githubAdapterFromEnvironment,
+  githubWebhookFromEnvironment,
   megaAdapterFromEnvironment,
 } from './configuration.js';
 import { gatewaySessionStoresFromEnvironment } from './shared-session-stores.js';
@@ -23,13 +24,26 @@ async function start(): Promise<void> {
       },
     });
     const activeStores = stores;
+    const githubWebhook = githubWebhookFromEnvironment(
+      process.env,
+      activeStores.githubRevocations,
+    );
     const app = buildSyncGateway({
       github: githubAdapterFromEnvironment(process.env, {
         ...(activeStores.github ? { sessions: activeStores.github } : {}),
+        ...(activeStores.githubRevocations
+          ? { revocations: activeStores.githubRevocations }
+          : {}),
+        onUserTokenRevocationFailure: () => {
+          console.error(
+            'The GitHub user token could not be revoked remotely; the local session was removed',
+          );
+        },
       }),
       mega: megaAdapterFromEnvironment(process.env, {
         ...(activeStores.mega ? { sessions: activeStores.mega } : {}),
       }),
+      ...(githubWebhook ? { githubWebhook } : {}),
       logger: true,
       secureCookies: process.env['NODE_ENV'] === 'production',
     });

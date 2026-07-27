@@ -951,7 +951,8 @@
 
   @if (!errorMessage) {
     <footer
-      class="z-2 flex min-h-[5.25rem] flex-wrap items-center justify-center gap-x-4 gap-y-1 bg-white/95 px-4 py-2 shadow-[0_1px_10px_rgb(15_23_42/10%)]"
+      data-testid="reader-footer"
+      class="z-2 flex min-h-6 flex-wrap items-center justify-center gap-x-2 bg-white/95 px-2 shadow-[0_1px_10px_rgb(15_23_42/10%)]"
     >
       @if (navigationError) {
         <span class="w-full text-center text-sm text-red-700" role="alert">
@@ -967,7 +968,7 @@
         <span
           id="reader-page-status"
           data-testid="reader-page-status"
-          class="text-center text-sm text-stone-600"
+          class="text-center text-xs whitespace-nowrap text-stone-600"
           aria-live="polite"
         >
           Page {{ pageStatus.current }} of {{ pageStatus.total }}
@@ -978,14 +979,14 @@
       }
       @if (progressSeekingAvailable) {
         <label
-          class="order-first flex w-full max-w-3xl items-center gap-3"
+          class="flex min-w-10 max-w-3xl flex-1 items-center"
           for="reader-progress"
         >
           <span class="sr-only">Book progress</span>
           <input
             id="reader-progress"
             data-testid="reader-progress-slider"
-            class="min-h-11 min-w-0 flex-1 cursor-pointer"
+            class="h-6 min-h-6 min-w-0 flex-1 cursor-pointer"
             type="range"
             min="0"
             max="100"
@@ -1001,7 +1002,7 @@
       @if (overallProgressPercent !== null) {
         <span
           data-testid="reader-overall-progress"
-          class="text-center text-sm text-stone-500"
+          class="text-center text-xs whitespace-nowrap text-stone-500"
         >
           {{ overallProgressPercent }}% of book
         </span>

@@ -16,12 +16,17 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   BookSyncManifest,
   bookManifestPath,
+  createBookSyncDeletionTombstone,
   createBookSyncManifest,
 } from './book-sync-manifest';
 import { BookSyncService } from './book-sync-service';
+import { BookSyncExclusions } from './book-sync-exclusions';
 import {
   DocumentWriteRequest,
   LibrarySyncTransport,
+  ObjectDownloadOptions,
+  ObjectDeleteRequest,
+  ObjectTransferProgress,
   ObjectUploadRequest,
   RemoteDocument,
   RemoteObject,
@@ -96,6 +101,178 @@ describe('BookSyncService', () => {
     ).toEqual(fixture.blob);
   });
 
+  it('keeps a remotely backed-up book removed from this device', async () => {
+    const repository = new MemoryRepository();
+    const remote = new MemoryTransport();
+    remote.seed(fixture.manifest, fixture.blob);
+    const exclusions = new MemoryBookSyncExclusions([fixture.book.id]);
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      repository,
+      { exclusions },
+    );
+
+    await expect(service.synchronize()).resolves.toMatchObject({
+      pulled: 0,
+      pushed: 0,
+      rejected: 0,
+    });
+    expect(await repository.getBook(fixture.book.id)).toBeNull();
+    expect(remote.objects.has(fixture.manifest.objectPath)).toBe(true);
+    expect(remote.documents.has(bookManifestPath(fixture.book.id))).toBe(true);
+  });
+
+  it('does not restore a book excluded while its download is in flight', async () => {
+    const repository = new MemoryRepository();
+    const remote = new MemoryTransport();
+    remote.seed(fixture.manifest, fixture.blob);
+    const exclusions = new MemoryBookSyncExclusions();
+    remote.onDownload = () => exclusions.exclude(fixture.book.id);
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      repository,
+      { exclusions },
+    );
+
+    await expect(service.pull()).resolves.toMatchObject({
+      pulled: 0,
+      rejected: 0,
+    });
+    expect(await repository.getBook(fixture.book.id)).toBeNull();
+  });
+
+  it('does not seed an excluded local edition until it is explicitly included', async () => {
+    const repository = new MemoryRepository(fixture.book, fixture.source);
+    const remote = new MemoryTransport();
+    const exclusions = new MemoryBookSyncExclusions([fixture.book.id]);
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal([operation('op-1', fixture.manifest)]),
+      repository,
+      { exclusions },
+    );
+
+    await expect(service.push()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    expect(remote.objects.size).toBe(0);
+    expect(remote.documents.size).toBe(0);
+
+    exclusions.include(fixture.book.id);
+    await expect(service.push()).resolves.toMatchObject({ pushed: 1 });
+    expect(remote.objects.has(fixture.manifest.objectPath)).toBe(true);
+    expect(remote.documents.has(bookManifestPath(fixture.book.id))).toBe(true);
+  });
+
+  it('applies a remote deletion tombstone without deleting the local copy', async () => {
+    const repository = new MemoryRepository(fixture.book, fixture.source);
+    const remote = new MemoryTransport();
+    remote.seed(fixture.manifest, fixture.blob);
+    remote.seedTombstone(
+      createBookSyncDeletionTombstone(fixture.book, '2026-07-25T03:00:00.000Z'),
+    );
+    const exclusions = new MemoryBookSyncExclusions();
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      repository,
+      { exclusions },
+    );
+
+    await expect(service.pull()).resolves.toMatchObject({ pulled: 1 });
+    await expect(service.pull()).resolves.toMatchObject({ pulled: 0 });
+    expect(exclusions.isExcluded(fixture.book.id)).toBe(true);
+    expect(await repository.getBook(fixture.book.id)).toEqual(fixture.book);
+    expect(remote.objects.has(fixture.manifest.objectPath)).toBe(false);
+  });
+
+  it('discards a stale pending upload when a newer remote deletion wins', async () => {
+    const remote = new MemoryTransport();
+    remote.seed(fixture.manifest, fixture.blob);
+    remote.seedTombstone(
+      createBookSyncDeletionTombstone(fixture.book, '2026-07-25T03:00:00.000Z'),
+    );
+    const journal = new MemoryJournal([operation('op-1', fixture.manifest)]);
+    const exclusions = new MemoryBookSyncExclusions();
+    const service = new BookSyncService(
+      remote,
+      journal,
+      new MemoryRepository(fixture.book, fixture.source),
+      { exclusions },
+    );
+
+    await expect(service.push()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    expect(journal.acknowledged).toEqual(['op-1']);
+    expect(exclusions.isExcluded(fixture.book.id)).toBe(true);
+    expect(remote.objects.has(fixture.manifest.objectPath)).toBe(false);
+  });
+
+  it('allows an explicit newer reimport to replace a remote tombstone', async () => {
+    const remote = new MemoryTransport();
+    remote.seedTombstone(
+      createBookSyncDeletionTombstone(fixture.book, '2026-07-25T03:00:00.000Z'),
+    );
+    const manifest = {
+      ...fixture.manifest,
+      updatedAt: '2026-07-25T04:00:00.000Z',
+    };
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal([operation('op-1', manifest)]),
+      new MemoryRepository(fixture.book, fixture.source),
+      { exclusions: new MemoryBookSyncExclusions() },
+    );
+
+    await expect(service.push()).resolves.toMatchObject({ pushed: 1 });
+    expect(remote.objects.has(manifest.objectPath)).toBe(true);
+    expect(
+      JSON.parse(
+        remote.documents.get(bookManifestPath(fixture.book.id))?.content ??
+          '{}',
+      ),
+    ).toMatchObject({ title: manifest.title, updatedAt: manifest.updatedAt });
+  });
+
+  it('removes an uploaded object when a tombstone wins the manifest race', async () => {
+    const remote = new MemoryTransport();
+    remote.beforeWrite = () => {
+      remote.beforeWrite = undefined;
+      remote.seedTombstone(
+        createBookSyncDeletionTombstone(
+          fixture.book,
+          '2026-07-25T03:00:00.000Z',
+        ),
+      );
+    };
+    const journal = new MemoryJournal([operation('op-1', fixture.manifest)]);
+    const exclusions = new MemoryBookSyncExclusions();
+    const service = new BookSyncService(
+      remote,
+      journal,
+      new MemoryRepository(fixture.book, fixture.source),
+      {
+        exclusions,
+        retryDelayMs: 0,
+        wait: async () => undefined,
+      },
+    );
+
+    await expect(service.push()).resolves.toMatchObject({
+      pushed: 0,
+      conflicts: 1,
+      rejected: 0,
+    });
+    expect(remote.objects.has(fixture.manifest.objectPath)).toBe(false);
+    expect(exclusions.isExcluded(fixture.book.id)).toBe(true);
+    expect(journal.acknowledged).toEqual(['op-1']);
+  });
+
   it('rejects corrupted downloaded bytes without exposing a library record', async () => {
     const repository = new MemoryRepository();
     const remote = new MemoryTransport();
@@ -154,6 +331,60 @@ describe('BookSyncService', () => {
     expect(await journal.pending()).toHaveLength(1);
   });
 
+  it('reports publication transfer progress to the synchronization caller', async () => {
+    const progress: ObjectTransferProgress[] = [];
+    const remote = new MemoryTransport();
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal([operation('op-1', fixture.manifest)]),
+      new MemoryRepository(fixture.book, fixture.source),
+    );
+
+    await service.push({
+      onTransferProgress: (update) => progress.push(update),
+    });
+
+    expect(progress).toEqual([
+      {
+        direction: 'upload',
+        path: fixture.manifest.objectPath,
+        transferredBytes: 0,
+        totalBytes: fixture.manifest.size,
+      },
+      {
+        direction: 'upload',
+        path: fixture.manifest.objectPath,
+        transferredBytes: fixture.manifest.size,
+        totalBytes: fixture.manifest.size,
+      },
+    ]);
+  });
+
+  it('keeps the manifest pending when publication synchronization is cancelled', async () => {
+    const controller = new AbortController();
+    const journal = new MemoryJournal([operation('op-1', fixture.manifest)]);
+    const remote = new MemoryTransport();
+    const service = new BookSyncService(
+      remote,
+      journal,
+      new MemoryRepository(fixture.book, fixture.source),
+    );
+
+    await expect(
+      service.push({
+        signal: controller.signal,
+        onTransferProgress: () =>
+          controller.abort(
+            new DOMException('Synchronization cancelled', 'AbortError'),
+          ),
+      }),
+    ).rejects.toThrow('Synchronization cancelled');
+
+    expect(remote.objects.size).toBe(0);
+    expect(remote.documents.size).toBe(0);
+    expect(await journal.pending()).toHaveLength(1);
+  });
+
   it('converges two offline libraries without losing either publication', async () => {
     const second = await bookFixture('second publication', 'Second.pdf', 'pdf');
     const remote = new MemoryTransport();
@@ -190,6 +421,8 @@ class MemoryTransport implements LibrarySyncTransport {
   readonly events: string[] = [];
   conflictsRemaining = 0;
   failObjectUpload = false;
+  beforeWrite: (() => void) | undefined;
+  onDownload: (() => void) | undefined;
   private revision = 0;
 
   async list(prefix: string): Promise<readonly RemoteDocument[]> {
@@ -207,6 +440,14 @@ class MemoryTransport implements LibrarySyncTransport {
       this.conflictsRemaining -= 1;
       throw new SyncConflictError();
     }
+    this.beforeWrite?.();
+    const current = this.documents.get(request.path);
+    if (
+      (current && request.expectedRevision !== current.revision) ||
+      (!current && request.expectedRevision !== undefined)
+    ) {
+      throw new SyncConflictError();
+    }
     this.events.push('write-document');
     const document = {
       path: request.path,
@@ -221,11 +462,21 @@ class MemoryTransport implements LibrarySyncTransport {
     return this.objects.get(path) ?? null;
   }
 
-  async downloadObject(path: string): Promise<Blob> {
+  async downloadObject(
+    path: string,
+    options: ObjectDownloadOptions = {},
+  ): Promise<Blob> {
     const blob = this.objectContents.get(path);
     if (!blob) {
       throw new Error('Object not found');
     }
+    this.onDownload?.();
+    options.onProgress?.({
+      direction: 'download',
+      path,
+      transferredBytes: blob.size,
+      totalBytes: options.expectedSize ?? blob.size,
+    });
     return blob;
   }
 
@@ -233,6 +484,15 @@ class MemoryTransport implements LibrarySyncTransport {
     this.events.push('upload-object');
     if (this.failObjectUpload) {
       throw new Error('Upload interrupted');
+    }
+    request.onProgress?.({
+      direction: 'upload',
+      path: request.path,
+      transferredBytes: 0,
+      totalBytes: request.size,
+    });
+    if (request.signal?.aborted) {
+      throw request.signal.reason;
     }
     const object = {
       path: request.path,
@@ -242,7 +502,27 @@ class MemoryTransport implements LibrarySyncTransport {
     };
     this.objects.set(request.path, object);
     this.objectContents.set(request.path, request.content);
+    request.onProgress?.({
+      direction: 'upload',
+      path: request.path,
+      transferredBytes: request.size,
+      totalBytes: request.size,
+    });
     return object;
+  }
+
+  async deleteObject(request: ObjectDeleteRequest): Promise<void> {
+    const current = this.objects.get(request.path);
+    if (
+      current &&
+      request.expectedRevision !== undefined &&
+      request.expectedRevision !== current.revision
+    ) {
+      throw new SyncConflictError();
+    }
+    this.objects.delete(request.path);
+    this.objectContents.delete(request.path);
+    this.events.push('delete-object');
   }
 
   seed(manifest: BookSyncManifest, blob: Blob): void {
@@ -258,6 +538,16 @@ class MemoryTransport implements LibrarySyncTransport {
       sha256: manifest.sha256,
     });
     this.objectContents.set(manifest.objectPath, blob);
+  }
+
+  seedTombstone(
+    tombstone: ReturnType<typeof createBookSyncDeletionTombstone>,
+  ): void {
+    this.documents.set(bookManifestPath(tombstone.bookId), {
+      path: bookManifestPath(tombstone.bookId),
+      revision: `document-${++this.revision}`,
+      content: `${JSON.stringify(tombstone, null, 2)}\n`,
+    });
   }
 }
 
@@ -286,6 +576,26 @@ class MemoryJournal implements SyncOperationJournal {
     this.operations = this.operations.filter(
       (operation) => !operationIds.includes(operation.id),
     );
+  }
+}
+
+class MemoryBookSyncExclusions implements BookSyncExclusions {
+  private readonly bookIds: Set<string>;
+
+  constructor(bookIds: readonly string[] = []) {
+    this.bookIds = new Set(bookIds);
+  }
+
+  isExcluded(bookId: string): boolean {
+    return this.bookIds.has(bookId);
+  }
+
+  exclude(bookId: string): void {
+    this.bookIds.add(bookId);
+  }
+
+  include(bookId: string): void {
+    this.bookIds.delete(bookId);
   }
 }
 

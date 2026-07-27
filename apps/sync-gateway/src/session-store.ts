@@ -4,6 +4,8 @@ import {
   createHash,
   randomBytes,
 } from 'node:crypto';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { GatewayHttpError } from './gateway-contract.js';
 
 export interface GatewaySessionStore<T extends object> {
@@ -49,8 +51,14 @@ export interface EncryptedRedisSessionStoreOptions
   prefix: string;
 }
 
+export interface EncryptedFileSessionStoreOptions
+  extends EncryptedSessionStoreOptions {
+  filePath: string;
+}
+
 const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_SESSION_BYTES = 1024 * 1024;
+const MAX_SESSION_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_SESSION_ID_BYTES = 512;
 const MAX_SESSION_KEYS = 4;
 const MOVE_SESSION_SCRIPT = `
@@ -227,6 +235,189 @@ export class EncryptedRedisSessionStore<T extends object>
       .update(sessionId, 'utf8')
       .digest('base64url');
     return `${this.prefix}:${digest}`;
+  }
+}
+
+interface EncryptedFile {
+  version: 1;
+  records: Record<string, EncryptedRecord>;
+}
+
+export class EncryptedFileSessionStore<T extends object>
+  implements GatewaySessionStore<T>
+{
+  private readonly filePath: string;
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+  private readonly cipher: SessionCipher<T>;
+  private operation: Promise<void> = Promise.resolve();
+
+  constructor(
+    keys: Buffer | readonly Buffer[],
+    options: EncryptedFileSessionStoreOptions,
+  ) {
+    if (!options.filePath || options.filePath.includes('\0')) {
+      throw new TypeError('The persistent session file path is invalid');
+    }
+    this.filePath = options.filePath;
+    this.ttlMs = sessionTtl(options.ttlMs);
+    this.now = options.now ?? Date.now;
+    this.cipher = new SessionCipher(keys, options.random ?? randomBytes);
+  }
+
+  async get(sessionId: string): Promise<T | null> {
+    assertSessionId(sessionId);
+    return this.serialized(async () => {
+      const file = await this.read();
+      const storageKey = this.storageKey(sessionId);
+      const record = file.records[storageKey];
+      if (!record) {
+        return null;
+      }
+      if (record.expiresAt <= this.now()) {
+        delete file.records[storageKey];
+        await this.write(file);
+        return null;
+      }
+      try {
+        const decrypted = this.cipher.decrypt(sessionId, record.ciphertext);
+        if (decrypted.needsRotation) {
+          record.ciphertext = this.cipher.encrypt(sessionId, decrypted.value);
+          await this.write(file);
+        }
+        return decrypted.value;
+      } catch {
+        delete file.records[storageKey];
+        await this.write(file);
+        throw invalidProviderSession();
+      }
+    });
+  }
+
+  async set(sessionId: string, value: T): Promise<void> {
+    assertSessionId(sessionId);
+    await this.serialized(async () => {
+      const file = await this.read();
+      this.removeExpired(file);
+      file.records[this.storageKey(sessionId)] = {
+        ciphertext: this.cipher.encrypt(sessionId, value),
+        expiresAt: this.now() + this.ttlMs,
+      };
+      await this.write(file);
+    });
+  }
+
+  async move(
+    sessionId: string,
+    replacementSessionId: string,
+    value: T,
+  ): Promise<void> {
+    assertSessionId(sessionId);
+    assertSessionId(replacementSessionId);
+    await this.serialized(async () => {
+      const file = await this.read();
+      const sourceKey = this.storageKey(sessionId);
+      const record = file.records[sourceKey];
+      if (!record || record.expiresAt <= this.now()) {
+        delete file.records[sourceKey];
+        await this.write(file);
+        throw invalidProviderSession();
+      }
+      try {
+        this.cipher.decrypt(sessionId, record.ciphertext);
+      } catch {
+        delete file.records[sourceKey];
+        await this.write(file);
+        throw invalidProviderSession();
+      }
+      file.records[this.storageKey(replacementSessionId)] = {
+        ciphertext: this.cipher.encrypt(replacementSessionId, value),
+        expiresAt: this.now() + this.ttlMs,
+      };
+      if (sessionId !== replacementSessionId) {
+        delete file.records[sourceKey];
+      }
+      await this.write(file);
+    });
+  }
+
+  async delete(sessionId: string): Promise<void> {
+    assertSessionId(sessionId);
+    await this.serialized(async () => {
+      const file = await this.read();
+      if (delete file.records[this.storageKey(sessionId)]) {
+        await this.write(file);
+      }
+    });
+  }
+
+  private storageKey(sessionId: string): string {
+    return createHash('sha256').update(sessionId, 'utf8').digest('base64url');
+  }
+
+  private removeExpired(file: EncryptedFile): void {
+    const now = this.now();
+    for (const [key, record] of Object.entries(file.records)) {
+      if (record.expiresAt <= now) {
+        delete file.records[key];
+      }
+    }
+  }
+
+  private async read(): Promise<EncryptedFile> {
+    let serialized: string;
+    try {
+      serialized = await readFile(this.filePath, 'utf8');
+    } catch (error) {
+      if (isNodeError(error) && error.code === 'ENOENT') {
+        return { version: 1, records: {} };
+      }
+      throw error;
+    }
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_SESSION_FILE_BYTES) {
+      throw invalidSessionFile();
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(serialized);
+    } catch {
+      throw invalidSessionFile();
+    }
+    if (!isEncryptedFile(value)) {
+      throw invalidSessionFile();
+    }
+    return value;
+  }
+
+  private async write(file: EncryptedFile): Promise<void> {
+    const serialized = JSON.stringify(file);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_SESSION_FILE_BYTES) {
+      throw new TypeError(
+        'The persistent synchronization session store is full',
+      );
+    }
+    await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });
+    const temporaryPath = `${this.filePath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+    try {
+      await writeFile(temporaryPath, serialized, {
+        encoding: 'utf8',
+        flag: 'wx',
+        mode: 0o600,
+      });
+      await rename(temporaryPath, this.filePath);
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private serialized<R>(operation: () => Promise<R>): Promise<R> {
+    const result = this.operation.then(operation, operation);
+    this.operation = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 }
 
@@ -414,4 +605,40 @@ function sessionTtl(value: number | undefined): number {
 
 function invalidProviderSession(): GatewayHttpError {
   return new GatewayHttpError(401, 'Provider session is invalid');
+}
+
+function invalidSessionFile(): TypeError {
+  return new TypeError(
+    'The persistent synchronization session store is invalid',
+  );
+}
+
+function isEncryptedFile(value: unknown): value is EncryptedFile {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    (value as { version?: unknown }).version !== 1
+  ) {
+    return false;
+  }
+  const records = (value as { records?: unknown }).records;
+  if (!records || typeof records !== 'object' || Array.isArray(records)) {
+    return false;
+  }
+  return Object.entries(records).every(
+    ([key, record]) =>
+      /^[A-Za-z0-9_-]{43}$/.test(key) &&
+      !!record &&
+      typeof record === 'object' &&
+      !Array.isArray(record) &&
+      typeof (record as EncryptedRecord).ciphertext === 'string' &&
+      (record as EncryptedRecord).ciphertext.length <= MAX_SESSION_BYTES * 2 &&
+      Number.isSafeInteger((record as EncryptedRecord).expiresAt) &&
+      (record as EncryptedRecord).expiresAt > 0,
+  );
+}
+
+function isNodeError(value: unknown): value is NodeJS.ErrnoException {
+  return value instanceof Error && 'code' in value;
 }

@@ -64,6 +64,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/omnia-reader.desktop.hbs"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/omnia-reader.desktop.hbs"
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

@@ -2,6 +2,7 @@ import type {
   DocumentWriteRequest,
   RemoteDocument,
   RemoteObject,
+  RemoteObjectDelete,
   RemoteObjectDownload,
   RemoteObjectUpload,
   SyncGatewayAdapter,
@@ -12,7 +13,7 @@ export class UnconfiguredSyncGatewayAdapter implements SyncGatewayAdapter {
   constructor(private readonly providerLabel: string) {}
 
   async session(): Promise<unknown> {
-    return { authenticated: false };
+    return { configured: false, authenticated: false };
   }
 
   async authorizationUrl(): Promise<string> {
@@ -69,9 +70,18 @@ export class UnconfiguredSyncGatewayAdapter implements SyncGatewayAdapter {
     return this.unavailable();
   }
 
+  async deleteObject(
+    sessionId: string,
+    request: RemoteObjectDelete,
+  ): Promise<void> {
+    void sessionId;
+    void request;
+    return this.unavailable();
+  }
+
   private unavailable(): never {
     throw new GatewayHttpError(
-      404,
+      503,
       `${this.providerLabel} synchronization is not configured`,
     );
   }

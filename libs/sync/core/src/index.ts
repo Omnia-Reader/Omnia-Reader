@@ -1,7 +1,9 @@
 export * from './lib/annotation-sync-service';
 export * from './lib/auto-sync-scheduler';
 export * from './lib/book-sync-manifest';
+export * from './lib/book-sync-exclusions';
 export * from './lib/book-sync-service';
+export * from './lib/browser-object-transfer';
 export * from './lib/bookmark-sync-service';
 export * from './lib/library-sync-coordinator';
 export * from './lib/library-sync-manifest';
@@ -11,6 +13,7 @@ export * from './lib/progress-document-repository';
 export * from './lib/progress-merge';
 export * from './lib/progress-paths';
 export * from './lib/progress-sync-service';
+export * from './lib/remote-book-backup-service';
 export * from './lib/sync-activity';
 export * from './lib/sync-provider-selection';
 export * from './lib/sync.tokens';

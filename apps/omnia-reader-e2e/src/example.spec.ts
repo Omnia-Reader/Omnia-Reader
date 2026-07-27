@@ -310,6 +310,12 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
     'Omnia PDF Fixture - Page One',
     { timeout: 20_000 },
   );
+  await expect
+    .poll(async () => {
+      const footer = await page.getByTestId('reader-footer').boundingBox();
+      return footer?.height ?? Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThanOrEqual(32);
   await expectPdfPageFitsViewport(page, 1);
   const pdfProgress = page.getByRole('slider', { name: 'Book progress' });
   await expect(pdfProgress).toHaveValue('0');
@@ -854,6 +860,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await expect(page.getByTestId('reader-overall-progress')).toHaveText(
     /\d+% of book/,
   );
+  await expect
+    .poll(async () => {
+      const footer = await page.getByTestId('reader-footer').boundingBox();
+      return footer?.height ?? Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThanOrEqual(32);
   const epubFrame = page
     .getByTestId('publication-viewport')
     .frameLocator('iframe');
@@ -872,6 +884,17 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
       '[src*="tracking.invalid"], [href*="tracking.invalid"], [action*="tracking.invalid"], [style*="tracking.invalid"]',
     ),
   ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      epubFrame
+        .locator('html')
+        .evaluate((root) =>
+          getComputedStyle(root)
+            .getPropertyValue('--omnia-fixture-safe-style')
+            .trim(),
+        ),
+    )
+    .toBe('applied');
   await expectEpubViewportToBePaginated(page);
   await expect
     .poll(() =>

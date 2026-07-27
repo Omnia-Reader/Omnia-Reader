@@ -1,15 +1,19 @@
 import { createHash, randomBytes, sign } from 'node:crypto';
+import { isIP } from 'node:net';
 import { finished } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import {
+  AuthorizationHttpError,
   GatewayHttpError,
   type DocumentWriteRequest,
   type RemoteDocument,
   type RemoteObject,
+  type RemoteObjectDelete,
   type RemoteObjectDownload,
   type RemoteObjectUpload,
   type SyncGatewayAdapter,
 } from './gateway-contract.js';
+import type { GitHubAuthorizationRevocationStore } from './github-authorization-revocations.js';
 import type { GatewaySessionStore } from './session-store.js';
 
 interface GitHubUser {
@@ -36,11 +40,13 @@ interface CreatedGitHubRepository {
 
 export interface GitHubSessionState {
   authorizationState?: string;
+  authorizationCodeVerifier?: string;
   returnTo?: string;
   userAccessToken?: string;
   userTokenExpiresAt?: number;
   refreshToken?: string;
   refreshTokenExpiresAt?: number;
+  authorizationGeneration?: number;
   user?: GitHubUser;
   repositories?: GitHubRepository[];
   repository?: GitHubRepository;
@@ -54,13 +60,19 @@ export interface GitHubAdapterOptions {
   appId: string;
   privateKey: string;
   callbackUrl: string;
+  installationUrl: string;
   sessions: GatewaySessionStore<GitHubSessionState>;
+  revocations: GitHubAuthorizationRevocationStore;
   fetcher?: typeof fetch;
   apiBaseUrl?: string;
   webBaseUrl?: string;
   apiVersion?: string;
+  requestTimeoutMs?: number;
+  transferTimeoutMs?: number;
   now?: () => number;
   randomState?: () => string;
+  randomCodeVerifier?: () => string;
+  onUserTokenRevocationFailure?: () => void;
 }
 
 interface GitHubContent {
@@ -92,6 +104,11 @@ const GIT_ATTRIBUTES = [
   '.omnia-reader/v1/books/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
 ];
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
+const TOKEN_REVOCATION_TIMEOUT_MS = 5_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_TRANSFER_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const MAX_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_TRANSFER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const MAX_REMOTE_DOCUMENTS = 10_000;
 
 export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
@@ -99,8 +116,15 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
   private readonly apiBaseUrl: string;
   private readonly webBaseUrl: string;
   private readonly apiVersion: string;
+  private readonly requestTimeoutMs: number;
+  private readonly transferTimeoutMs: number;
   private readonly now: () => number;
   private readonly randomState: () => string;
+  private readonly randomCodeVerifier: () => string;
+  private readonly userTokenRefreshes = new Map<
+    string,
+    Promise<GitHubSessionState | null>
+  >();
 
   constructor(private readonly options: GitHubAdapterOptions) {
     this.fetcher = options.fetcher ?? globalThis.fetch;
@@ -111,26 +135,53 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       options.webBaseUrl ?? 'https://github.com',
     );
     this.apiVersion = options.apiVersion ?? '2026-03-10';
+    this.requestTimeoutMs = boundedTimeout(
+      options.requestTimeoutMs,
+      DEFAULT_REQUEST_TIMEOUT_MS,
+      MAX_REQUEST_TIMEOUT_MS,
+      'GitHub request',
+    );
+    this.transferTimeoutMs = boundedTimeout(
+      options.transferTimeoutMs,
+      DEFAULT_TRANSFER_TIMEOUT_MS,
+      MAX_TRANSFER_TIMEOUT_MS,
+      'Git LFS transfer',
+    );
     this.now = options.now ?? Date.now;
     this.randomState =
       options.randomState ?? (() => randomBytes(32).toString('base64url'));
+    this.randomCodeVerifier =
+      options.randomCodeVerifier ??
+      (() => randomBytes(32).toString('base64url'));
   }
 
   async session(sessionId: string): Promise<unknown> {
     const state = await this.authenticatedState(sessionId, false);
-    return state ? this.publicSession(state) : { authenticated: false };
+    return this.publicSession(state ?? {});
   }
 
   async authorizationUrl(sessionId: string, returnTo: string): Promise<string> {
     const authorizationState = this.randomState();
+    const authorizationCodeVerifier = this.randomCodeVerifier();
+    if (!isPkceCodeVerifier(authorizationCodeVerifier)) {
+      throw new TypeError('The GitHub PKCE code verifier is invalid');
+    }
     await this.options.sessions.set(sessionId, {
       authorizationState,
+      authorizationCodeVerifier,
       returnTo,
     });
     const url = new URL('/login/oauth/authorize', this.webBaseUrl);
     url.searchParams.set('client_id', this.options.clientId);
     url.searchParams.set('redirect_uri', this.options.callbackUrl);
     url.searchParams.set('state', authorizationState);
+    url.searchParams.set(
+      'code_challenge',
+      createHash('sha256')
+        .update(authorizationCodeVerifier, 'ascii')
+        .digest('base64url'),
+    );
+    url.searchParams.set('code_challenge_method', 'S256');
     return url.toString();
   }
 
@@ -145,39 +196,77 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       !parameters['state'] ||
       parameters['state'] !== pending.authorizationState
     ) {
-      throw new GatewayHttpError(400, 'GitHub authorization state is invalid');
+      throw new AuthorizationHttpError(
+        400,
+        'GitHub authorization state is invalid',
+        'invalid',
+      );
     }
     if (parameters['error']) {
-      throw new GatewayHttpError(401, 'GitHub authorization was not granted');
+      await this.options.sessions.delete(sessionId);
+      throw new AuthorizationHttpError(
+        401,
+        'GitHub authorization was not granted',
+        parameters['error'] === 'access_denied' ? 'denied' : 'failed',
+      );
+    }
+    if (!isPkceCodeVerifier(pending.authorizationCodeVerifier)) {
+      await this.options.sessions.delete(sessionId);
+      throw new AuthorizationHttpError(
+        400,
+        'GitHub authorization verifier is missing',
+        'invalid',
+      );
     }
     const code = parameters['code'];
     if (!code || code.length > 1024) {
-      throw new GatewayHttpError(400, 'GitHub authorization code is missing');
+      await this.options.sessions.delete(sessionId);
+      throw new AuthorizationHttpError(
+        400,
+        'GitHub authorization code is missing',
+        'invalid',
+      );
     }
 
-    const token = await this.exchangeAuthorizationCode(code);
-    const user = await this.githubJson<unknown>('/user', {
-      token: token.accessToken,
-    });
-    const authenticated: GitHubSessionState = {
-      userAccessToken: token.accessToken,
-      ...(token.expiresAt ? { userTokenExpiresAt: token.expiresAt } : {}),
-      ...(token.refreshToken ? { refreshToken: token.refreshToken } : {}),
-      ...(token.refreshExpiresAt
-        ? { refreshTokenExpiresAt: token.refreshExpiresAt }
-        : {}),
-      user: parseUser(user),
-    };
-    await this.options.sessions.move(
-      sessionId,
-      replacementSessionId,
-      authenticated,
-    );
-    return pending.returnTo ?? '/settings/sync';
+    try {
+      const token = await this.exchangeAuthorizationCode(
+        code,
+        pending.authorizationCodeVerifier,
+      );
+      const user = await this.githubJson<unknown>('/user', {
+        token: token.accessToken,
+      });
+      const parsedUser = parseUser(user);
+      const authenticated: GitHubSessionState = {
+        userAccessToken: token.accessToken,
+        ...(token.expiresAt ? { userTokenExpiresAt: token.expiresAt } : {}),
+        ...(token.refreshToken ? { refreshToken: token.refreshToken } : {}),
+        ...(token.refreshExpiresAt
+          ? { refreshTokenExpiresAt: token.refreshExpiresAt }
+          : {}),
+        authorizationGeneration: await this.options.revocations.generation(
+          parsedUser.id,
+        ),
+        user: parsedUser,
+      };
+      await this.options.sessions.move(
+        sessionId,
+        replacementSessionId,
+        authenticated,
+      );
+      return pending.returnTo ?? '/settings/sync';
+    } catch (error) {
+      await this.options.sessions.delete(sessionId);
+      throw error;
+    }
   }
 
   async disconnect(sessionId: string): Promise<void> {
+    const state = await this.options.sessions.get(sessionId);
     await this.options.sessions.delete(sessionId);
+    if (state?.userAccessToken) {
+      await this.revokeUserAccessToken(state.userAccessToken);
+    }
   }
 
   async destinations(sessionId: string): Promise<readonly unknown[]> {
@@ -208,8 +297,9 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         'The GitHub App cannot write to that repository',
       );
     }
+    const refreshed = await this.requireAuthenticatedState(sessionId);
     const updated: GitHubSessionState = {
-      ...state,
+      ...refreshed,
       repositories,
       repository,
       installationAccessToken: undefined,
@@ -228,23 +318,32 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     if (!state.userAccessToken) {
       throw new GatewayHttpError(401, 'GitHub authentication is required');
     }
-    const value = await this.githubJson<unknown>('/user/repos', {
-      method: 'POST',
-      token: state.userAccessToken,
-      body: {
-        name,
-        description:
-          'Private Omnia Reader library, publication, and reading progress synchronization',
-        private: true,
-        auto_init: true,
-        has_issues: false,
-        has_projects: false,
-        has_wiki: false,
-        has_discussions: false,
-      },
-    });
+    const authorized = await this.withUserAuthorization(
+      sessionId,
+      state,
+      (current) =>
+        this.githubJson<unknown>('/user/repos', {
+          method: 'POST',
+          token: current.userAccessToken,
+          body: {
+            name,
+            description:
+              'Private Omnia Reader library, publication, and reading progress synchronization',
+            private: true,
+            auto_init: true,
+            has_issues: false,
+            has_projects: false,
+            has_wiki: false,
+            has_discussions: false,
+          },
+        }),
+    );
+    const value = authorized.value;
     const created = parseCreatedRepository(value);
-    const repositories = await this.loadRepositories(sessionId, state);
+    const repositories = await this.loadRepositories(
+      sessionId,
+      authorized.state,
+    );
     const selected = repositories.find(
       (repository) => repository.id === created.id && repository.canPush,
     );
@@ -265,9 +364,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       repository: publicCreatedRepository(created),
       selected: !!selected,
       session: this.publicSession(updated),
-      installationSettingsUrl: selected
-        ? null
-        : `${this.webBaseUrl}/settings/installations`,
+      installationSettingsUrl: selected ? null : this.options.installationUrl,
     };
   }
 
@@ -277,10 +374,11 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
   ): Promise<readonly RemoteDocument[]> {
     const context = await this.repositoryContext(sessionId);
     const branch = encodeURIComponent(context.repository.defaultBranch);
+    // GitHub returns 409 while a repository is empty or still being created.
     const tree = await this.githubJson<unknown>(
       `/repos/${encodeFullName(context.repository.fullName)}/git/trees/${branch}?recursive=1`,
       { token: context.token },
-      [404],
+      [404, 409],
     );
     if (tree === null) {
       return [];
@@ -373,13 +471,17 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     if (!action) {
       throw providerProtocolError('Git LFS did not provide a download action');
     }
-    const response = await this.fetcher(action.href, {
-      method: 'GET',
-      headers: actionHeaders(action),
-      redirect: 'error',
-    });
+    const response = await this.providerFetch(
+      action.href,
+      {
+        method: 'GET',
+        headers: actionHeaders(action),
+        redirect: 'error',
+      },
+      this.transferTimeoutMs,
+    );
     if (!response.ok || !response.body) {
-      throw await providerHttpError(response);
+      throw await providerHttpError(response, undefined, this.now());
     }
     const verifier = integrityTransform(metadata.sha256, metadata.size);
     Readable.fromWeb(response.body).pipe(verifier);
@@ -427,17 +529,25 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       await verifyReadable(upload.content, upload.sha256, upload.size);
     }
     if (object.actions?.verify) {
-      const verifyResponse = await this.fetcher(object.actions.verify.href, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/vnd.git-lfs+json',
-          ...actionHeaders(object.actions.verify),
+      const verifyHeaders = actionHeaders(object.actions.verify);
+      if (!verifyHeaders.has('Accept')) {
+        verifyHeaders.set('Accept', 'application/vnd.git-lfs+json');
+      }
+      if (!verifyHeaders.has('Content-Type')) {
+        verifyHeaders.set('Content-Type', 'application/vnd.git-lfs+json');
+      }
+      const verifyResponse = await this.providerFetch(
+        object.actions.verify.href,
+        {
+          method: 'POST',
+          headers: verifyHeaders,
+          body: JSON.stringify({ oid: upload.sha256, size: upload.size }),
+          redirect: 'error',
         },
-        body: JSON.stringify({ oid: upload.sha256, size: upload.size }),
-        redirect: 'error',
-      });
+        this.requestTimeoutMs,
+      );
       if (!verifyResponse.ok) {
-        throw await providerHttpError(verifyResponse);
+        throw await providerHttpError(verifyResponse, undefined, this.now());
       }
     }
 
@@ -472,13 +582,43 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     };
   }
 
-  private async exchangeAuthorizationCode(code: string): Promise<{
+  async deleteObject(
+    sessionId: string,
+    request: RemoteObjectDelete,
+  ): Promise<void> {
+    const context = await this.repositoryContext(sessionId);
+    const current = await this.readFile(
+      context.repository,
+      context.token,
+      request.path,
+    );
+    if (!current) {
+      return;
+    }
+    if (
+      request.expectedRevision !== undefined &&
+      request.expectedRevision !== current.revision
+    ) {
+      throw new GatewayHttpError(409, 'The remote Git LFS pointer changed');
+    }
+    await this.deleteFile(
+      context.repository,
+      context.token,
+      request.path,
+      current.revision,
+    );
+  }
+
+  private async exchangeAuthorizationCode(
+    code: string,
+    codeVerifier: string,
+  ): Promise<{
     accessToken: string;
     expiresAt?: number;
     refreshToken?: string;
     refreshExpiresAt?: number;
   }> {
-    const response = await this.fetcher(
+    const response = await this.providerFetch(
       `${this.webBaseUrl}/login/oauth/access_token`,
       {
         method: 'POST',
@@ -491,13 +631,15 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
           client_secret: this.options.clientSecret,
           code,
           redirect_uri: this.options.callbackUrl,
+          code_verifier: codeVerifier,
         }),
         redirect: 'error',
       },
+      this.requestTimeoutMs,
     );
     const value = await responseJson(response);
     if (!response.ok) {
-      throw await providerHttpError(response, value);
+      throw await providerHttpError(response, value, this.now());
     }
     if (!isRecord(value) || !isBoundedString(value['access_token'], 4096)) {
       throw providerProtocolError();
@@ -527,6 +669,25 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       }
       return null;
     }
+    const authorizationGeneration = sessionAuthorizationGeneration(
+      state.authorizationGeneration,
+    );
+    const currentGeneration = await this.options.revocations.generation(
+      state.user.id,
+    );
+    if (
+      authorizationGeneration === null ||
+      authorizationGeneration !== currentGeneration
+    ) {
+      await this.options.sessions.delete(sessionId);
+      if (required) {
+        throw new GatewayHttpError(
+          401,
+          'GitHub authorization has been revoked',
+        );
+      }
+      return null;
+    }
     if (
       state.userTokenExpiresAt &&
       state.userTokenExpiresAt <= this.now() + TOKEN_REFRESH_MARGIN_MS
@@ -542,17 +703,11 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         }
         return null;
       }
-      const refreshed = await this.refreshUserToken(state.refreshToken);
-      const updated: GitHubSessionState = {
-        ...state,
-        userAccessToken: refreshed.accessToken,
-        userTokenExpiresAt: refreshed.expiresAt,
-        refreshToken: refreshed.refreshToken ?? state.refreshToken,
-        refreshTokenExpiresAt:
-          refreshed.refreshExpiresAt ?? state.refreshTokenExpiresAt,
-      };
-      await this.options.sessions.set(sessionId, updated);
-      return updated;
+      const refreshed = await this.refreshAuthenticatedState(sessionId, state);
+      if (!refreshed && required) {
+        throw new GatewayHttpError(401, 'GitHub session has expired');
+      }
+      return refreshed;
     }
     return state;
   }
@@ -567,13 +722,93 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     return state;
   }
 
+  private async refreshAuthenticatedState(
+    sessionId: string,
+    state: GitHubSessionState,
+  ): Promise<GitHubSessionState | null> {
+    const pending = this.userTokenRefreshes.get(sessionId);
+    if (pending) {
+      return pending;
+    }
+    const refresh = this.rotateUserToken(sessionId, state).finally(() => {
+      if (this.userTokenRefreshes.get(sessionId) === refresh) {
+        this.userTokenRefreshes.delete(sessionId);
+      }
+    });
+    this.userTokenRefreshes.set(sessionId, refresh);
+    return refresh;
+  }
+
+  private async rotateUserToken(
+    sessionId: string,
+    state: GitHubSessionState,
+  ): Promise<GitHubSessionState | null> {
+    const refreshToken = state.refreshToken as string;
+    let refreshed: Awaited<
+      ReturnType<GitHubSyncGatewayAdapter['refreshUserToken']>
+    >;
+    try {
+      refreshed = await this.refreshUserToken(refreshToken);
+    } catch (error) {
+      if (!(error instanceof GatewayHttpError) || error.statusCode !== 401) {
+        throw error;
+      }
+      const current = await this.options.sessions.get(sessionId);
+      if (
+        current?.user &&
+        current.userAccessToken &&
+        current.refreshToken &&
+        current.refreshToken !== refreshToken
+      ) {
+        return current;
+      }
+      await this.options.sessions.delete(sessionId);
+      return null;
+    }
+
+    const current = await this.options.sessions.get(sessionId);
+    if (!current?.user || !current.userAccessToken || !current.refreshToken) {
+      await this.revokeUserAccessToken(refreshed.accessToken);
+      return null;
+    }
+    const authorizationGeneration = sessionAuthorizationGeneration(
+      current.authorizationGeneration,
+    );
+    const currentGeneration = await this.options.revocations.generation(
+      current.user.id,
+    );
+    if (
+      authorizationGeneration === null ||
+      authorizationGeneration !== currentGeneration
+    ) {
+      await this.options.sessions.delete(sessionId);
+      await this.revokeUserAccessToken(refreshed.accessToken);
+      return null;
+    }
+    if (current.refreshToken !== refreshToken) {
+      if (current.userAccessToken !== refreshed.accessToken) {
+        await this.revokeUserAccessToken(refreshed.accessToken);
+      }
+      return current;
+    }
+    const updated: GitHubSessionState = {
+      ...(current ?? state),
+      userAccessToken: refreshed.accessToken,
+      userTokenExpiresAt: refreshed.expiresAt,
+      refreshToken: refreshed.refreshToken,
+      refreshTokenExpiresAt: refreshed.refreshExpiresAt,
+    };
+    await this.options.sessions.set(sessionId, updated);
+    return updated;
+  }
+
   private async refreshUserToken(refreshToken: string): Promise<{
     accessToken: string;
     expiresAt: number;
-    refreshToken?: string;
-    refreshExpiresAt?: number;
+    refreshToken: string;
+    refreshExpiresAt: number;
   }> {
-    const response = await this.fetcher(
+    const response = await this.providerFetch(
       `${this.webBaseUrl}/login/oauth/access_token`,
       {
         method: 'POST',
@@ -589,28 +824,70 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         }),
         redirect: 'error',
       },
+      this.requestTimeoutMs,
     );
     const value = await responseJson(response);
+    if (isRecord(value) && value['error'] === 'bad_refresh_token') {
+      throw new GatewayHttpError(401, 'GitHub session has expired');
+    }
+    if (!response.ok) {
+      throw await providerHttpError(response, value, this.now());
+    }
     if (
-      !response.ok ||
       !isRecord(value) ||
       !isBoundedString(value['access_token'], 4096) ||
-      !positiveNumber(value['expires_in'])
+      !positiveNumber(value['expires_in']) ||
+      !isBoundedString(value['refresh_token'], 4096) ||
+      !positiveNumber(value['refresh_token_expires_in'])
     ) {
-      throw new GatewayHttpError(401, 'GitHub session refresh failed');
+      throw providerProtocolError('GitHub returned an invalid token refresh');
     }
     const expiresIn = value['expires_in'] as number;
-    const refreshExpiresIn = positiveNumber(value['refresh_token_expires_in']);
+    const refreshExpiresIn = value['refresh_token_expires_in'] as number;
     return {
       accessToken: value['access_token'],
       expiresAt: this.now() + expiresIn * 1000,
-      ...(isBoundedString(value['refresh_token'], 4096)
-        ? { refreshToken: value['refresh_token'] }
-        : {}),
-      ...(refreshExpiresIn
-        ? { refreshExpiresAt: this.now() + refreshExpiresIn * 1000 }
-        : {}),
+      refreshToken: value['refresh_token'],
+      refreshExpiresAt: this.now() + refreshExpiresIn * 1000,
     };
+  }
+
+  private async revokeUserAccessToken(accessToken: string): Promise<void> {
+    try {
+      const response = await this.fetcher(
+        `${this.apiBaseUrl}/applications/${encodeURIComponent(this.options.clientId)}/token`,
+        {
+          method: 'DELETE',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Basic ${Buffer.from(
+              `${this.options.clientId}:${this.options.clientSecret}`,
+              'utf8',
+            ).toString('base64')}`,
+            'Content-Type': 'application/json',
+            'X-GitHub-Api-Version': this.apiVersion,
+            'User-Agent': 'Omnia-Reader-Sync-Gateway',
+          },
+          body: JSON.stringify({ access_token: accessToken }),
+          redirect: 'error',
+          signal: AbortSignal.timeout(TOKEN_REVOCATION_TIMEOUT_MS),
+        },
+      );
+      if (response.status === 204 || response.status === 404) {
+        return;
+      }
+      this.reportUserTokenRevocationFailure();
+    } catch {
+      this.reportUserTokenRevocationFailure();
+    }
+  }
+
+  private reportUserTokenRevocationFailure(): void {
+    try {
+      this.options.onUserTokenRevocationFailure?.();
+    } catch {
+      // Disconnect must remain locally authoritative even if reporting fails.
+    }
   }
 
   private async loadRepositories(
@@ -620,36 +897,45 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     if (!state.userAccessToken) {
       throw new GatewayHttpError(401, 'GitHub authentication is required');
     }
-    const installations = await this.githubPaginated(
-      '/user/installations?per_page=100',
-      state.userAccessToken,
-      'installations',
+    const authorized = await this.withUserAuthorization(
+      sessionId,
+      state,
+      async (current) => {
+        const installations = await this.githubPaginated(
+          '/user/installations?per_page=100',
+          current.userAccessToken,
+          'installations',
+        );
+        const repositories: GitHubRepository[] = [];
+        for (const installation of installations) {
+          if (!isRecord(installation) || !positiveInteger(installation['id'])) {
+            throw providerProtocolError();
+          }
+          const installationId = installation['id'];
+          const values = await this.githubPaginated(
+            `/user/installations/${installationId}/repositories?per_page=100`,
+            current.userAccessToken,
+            'repositories',
+          );
+          for (const value of values) {
+            repositories.push(parseRepository(value, installationId));
+          }
+        }
+        return repositories;
+      },
     );
-    const repositories: GitHubRepository[] = [];
-    for (const installation of installations) {
-      if (!isRecord(installation) || !positiveInteger(installation['id'])) {
-        throw providerProtocolError();
-      }
-      const installationId = installation['id'];
-      const values = await this.githubPaginated(
-        `/user/installations/${installationId}/repositories?per_page=100`,
-        state.userAccessToken,
-        'repositories',
-      );
-      for (const value of values) {
-        repositories.push(parseRepository(value, installationId));
-      }
-    }
     const unique = [
       ...new Map(
-        repositories.map((repository) => [repository.id, repository]),
+        authorized.value.map((repository) => [repository.id, repository]),
       ).values(),
     ].sort((left, right) => left.fullName.localeCompare(right.fullName));
-    const selected = state.repository
-      ? unique.find((repository) => repository.id === state.repository?.id)
+    const selected = authorized.state.repository
+      ? unique.find(
+          (repository) => repository.id === authorized.state.repository?.id,
+        )
       : undefined;
     await this.options.sessions.set(sessionId, {
-      ...state,
+      ...authorized.state,
       repositories: unique,
       repository: selected,
       ...(!selected
@@ -660,6 +946,52 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         : {}),
     });
     return unique;
+  }
+
+  private async withUserAuthorization<T>(
+    sessionId: string,
+    initialState: GitHubSessionState,
+    operation: (
+      state: GitHubSessionState & { userAccessToken: string },
+    ) => Promise<T>,
+  ): Promise<{
+    state: GitHubSessionState & { userAccessToken: string };
+    value: T;
+  }> {
+    let state = initialState;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!state.userAccessToken) {
+        throw new GatewayHttpError(401, 'GitHub authentication is required');
+      }
+      const authorizedState = state as GitHubSessionState & {
+        userAccessToken: string;
+      };
+      try {
+        return {
+          state: authorizedState,
+          value: await operation(authorizedState),
+        };
+      } catch (error) {
+        if (!(error instanceof GatewayHttpError) || error.statusCode !== 401) {
+          throw error;
+        }
+        const current = await this.options.sessions.get(sessionId);
+        if (
+          attempt === 0 &&
+          current?.user &&
+          current.userAccessToken &&
+          current.userAccessToken !== authorizedState.userAccessToken
+        ) {
+          state = current;
+          continue;
+        }
+        if (current?.userAccessToken === authorizedState.userAccessToken) {
+          await this.options.sessions.delete(sessionId);
+        }
+        throw new GatewayHttpError(401, 'GitHub authorization has expired');
+      }
+    }
+    throw new GatewayHttpError(401, 'GitHub authorization has expired');
   }
 
   private async repositoryContext(sessionId: string): Promise<{
@@ -681,17 +1013,38 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       };
     }
     const jwt = this.appJwt();
-    const value = await this.githubJson<unknown>(
-      `/app/installations/${state.repository.installationId}/access_tokens`,
-      {
-        method: 'POST',
-        token: jwt,
-        body: {
-          repository_ids: [state.repository.id],
-          permissions: { contents: 'write' },
+    let value: unknown;
+    try {
+      value = await this.githubJson<unknown>(
+        `/app/installations/${state.repository.installationId}/access_tokens`,
+        {
+          method: 'POST',
+          token: jwt,
+          body: {
+            repository_ids: [state.repository.id],
+            permissions: { contents: 'write' },
+          },
         },
-      },
-    );
+      );
+    } catch (error) {
+      if (!(error instanceof GatewayHttpError)) {
+        throw error;
+      }
+      if (error.statusCode === 401) {
+        throw new GatewayHttpError(
+          502,
+          'GitHub App installation authentication failed',
+        );
+      }
+      if ([403, 404, 409].includes(error.statusCode)) {
+        await this.clearSelectedRepository(sessionId, state.repository.id);
+        throw new GatewayHttpError(
+          403,
+          'The GitHub App no longer has access to the selected repository',
+        );
+      }
+      throw error;
+    }
     if (
       !isRecord(value) ||
       !isBoundedString(value['token'], 4096) ||
@@ -710,6 +1063,22 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     };
     await this.options.sessions.set(sessionId, updated);
     return { repository: state.repository, token: value['token'] };
+  }
+
+  private async clearSelectedRepository(
+    sessionId: string,
+    repositoryId: number,
+  ): Promise<void> {
+    const current = await this.options.sessions.get(sessionId);
+    if (current?.repository?.id !== repositoryId) {
+      return;
+    }
+    await this.options.sessions.set(sessionId, {
+      ...current,
+      repository: undefined,
+      installationAccessToken: undefined,
+      installationTokenExpiresAt: undefined,
+    });
   }
 
   private appJwt(): string {
@@ -746,7 +1115,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         !Array.isArray(value[collection])
       ) {
         if (!response.ok) {
-          throw await providerHttpError(response, value);
+          throw await providerHttpError(response, value, this.now());
         }
         throw providerProtocolError();
       }
@@ -774,7 +1143,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     }
     const value = await responseJson(response);
     if (!response.ok) {
-      throw await providerHttpError(response, value);
+      throw await providerHttpError(response, value, this.now());
     }
     return value as T;
   }
@@ -787,22 +1156,28 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       body?: unknown;
     },
   ): Promise<Response> {
-    return this.fetcher(url, {
-      method: request.method ?? 'GET',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': this.apiVersion,
-        'User-Agent': 'Omnia-Reader-Sync-Gateway',
-        ...(request.token ? { Authorization: `Bearer ${request.token}` } : {}),
+    return this.providerFetch(
+      url,
+      {
+        method: request.method ?? 'GET',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': this.apiVersion,
+          'User-Agent': 'Omnia-Reader-Sync-Gateway',
+          ...(request.token
+            ? { Authorization: `Bearer ${request.token}` }
+            : {}),
+          ...(request.body === undefined
+            ? {}
+            : { 'Content-Type': 'application/json' }),
+        },
         ...(request.body === undefined
           ? {}
-          : { 'Content-Type': 'application/json' }),
+          : { body: JSON.stringify(request.body) }),
+        redirect: 'error',
       },
-      ...(request.body === undefined
-        ? {}
-        : { body: JSON.stringify(request.body) }),
-      redirect: 'error',
-    });
+      this.requestTimeoutMs,
+    );
   }
 
   private async readFile(
@@ -885,6 +1260,26 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     };
   }
 
+  private async deleteFile(
+    repository: GitHubRepository,
+    token: string,
+    path: string,
+    revision: string,
+  ): Promise<void> {
+    await this.githubJson<unknown>(
+      `/repos/${encodeFullName(repository.fullName)}/contents/${encodePath(path)}`,
+      {
+        method: 'DELETE',
+        token,
+        body: {
+          message: `Omnia Reader: delete publication ${path}`,
+          sha: revision,
+          branch: repository.defaultBranch,
+        },
+      },
+    );
+  }
+
   private async ensureGitAttributes(
     repository: GitHubRepository,
     token: string,
@@ -931,7 +1326,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     oid: string,
     size: number,
   ): Promise<LfsObjectResponse> {
-    const response = await this.fetcher(
+    const response = await this.providerFetch(
       `${this.webBaseUrl}/${repository.fullName}.git/info/lfs/objects/batch`,
       {
         method: 'POST',
@@ -949,10 +1344,11 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         }),
         redirect: 'error',
       },
+      this.requestTimeoutMs,
     );
     const value = await responseJson(response);
     if (!response.ok) {
-      throw await providerHttpError(response, value);
+      throw await providerHttpError(response, value, this.now());
     }
     if (
       !isRecord(value) ||
@@ -986,26 +1382,70 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     upload: RemoteObjectUpload,
   ): Promise<void> {
     const verifier = integrityTransform(upload.sha256, upload.size);
+    const headers = actionHeaders(action);
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/octet-stream');
+    }
+    headers.set('Content-Length', String(upload.size));
     upload.content.pipe(verifier);
-    const response = await this.fetcher(action.href, {
-      method: 'PUT',
-      headers: actionHeaders(action),
-      body: verifier,
-      duplex: 'half',
-      redirect: 'error',
-    } as RequestInit & { duplex: 'half' });
-    await finished(verifier);
+    let response: Response;
+    try {
+      response = await this.providerFetch(
+        action.href,
+        {
+          method: 'PUT',
+          headers,
+          body: verifier,
+          duplex: 'half',
+          redirect: 'error',
+        } as RequestInit & { duplex: 'half' },
+        this.transferTimeoutMs,
+      );
+      await finished(verifier);
+    } catch (error) {
+      upload.content.destroy();
+      verifier.destroy();
+      if (error instanceof GatewayHttpError) {
+        throw error;
+      }
+      throw new GatewayHttpError(502, 'GitHub provider request failed');
+    }
     if (!response.ok) {
-      throw await providerHttpError(response);
+      throw await providerHttpError(response, undefined, this.now());
+    }
+  }
+
+  private async providerFetch(
+    input: string,
+    init: RequestInit,
+    timeoutMs: number,
+  ): Promise<Response> {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, timeout])
+      : timeout;
+    try {
+      return await this.fetcher(input, { ...init, signal });
+    } catch (error) {
+      if (isAbortTimeout(error, timeout)) {
+        throw new GatewayHttpError(504, 'GitHub provider request timed out');
+      }
+      throw new GatewayHttpError(502, 'GitHub provider request failed');
     }
   }
 
   private publicSession(state: GitHubSessionState): unknown {
     if (!state.user) {
-      return { authenticated: false };
+      return {
+        configured: true,
+        authenticated: false,
+        installationUrl: this.options.installationUrl,
+      };
     }
     return {
+      configured: true,
       authenticated: true,
+      installationUrl: this.options.installationUrl,
       user: state.user,
       repository: state.repository ? publicRepository(state.repository) : null,
     };
@@ -1168,13 +1608,7 @@ async function verifyReadable(
 function actionHeaders(action: LfsAction): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(action.header ?? {})) {
-    if (
-      /^[a-z0-9!#$%&'*+.^_`|~-]+$/i.test(name) &&
-      typeof value === 'string' &&
-      !/[\r\n]/.test(value)
-    ) {
-      headers.set(name, value);
-    }
+    headers.set(name, value);
   }
   return headers;
 }
@@ -1238,23 +1672,20 @@ function parseLfsAction(value: unknown): LfsAction {
     throw providerProtocolError();
   }
   if (
-    url.protocol !== 'https:' &&
-    !(
-      url.protocol === 'http:' &&
-      ['localhost', '127.0.0.1'].includes(url.hostname)
-    )
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.hash ||
+    unsafeLfsActionHostname(url.hostname)
   ) {
     throw providerProtocolError('Git LFS returned an unsafe transfer URL');
   }
   const rawHeaders = value['header'];
   if (
     rawHeaders !== undefined &&
-    (!isRecord(rawHeaders) ||
-      !Object.values(rawHeaders).every(
-        (header) => typeof header === 'string' && !/[\r\n]/.test(header),
-      ))
+    (!isRecord(rawHeaders) || !validLfsActionHeaders(rawHeaders))
   ) {
-    throw providerProtocolError();
+    throw providerProtocolError('Git LFS returned unsafe transfer headers');
   }
   return {
     href: url.toString(),
@@ -1264,10 +1695,93 @@ function parseLfsAction(value: unknown): LfsAction {
   };
 }
 
+function unsafeLfsActionHostname(hostname: string): boolean {
+  const normalized = hostname
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^\[|\]$/g, '');
+  if (normalized === 'localhost' || normalized.endsWith('.localhost')) {
+    return true;
+  }
+  if (normalized.startsWith('::ffff:')) {
+    return unsafeLfsActionHostname(normalized.slice('::ffff:'.length));
+  }
+  const version = isIP(normalized);
+  if (version === 4) {
+    const octets = normalized.split('.').map(Number);
+    const [first, second] = octets;
+    return (
+      first === 0 ||
+      first === 10 ||
+      first === 127 ||
+      (first === 169 && second === 254) ||
+      (first === 172 && second !== undefined && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) ||
+      (first !== undefined && first >= 224)
+    );
+  }
+  if (version === 6) {
+    return (
+      normalized === '::' ||
+      normalized === '::1' ||
+      /^f[cd]/.test(normalized) ||
+      /^fe[89ab]/.test(normalized) ||
+      normalized.startsWith('ff')
+    );
+  }
+  return false;
+}
+
+function validLfsActionHeaders(
+  value: Readonly<Record<string, unknown>>,
+): boolean {
+  const entries = Object.entries(value);
+  if (entries.length > 64) {
+    return false;
+  }
+  let totalBytes = 0;
+  const forbidden = new Set([
+    'connection',
+    'content-length',
+    'cookie',
+    'host',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+  ]);
+  for (const [name, header] of entries) {
+    if (
+      name.length === 0 ||
+      name.length > 256 ||
+      !/^[a-z0-9!#$%&'*+.^_`|~-]+$/i.test(name) ||
+      forbidden.has(name.toLowerCase()) ||
+      typeof header !== 'string' ||
+      /[\r\n\0]/.test(header)
+    ) {
+      return false;
+    }
+    totalBytes += Buffer.byteLength(name, 'utf8');
+    totalBytes += Buffer.byteLength(header, 'utf8');
+    if (totalBytes > 64 * 1024) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function responseJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      (error.name === 'TimeoutError' || error.name === 'AbortError')
+    ) {
+      throw new GatewayHttpError(504, 'GitHub provider request timed out');
+    }
     return null;
   }
 }
@@ -1275,18 +1789,52 @@ async function responseJson(response: Response): Promise<unknown> {
 async function providerHttpError(
   response: Response,
   parsed?: unknown,
+  now = Date.now(),
 ): Promise<GatewayHttpError> {
   const value = parsed ?? (await responseJson(response));
   const rateLimited =
     response.status === 429 ||
     (response.status === 403 &&
       response.headers.get('x-ratelimit-remaining') === '0');
+  if (rateLimited) {
+    return new GatewayHttpError(
+      429,
+      'GitHub is temporarily rate limiting synchronization',
+      providerRetryAfterSeconds(response, now),
+    );
+  }
   return new GatewayHttpError(
-    rateLimited ? 429 : mapProviderStatus(response.status),
+    mapProviderStatus(response.status),
     isRecord(value) && typeof value['message'] === 'string'
       ? boundedProviderMessage(value['message'])
       : `GitHub provider request failed (${response.status})`,
   );
+}
+
+function providerRetryAfterSeconds(response: Response, now: number): number {
+  const retryAfter = response.headers.get('retry-after');
+  if (retryAfter && /^[0-9]{1,10}$/.test(retryAfter)) {
+    return boundedRetryAfterSeconds(Number(retryAfter));
+  }
+  if (retryAfter) {
+    const retryAt = Date.parse(retryAfter);
+    if (Number.isFinite(retryAt)) {
+      return boundedRetryAfterSeconds(Math.ceil((retryAt - now) / 1000));
+    }
+  }
+
+  const resetAt = response.headers.get('x-ratelimit-reset');
+  if (resetAt && /^[0-9]{1,12}$/.test(resetAt)) {
+    return boundedRetryAfterSeconds(Math.ceil(Number(resetAt) - now / 1000));
+  }
+  return 60;
+}
+
+function boundedRetryAfterSeconds(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 60;
+  }
+  return Math.min(86_400, Math.max(1, Math.ceil(value)));
 }
 
 function mapProviderStatus(status: number): number {
@@ -1343,6 +1891,45 @@ function stripTrailingSlash(value: string): string {
 
 function isGitSha(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{40,64}$/.test(value);
+}
+
+function isPkceCodeVerifier(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length >= 43 &&
+    value.length <= 128 &&
+    /^[A-Za-z0-9._~-]+$/.test(value)
+  );
+}
+
+function sessionAuthorizationGeneration(value: unknown): number | null {
+  if (value === undefined) {
+    return 0;
+  }
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? (value as number)
+    : null;
+}
+
+function boundedTimeout(
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+  label: string,
+): number {
+  const timeout = value ?? fallback;
+  if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > maximum) {
+    throw new TypeError(`The ${label} timeout is invalid`);
+  }
+  return timeout;
+}
+
+function isAbortTimeout(error: unknown, signal: AbortSignal): boolean {
+  return (
+    signal.aborted &&
+    (error === signal.reason ||
+      (error instanceof DOMException && error.name === 'TimeoutError'))
+  );
 }
 
 function isBoundedString(value: unknown, maximum: number): value is string {

@@ -14,6 +14,7 @@ import { RouterLink } from '@angular/router';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { BookRecord } from '@omnia-reader/reader/domain';
+import { BOOK_SYNC_EXCLUSIONS } from '@omnia-reader/sync/core';
 import { firstValueFrom } from 'rxjs';
 import {
   bookActivityTimestamp as activityTimestamp,
@@ -57,6 +58,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   private readonly enrichment = inject(PublicationEnrichmentService);
   private readonly exporter = inject(PublicationExportService);
   private readonly dialog = inject(MatDialog);
+  private readonly syncExclusions = inject(BOOK_SYNC_EXCLUSIONS);
   private readonly initialViewPreferences = loadLibraryViewPreferences();
   private removeImportListener: (() => void) | null = null;
   private readonly enrichmentInFlight = new Set<string>();
@@ -285,6 +287,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     this.errorMessage = null;
     this.statusMessage = null;
     this.changeDetector.markForCheck();
+    this.syncExclusions.exclude(book.id);
     try {
       await this.repository.removeBook(book.id);
       await this.reload();
@@ -292,6 +295,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         this.statusMessage = `“${book.title}” removed from this device.`;
       }
     } catch (error) {
+      this.syncExclusions.include(book.id);
       const detail =
         error instanceof Error ? error.message : 'Unknown storage error';
       this.errorMessage = `Unable to remove “${book.title}”: ${detail}`;

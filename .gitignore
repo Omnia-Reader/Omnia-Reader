@@ -43,6 +43,14 @@ Thumbs.db
 
 .angular
 
+# local provider credentials
+/.env
+/.env.local
+/apps/*/.env
+/apps/*/.env.local
+/apps/sync-gateway/.session-data/
+/deployment/gateway.env
+
 __screenshots__/
 /.playwright-mcp/
 

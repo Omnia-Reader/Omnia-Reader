@@ -33,8 +33,10 @@ npm run release:test
 npx nx run-many -t test --all --skip-nx-cache
 npx nx run-many -t lint --all --skip-nx-cache
 npx nx run omnia-reader-e2e:e2e
+PWA_E2E=1 npx nx run omnia-reader-e2e:e2e -- --project=chromium src/offline.spec.ts
 npm run performance:e2e
 npm run release:verify
+npm run container:smoke
 ```
 
 `npm run release:verify` is the release-specific fail-closed gate. It:
@@ -48,6 +50,11 @@ npm run release:verify
 6. Rejects missing or previously unreviewed dependency license expressions.
 7. Requires immutable Git commits and a digest-pinned bridge base image.
 8. Writes a deterministic artifact manifest and SHA-256 checksums.
+
+`npm run container:smoke` independently builds the digest-pinned runtime
+images, starts their hardened Compose topology, verifies the same-origin
+gateway route and web response headers, and removes the stack afterward. It is
+required before promoting either the web or gateway image.
 
 Outputs are written under `dist/release/`:
 
@@ -101,8 +108,9 @@ not a release candidate.
 - All required verification above is green on that commit.
 - Artifact hashes match the release record after upload.
 - Production CSP and security headers match the repository policy.
-- GitHub App, Git LFS, MEGA bridge, Redis, and session-encryption configuration
-  have been validated without logging secrets.
+- GitHub App, signed authorization webhook, Git LFS, MEGA bridge, Redis, and
+  session-encryption configuration have been validated without logging
+  secrets.
 - Redis persistence/HA and restore have been tested for the target environment.
 - Current gateway/bridge images and web assets remain available for rollback.
 - Provider layout and local IndexedDB/backup schema changes are backward
@@ -116,7 +124,8 @@ not a release candidate.
    must pass before traffic is shifted.
 3. Exercise a canary Git and MEGA connection with non-production test
    repositories/folders. Verify object SHA-256, optimistic conflict handling,
-   and session renewal.
+   session renewal, configured provider deadlines, and GitHub authorization
+   revocation across every gateway replica.
 4. Deploy versioned web assets and the service-worker manifest.
 5. Run web/PWA smoke journeys in a clean profile and an upgraded profile:
    import/open EPUB and PDF, navigate, resume, work offline, and synchronize.

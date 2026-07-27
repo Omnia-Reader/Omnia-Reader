@@ -9,6 +9,10 @@ import {
   ReadingProgress,
 } from '@omnia-reader/reader/domain';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  BOOK_SYNC_EXCLUSIONS,
+  BookSyncExclusions,
+} from '@omnia-reader/sync/core';
 import { LibraryPageComponent } from './library-page.component';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 import { PublicationExportService } from './publication-export.service';
@@ -46,6 +50,11 @@ describe('LibraryPageComponent', () => {
   };
   const exporter = {
     exportPublication: vi.fn(),
+  };
+  const syncExclusions = {
+    exclude: vi.fn(),
+    include: vi.fn(),
+    isExcluded: vi.fn(),
   };
 
   beforeEach(async () => {
@@ -86,6 +95,10 @@ describe('LibraryPageComponent', () => {
         {
           provide: PublicationExportService,
           useValue: exporter,
+        },
+        {
+          provide: BOOK_SYNC_EXCLUSIONS,
+          useValue: syncExclusions as unknown as BookSyncExclusions,
         },
       ],
     }).compileComponents();
@@ -208,6 +221,8 @@ describe('LibraryPageComponent', () => {
     });
 
     expect(repository.removeBook).toHaveBeenCalledWith(book.id);
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(book.id);
+    expect(syncExclusions.include).not.toHaveBeenCalled();
     expect(fixture.nativeElement.textContent).toContain(
       '“Owned book” removed from this device.',
     );
@@ -250,6 +265,8 @@ describe('LibraryPageComponent', () => {
     });
 
     expect(fixture.componentInstance.books).toEqual([book]);
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(book.id);
+    expect(syncExclusions.include).toHaveBeenCalledWith(book.id);
     expect(
       fixture.nativeElement.querySelector('[role="alert"]').textContent,
     ).toContain('Unable to remove “Owned book”: Offline storage is read-only');

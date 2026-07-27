@@ -4,10 +4,15 @@ import {
   GatewayHttpError,
   type SyncGatewayAdapter,
 } from './gateway-contract.js';
+import {
+  registerGitHubWebhookRoutes,
+  type GitHubWebhookOptions,
+} from './github-webhook.js';
 import { registerProviderRoutes } from './provider-routes.js';
 
 export interface SyncGatewayOptions {
   github: SyncGatewayAdapter;
+  githubWebhook?: GitHubWebhookOptions;
   mega: SyncGatewayAdapter;
   logger?: boolean;
   secureCookies?: boolean;
@@ -60,6 +65,12 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
     service: 'omnia-reader-sync-gateway',
   }));
 
+  const githubWebhook = options.githubWebhook;
+  if (githubWebhook) {
+    app.register((instance) =>
+      registerGitHubWebhookRoutes(instance, githubWebhook),
+    );
+  }
   app.register(
     (instance) =>
       registerProviderRoutes(instance, {
@@ -85,7 +96,11 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
     (error: FastifyError | GatewayHttpError, request, reply) => {
       void request;
       if (error instanceof GatewayHttpError) {
-        return reply.code(error.statusCode).send({ message: error.message });
+        const response = reply.code(error.statusCode);
+        if (error.retryAfterSeconds !== undefined) {
+          response.header('Retry-After', String(error.retryAfterSeconds));
+        }
+        return response.send({ message: error.message });
       }
       if (
         error.statusCode &&

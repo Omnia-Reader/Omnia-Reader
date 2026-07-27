@@ -22,6 +22,18 @@ export interface BookSyncManifest {
   appVersion: string;
 }
 
+export interface BookSyncDeletionTombstone {
+  schemaVersion: 1;
+  deleted: true;
+  bookId: string;
+  format: PublicationFormat;
+  objectPath: string;
+  deletedAt: string;
+  appVersion: string;
+}
+
+export type BookSyncDocument = BookSyncManifest | BookSyncDeletionTombstone;
+
 export function createBookSyncManifest(
   book: BookRecord,
   updatedAt = book.lastOpenedAt ?? book.importedAt,
@@ -47,6 +59,25 @@ export function createBookSyncManifest(
     ...(book.identifier ? { identifier: book.identifier } : {}),
     importedAt: book.importedAt,
     updatedAt,
+    appVersion,
+  };
+}
+
+export function createBookSyncDeletionTombstone(
+  book: Pick<BookRecord, 'id' | 'format'>,
+  deletedAt = new Date().toISOString(),
+  appVersion = '0.0.0',
+): BookSyncDeletionTombstone {
+  if (!bookIdSha256(book.id)) {
+    throw new TypeError('Book IDs must be SHA-256 fingerprints');
+  }
+  return {
+    schemaVersion: 1,
+    deleted: true,
+    bookId: book.id,
+    format: book.format,
+    objectPath: bookObjectPath(book.id, book.format),
+    deletedAt,
     appVersion,
   };
 }
@@ -90,6 +121,29 @@ export function isBookSyncManifest(value: unknown): value is BookSyncManifest {
     isCanonicalTimestamp(value['updatedAt']) &&
     isBoundedString(value['appVersion'])
   );
+}
+
+export function isBookSyncDeletionTombstone(
+  value: unknown,
+): value is BookSyncDeletionTombstone {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const bookId = value['bookId'];
+  const format = value['format'];
+  return (
+    value['schemaVersion'] === 1 &&
+    value['deleted'] === true &&
+    bookIdSha256(bookId) !== null &&
+    (format === 'epub' || format === 'pdf') &&
+    value['objectPath'] === bookObjectPath(bookId as string, format) &&
+    isCanonicalTimestamp(value['deletedAt']) &&
+    isBoundedString(value['appVersion'])
+  );
+}
+
+export function isBookSyncDocument(value: unknown): value is BookSyncDocument {
+  return isBookSyncManifest(value) || isBookSyncDeletionTombstone(value);
 }
 
 export function manifestBookRecord(manifest: BookSyncManifest): BookRecord {

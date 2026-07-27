@@ -25,13 +25,54 @@
     <p class="m-0 font-semibold">Automatic synchronization</p>
     @switch (automaticSyncStatus.phase) {
       @case ('scheduled') {
-        <p class="mb-0 text-stone-600">
-          A local change is queued and will sync after reading settles.
-        </p>
+        @if (automaticSyncStatus.errorMessage) {
+          <p class="mb-0 text-amber-800" role="status">
+            {{ automaticSyncStatus.errorMessage }}
+            @if (automaticSyncStatus.scheduledFor) {
+              Next attempt
+              {{ automaticSyncStatus.scheduledFor | date: 'mediumTime' }}.
+            }
+          </p>
+        } @else {
+          <p class="mb-0 text-stone-600">
+            A local change is queued and will sync after reading settles.
+          </p>
+        }
       }
       @case ('syncing') {
+        <div class="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <p class="m-0 min-w-0 flex-1 text-violet-800" role="status">
+            {{
+              automaticTransferProgressLabel ??
+                'Checking books, reading progress, bookmarks, highlights, and notes…'
+            }}
+          </p>
+          <button
+            mat-stroked-button
+            type="button"
+            (click)="cancelAutomaticSync()"
+          >
+            Cancel automatic sync
+          </button>
+        </div>
+        @if (automaticSyncStatus.transferProgress) {
+          <progress
+            class="mt-3 block h-2 w-full accent-violet-700"
+            max="100"
+            [value]="automaticTransferProgressPercent"
+            [attr.aria-label]="automaticTransferProgressLabel"
+          ></progress>
+        }
+      }
+      @case ('cancelling') {
         <p class="mb-0 text-violet-800" role="status">
-          Synchronizing books and reading progress…
+          Cancelling automatic synchronization…
+        </p>
+      }
+      @case ('cancelled') {
+        <p class="mb-0 text-stone-600">
+          Automatic synchronization cancelled. Local changes are safe and remain
+          queued.
         </p>
       }
       @case ('offline') {
@@ -70,7 +111,7 @@
         [class.bg-violet-50]="selectedProvider === 'git'"
         [class.border-stone-300]="selectedProvider !== 'git'"
         type="button"
-        [disabled]="busy || loading"
+        [disabled]="busy || loading || automaticSyncBusy"
         (click)="chooseProvider('git')"
       >
         <span class="block font-semibold">Git + LFS</span>
@@ -84,7 +125,7 @@
         [class.bg-violet-50]="selectedProvider === 'mega'"
         [class.border-stone-300]="selectedProvider !== 'mega'"
         type="button"
-        [disabled]="busy || loading"
+        [disabled]="busy || loading || automaticSyncBusy"
         (click)="chooseProvider('mega')"
       >
         <span class="block font-semibold">MEGA</span>
@@ -99,13 +140,23 @@
     <p class="text-stone-600" role="status">Checking sync connection…</p>
   } @else {
     @if (errorMessage) {
-      <p
+      <section
         class="my-4 rounded-xl bg-red-50 p-4 text-red-900"
         role="alert"
         data-testid="sync-error"
       >
-        {{ errorMessage }}
-      </p>
+        <p class="m-0">{{ errorMessage }}</p>
+        @if (selectedProvider === 'git' && repositoryInstallationSettingsUrl) {
+          <a
+            class="mt-3"
+            mat-stroked-button
+            [href]="repositoryInstallationSettingsUrl"
+            data-testid="github-permission-recovery"
+          >
+            Review GitHub App permissions
+          </a>
+        }
+      </section>
     }
     @if (statusMessage) {
       <p
@@ -115,17 +166,95 @@
         {{ statusMessage }}
       </p>
     }
+    @if (manualSyncController) {
+      <section
+        class="my-4 rounded-xl border border-violet-200 bg-violet-50 p-4"
+        aria-labelledby="manual-sync-progress-heading"
+        data-testid="manual-sync-progress"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <p
+              id="manual-sync-progress-heading"
+              class="m-0 text-sm font-semibold text-violet-950"
+            >
+              Synchronizing your library
+            </p>
+            <p class="mb-0 text-sm text-violet-900" aria-live="polite">
+              {{
+                transferProgressLabel ??
+                  'Checking books, reading progress, bookmarks, highlights, and notes…'
+              }}
+            </p>
+          </div>
+          <button mat-stroked-button type="button" (click)="cancelSync()">
+            Cancel sync
+          </button>
+        </div>
+        @if (transferProgress) {
+          <progress
+            class="mt-3 block h-2 w-full accent-violet-700"
+            max="100"
+            [value]="transferProgressPercent"
+            [attr.aria-label]="transferProgressLabel"
+          ></progress>
+        }
+      </section>
+    }
 
     @if (selectedProvider === 'git') {
-      @if (!gitSession.authenticated) {
-        <button
-          mat-flat-button
-          type="button"
-          [disabled]="busy || !gatewayAvailable.git"
-          (click)="connect()"
+      @if (!gitSession.configured) {
+        <section
+          class="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
+          aria-labelledby="github-sync-unconfigured-heading"
+          data-testid="github-sync-unconfigured"
         >
-          Connect GitHub
-        </button>
+          <h2
+            id="github-sync-unconfigured-heading"
+            class="m-0 text-base font-semibold"
+          >
+            GitHub App setup required
+          </h2>
+          <p class="mb-0 text-sm">
+            This gateway does not have GitHub App credentials yet. For local
+            development, configure the GitHub variables and run
+            <code>npm run start:full</code>. Your local books remain available
+            while sync is disconnected.
+          </p>
+        </section>
+      } @else if (!gitSession.authenticated) {
+        <section
+          class="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
+          aria-labelledby="github-onboarding-heading"
+          data-testid="github-onboarding"
+        >
+          <div>
+            <h2
+              id="github-onboarding-heading"
+              class="m-0 text-base font-semibold"
+            >
+              Connect your GitHub library
+            </h2>
+            <p class="mb-0 mt-1 text-sm text-stone-600">
+              Install the GitHub App to grant repository access, then authorize
+              Omnia Reader to identify your account. GitHub credentials remain
+              in the sync gateway.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            <a mat-stroked-button [href]="gitSession.installationUrl">
+              Install GitHub App
+            </a>
+            <button
+              mat-flat-button
+              type="button"
+              [disabled]="busy || automaticSyncBusy || !gatewayAvailable.git"
+              (click)="connect()"
+            >
+              Connect GitHub
+            </button>
+          </div>
+        </section>
       } @else {
         <section
           class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
@@ -145,13 +274,35 @@
             </div>
           </div>
 
+          @if (repositories.length === 0) {
+            <section
+              class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
+              aria-labelledby="github-no-repositories-heading"
+              data-testid="github-no-repositories"
+            >
+              <h2
+                id="github-no-repositories-heading"
+                class="m-0 text-base font-semibold"
+              >
+                No repositories are available
+              </h2>
+              <p class="mb-3 mt-1 text-sm">
+                Install the GitHub App or grant it access to a repository, then
+                return here and refresh the list.
+              </p>
+              <a mat-stroked-button [href]="gitSession.installationUrl">
+                Install or update repository access
+              </a>
+            </section>
+          }
+
           <label class="block">
             <span class="mb-2 block text-sm font-semibold">
               Git/LFS repository
             </span>
             <select
               class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
-              [disabled]="busy"
+              [disabled]="busy || automaticSyncBusy"
               (change)="selectRepository($event)"
             >
               <option value="" [selected]="!gitSession.repository">
@@ -204,31 +355,33 @@
                   name="repositoryName"
                   value="omnia-reader-library"
                   maxlength="100"
-                  pattern="[A-Za-z0-9._-]+"
+                  pattern="(?:[A-Za-z0-9._]|-)+"
                   aria-describedby="create-github-repository-help"
-                  [disabled]="busy"
+                  [disabled]="busy || automaticSyncBusy"
                   required
                 />
               </label>
-              <button mat-stroked-button type="submit" [disabled]="busy">
+              <button
+                mat-stroked-button
+                type="submit"
+                [disabled]="busy || automaticSyncBusy"
+              >
                 Create private repository
               </button>
             </form>
             <div class="mt-3 flex flex-wrap gap-3">
               @if (repositoryInstallationSettingsUrl) {
-                <a
-                  mat-flat-button
-                  [href]="repositoryInstallationSettingsUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <a mat-flat-button [href]="repositoryInstallationSettingsUrl">
                   Grant repository access
                 </a>
               }
+              <a mat-button [href]="gitSession.installationUrl">
+                Manage repository access
+              </a>
               <button
                 mat-button
                 type="button"
-                [disabled]="busy"
+                [disabled]="busy || automaticSyncBusy"
                 (click)="refreshRepositories()"
               >
                 Refresh repositories
@@ -240,15 +393,19 @@
             <button
               mat-flat-button
               type="button"
-              [disabled]="busy || !gitSession.repository"
+              [disabled]="busy || automaticSyncBusy || !gitSession.repository"
               (click)="syncNow()"
             >
-              {{ busy ? 'Working…' : 'Sync books and progress' }}
+              {{
+                manualSyncController
+                  ? 'Synchronizing…'
+                  : 'Sync books and progress'
+              }}
             </button>
             <button
               mat-button
               type="button"
-              [disabled]="busy"
+              [disabled]="busy || automaticSyncBusy"
               (click)="disconnect()"
             >
               Disconnect
@@ -261,7 +418,7 @@
         <button
           mat-flat-button
           type="button"
-          [disabled]="busy || !gatewayAvailable.mega"
+          [disabled]="busy || automaticSyncBusy || !gatewayAvailable.mega"
           (click)="connect()"
         >
           Connect MEGA
@@ -281,7 +438,7 @@
             </span>
             <select
               class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
-              [disabled]="busy"
+              [disabled]="busy || automaticSyncBusy"
               (change)="selectFolder($event)"
             >
               <option value="" [selected]="!megaSession.folder">
@@ -303,15 +460,19 @@
             <button
               mat-flat-button
               type="button"
-              [disabled]="busy || !megaSession.folder"
+              [disabled]="busy || automaticSyncBusy || !megaSession.folder"
               (click)="syncNow()"
             >
-              {{ busy ? 'Working…' : 'Sync books and progress' }}
+              {{
+                manualSyncController
+                  ? 'Synchronizing…'
+                  : 'Sync books and progress'
+              }}
             </button>
             <button
               mat-button
               type="button"
-              [disabled]="busy"
+              [disabled]="busy || automaticSyncBusy"
               (click)="disconnect()"
             >
               Disconnect
@@ -325,6 +486,60 @@
       >
         Choose Git + LFS or MEGA to configure library synchronization.
       </p>
+    }
+
+    @if (configuredDestination) {
+      <section
+        class="mt-6 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
+        aria-labelledby="remote-book-backups-heading"
+        data-testid="remote-book-backups"
+      >
+        <h2 id="remote-book-backups-heading" class="m-0 text-xl font-semibold">
+          Remote book backups
+        </h2>
+        <p class="mt-2 text-sm text-stone-600">
+          Deleting a remote backup stops that edition from synchronizing to
+          devices. Copies already downloaded to this device remain readable.
+        </p>
+
+        @if (remoteBackups.length === 0) {
+          <p class="mb-0 rounded-xl bg-stone-50 p-4 text-sm text-stone-600">
+            No publication files are stored in this sync destination.
+          </p>
+        } @else {
+          <ul class="m-0 list-none divide-y divide-stone-200 p-0">
+            @for (backup of remoteBackups; track backup.manifest.bookId) {
+              <li
+                class="flex flex-col gap-3 py-4 first:pt-2 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div class="min-w-0">
+                  <p class="m-0 truncate font-semibold">
+                    {{ backup.manifest.title }}
+                  </p>
+                  <p class="m-0 text-sm text-stone-600">
+                    @if (backup.manifest.authors.length > 0) {
+                      {{ backup.manifest.authors.join(', ') }} ·
+                    }
+                    {{ backup.manifest.format.toUpperCase() }} ·
+                    {{ formatRemoteBackupSize(backup) }}
+                  </p>
+                </div>
+                <button
+                  mat-stroked-button
+                  type="button"
+                  [disabled]="busy || automaticSyncBusy"
+                  [attr.aria-label]="
+                    'Delete remote backup for ' + backup.manifest.title
+                  "
+                  (click)="requestRemoteBackupDeletion(backup)"
+                >
+                  Delete remote backup
+                </button>
+              </li>
+            }
+          </ul>
+        }
+      </section>
     }
   }
 </main>

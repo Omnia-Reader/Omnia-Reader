@@ -5,10 +5,17 @@ Status: In active development
 Current delivery priority: finish and harden the Angular web reader while
 bringing GitHub synchronization into the supported application flow. GitHub
 uses the gateway-hosted GitHub App authorization path and can select or create
-a private repository for books and reading state. MEGA deployment and
-Tauri/native packaging remain secondary until the Angular and GitHub journeys
-are production-ready.
-Last updated: 2026-07-26
+a private repository for books and reading state. The Settings flow now
+separates GitHub App installation/repository access from state-bound account
+authorization, recovers when an installation exposes no repositories, and
+guides the user to approve missing repository permissions after a GitHub 403.
+Signed, replay-safe GitHub authorization webhooks now invalidate every local
+session for a revoked user across gateway replicas, while provider `401`
+fallback handling remains in place. Lost installation access clears only the
+stale repository choice.
+MEGA deployment and Tauri/native packaging remain secondary until the Angular
+and GitHub journeys are production-ready.
+Last updated: 2026-07-27
 
 ## 1. Goal
 
@@ -38,14 +45,13 @@ implemented:
 - Enforced Nx boundaries separate format-neutral domain/core code, the
   EPUB.js-compatible renderer, PDF.js, browser storage, platform adapters, and
   Git sync concerns.
-- Library, reader, and settings routes are lazy loaded. The deferred sync
-  settings route redirects to local Settings in the shipped build.
-- Remote-provider code remains available to focused integration tests, but the
-  shipped local-reader app does not register its provider services, accumulate
-  undeliverable operations, advertise the feature, or start the automatic
-  scheduler. Stale provider selections are cleared at startup, so neither a
-  legacy deep link nor reading activity can trigger GitHub or MEGA requests
-  while authentication and credential management are deferred.
+- Library, reader, settings, and synchronization routes are lazy loaded.
+  `/settings/sync` is active and registers the provider-neutral synchronization
+  services. GitHub is the supported current path: its credentials remain in
+  the same-origin gateway session, while the browser selects or creates a
+  private repository. A missing or unconfigured gateway remains non-fatal to
+  local reading. MEGA remains available behind the same provider contract but
+  is secondary to the GitHub journey.
 - The library has responsive, accessible grid and list views, metadata-aware
   search, deterministic recent/title/author/added sorting, composable
   all/in-progress/finished/not-started filters, activity and import dates,
@@ -67,7 +73,11 @@ implemented:
   progress, bookmarks, highlights, and notes will be deleted. Cancellation
   restores focus, confirmed removal reports success and disables competing
   actions while busy, and persistence failures keep the book available with an
-  actionable error.
+  actionable error. A confirmed local removal records a durable device-local
+  synchronization exclusion: an existing remote backup remains intact and
+  cannot silently restore the edition on the next pull. Explicitly importing
+  the same exact edition clears that exclusion and adds it back to
+  synchronization.
 - Imported EPUB/PDF binaries, extracted metadata, normalized cover artwork,
   progress, bookmarks, highlights, notes, and format preferences are durable.
   Publication bytes use OPFS where available with a versioned, byte-backed
@@ -133,8 +143,10 @@ implemented:
   outlines without semantic roles. Unnumbered entries do not consume the
   chapter sequence. Publication scripts, active
   embeds, inline handlers, form submission targets, unsafe URLs, remote
-  resource attributes, and remote CSS imports/URLs are removed before
-  rendering. The web and Tauri CSPs deny unlisted origins, objects, and form
+  resource attributes, remote stylesheet links, and remote CSS imports/font
+  URLs in both chapter markup and packaged stylesheets are removed before
+  rendering without discarding safe embedded publication CSS. The web and
+  Tauri CSPs deny unlisted origins, objects, and form
   actions. Their narrowly required `unsafe-inline` script allowance supports
   EPUB.ts's trusted iframe bootstrap; authored publication scripts remain
   blocked by the script-disabled sandbox and pre-render sanitizer. Text
@@ -164,9 +176,10 @@ implemented:
   It uses EPUB generated-location percentages and stable CFIs, while PDF
   percentages resolve to the nearest stable page. The native range control is
   keyboard, touch, and assistive-technology operable; seeking updates the same
-  persisted locator used by automatic resume. Its final footer geometry is
-  reserved before either renderer mounts so EPUB pagination and fullscreen
-  viewports remain stable.
+  persisted locator used by automatic resume. Page status, scrubber, and
+  overall percentage share a compact single line whose measured browser height
+  stays at or below 32 px. Its final footer geometry is reserved before either
+  renderer mounts so EPUB pagination and fullscreen viewports remain stable.
 - The shared reader shell supports true browser fullscreen immersive reading
   without collapsing the EPUB iframe or PDF canvas viewport. Its toolbar
   retracts to the top edge after the pointer returns to the publication,
@@ -214,22 +227,35 @@ implemented:
   content-identity, and enabled-feature contract; malformed, incomplete, or
   future schemas fail closed before any child document is read or written.
 - Git/Git LFS and MEGA gateway clients implement the same logical sync layout.
-  In the preserved deferred feature, sync Settings let the user choose a
-  provider, authenticate, select a repository or folder, and manually
-  synchronize books, reading progress, bookmarks, highlights, and notes.
-  Provider credentials remain behind the documented same-origin gateway
-  contract; this route is not exposed by the active local-reader build.
+  Sync Settings let the user choose a provider, authenticate, select a
+  repository or folder, and manually synchronize books, reading progress,
+  bookmarks, highlights, and notes. Publication uploads use the original Blob
+  as the native request body, downloads monitor the browser response stream,
+  and both directions report byte progress and honor cancellation without
+  acknowledging the pending journal operation. Provider credentials remain
+  behind the documented same-origin gateway contract.
 - A runnable Nx/Fastify gateway core now enforces provider-scoped HttpOnly
   sessions, same-origin/CSRF checks, confined logical paths, bounded JSON and
   publication metadata, streaming object bodies, and non-sensitive errors for
-  both route families. The GitHub adapter implements state-bound web
-  authorization, encrypted expiring server sessions, installation-scoped
-  repository discovery/tokens, optimistic Contents API commits, Git LFS
-  batch/basic transfers, verification, and pointer publication ordering. The
-  MEGA gateway adapter now implements state-bound login, encrypted SDK
-  sessions, writable-folder reauthorization, deterministic duplicate handling,
+  both route families. The GitHub adapter implements state-bound, S256
+  PKCE-protected web authorization, encrypted expiring server sessions,
+  strict user/refresh-token rotation with per-process concurrent request
+  coalescing, installation-scoped repository discovery/tokens, optimistic
+  Contents API commits, Git LFS batch/basic transfers, verification, and
+  pointer publication ordering. Definitive refresh-token rejection consumes
+  the encrypted session once, as does a provider 401 that definitively revokes
+  the matching user authorization. Explicit disconnect deletes local authority
+  first and revokes only that session's GitHub user token; a concurrent refresh
+  cannot leave a newly rotated token orphaned. Lost installation access clears
+  only the matching stale repository choice, while transient provider failures
+  preserve the session for retry. GitHub primary and secondary rate limits
+  become a safe, bounded `Retry-After` contract; automatic synchronization
+  persists that deadline and cannot hot-loop queued local work. The MEGA
+  gateway adapter now implements state-bound login, encrypted SDK sessions,
+  writable-folder reauthorization, deterministic duplicate handling,
   optimistic whole-file replacement, immutable object transfer, and integrity
-  verification through a private official-SDK bridge contract. The repository
+  verification through a
+  private official-SDK bridge contract. The repository
   now includes the pinned native C++ bridge implementation with SDK
   login/session restoration, folder enumeration, root-confined file
   operations, verified transfers, and bounded concurrency. Its pinned
@@ -241,8 +267,10 @@ implemented:
   changes, provider selection, startup, application backgrounding, and restored
   connectivity trigger immediate attempts; progress, bookmark, and annotation
   changes use a quiet interval. Git quiet-period commits retain a persisted
-  five-minute minimum, and automatic failures are visible without blocking
-  local reading.
+  five-minute minimum. Automatic publication transfers expose byte progress,
+  can be cancelled through the same abort-aware transport contract as manual
+  sync, and retain durable local journal work for a later retry. Cancellation
+  is reported separately from provider failures without blocking local reading.
 - The PWA application shell and static assets work offline; imported books stay
   in OPFS or the IndexedDB fallback rather than the Angular service-worker
   cache.
@@ -281,20 +309,27 @@ implemented:
 Verified in the current implementation:
 
 ```text
-npx nx run-many -t test --all --skip-nx-cache            BLOCKED (deferred MEGA bridge task recursion)
+npx nx run-many -t test --all --skip-nx-cache            PASS (12 projects + 2 prerequisite tasks)
 npx nx run-many -t lint --all --skip-nx-cache            PASS (12 projects)
-npx nx test omnia-reader                                PASS (74/74)
+npx nx test omnia-reader                                PASS (93/93)
+npx nx test sync-core                                   PASS (101/101)
+npx nx test sync-git                                    PASS (25/25)
+npx nx test sync-gateway                                PASS (64/64; 1 live Redis test skipped)
+npx nx test reader-epub                                 PASS (20/20)
 Local reader/domain/engine/storage/platform suites        PASS (102/102)
-npx nx lint omnia-reader                                PASS
-npx nx lint omnia-reader-e2e                            PASS
+npx nx run-many -t lint -p omnia-reader omnia-reader-e2e sync-gateway sync-git PASS
 npx nx build omnia-reader --configuration production     PASS
+npx nx build omnia-reader --configuration local-development PASS
 npx nx build sync-gateway --configuration production     PASS
+npm run container:smoke                                  PASS (web + gateway health, headers, cache, proxy)
+REMOTE_SYNC_E2E=1 ... --project=chromium src/sync.spec.ts PASS (7/7)
+PWA_E2E=1 ... --project=chromium src/offline.spec.ts    PASS (cold PDF + EPUB restart)
 npm audit --omit=dev                                     PASS (0 vulnerabilities)
 npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
 npm run native:build                                     PASS (deb + rpm + AppImage)
-Initial production bundle                                432.65 kB (110.35 kB estimated transfer)
+Initial production bundle                                487.18 kB (120.46 kB estimated transfer)
 Schema-v8 migration and corrupt-record recovery tests     PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
@@ -309,6 +344,7 @@ Chromium/Firefox/WebKit malformed PDF/EPUB rollback E2E   PASS (6/6)
 WebKit PDF/EPUB/fixed-layout reader regression E2E        PASS (3/3)
 Chromium finite PDF/EPUB viewport and pagination E2E      PASS
 Chromium reader console and EPUB script-sandbox E2E       PASS
+Chromium/WebKit remote EPUB font/CSS sanitization E2E      PASS (2/2)
 Chromium/Firefox/WebKit nested EPUB ToC navigation E2E     PASS (3/3)
 Chromium durable PDF bookmark create/resume/delete E2E   PASS
 Chromium/Firefox/WebKit PDF/EPUB annotation lifecycle E2E PASS (6/6)
@@ -329,9 +365,16 @@ Chromium/Firefox/WebKit library search/sort/status/view E2E PASS (3/3)
 Chromium/Firefox/WebKit library progress/resume E2E        PASS (3/3)
 Chromium/Firefox/WebKit populated progress grid/list WCAG  PASS (3/3)
 Chromium large-publication performance/memory/backup E2E   PASS (3/3)
-Chromium/Firefox/WebKit active local web E2E matrix        PASS (59 active; 34 opt-in skipped; 2 workers; 6.0m)
-Chromium/Firefox/WebKit Git/LFS PDF convergence E2E        DEFERRED (REMOTE_SYNC_E2E=1)
-Chromium/Firefox/WebKit MEGA EPUB convergence E2E          DEFERRED (REMOTE_SYNC_E2E=1)
+Chromium/WebKit active local web E2E matrix                PASS (41 active; 23 opt-in/unsupported skipped; 4 workers; 4.5m)
+Chromium/WebKit Git/LFS PDF convergence E2E                PASS (2/2; REMOTE_SYNC_E2E=1)
+Chromium/WebKit MEGA EPUB convergence E2E                  PASS (2/2; REMOTE_SYNC_E2E=1)
+Chromium/WebKit automatic upload cancellation E2E          PASS (2/2)
+Chromium/WebKit remote-backup local removal E2E             PASS (2/2)
+Chromium/WebKit confirmed remote-backup deletion E2E         PASS (2/2)
+Chromium GitHub OAuth cancellation recovery E2E              PASS (1/1)
+Chromium GitHub repository permission recovery E2E           PASS (1/1)
+Chromium GitHub authorization revocation recovery E2E         PASS (1/1)
+Chromium GitHub rate-limit recovery E2E                       PASS (1/1)
 Firefox repeated PDF/EPUB full-state sync gate             DEFERRED
 Git interrupted upload and optimistic 409 browser retry    PASS
 Chromium/Firefox/WebKit PDF forms/links/encryption/recovery PASS
@@ -390,8 +433,12 @@ The following release requirements remain open:
   Redis HA/backup validation, provider-native byte-range/session resume,
   live-provider interruption and quota behavior, and end-to-end tests against
   real providers remain release requirements. Deterministic provider tests now
-  verify that an interrupted Git LFS upload publishes no pointer, an interrupted
-  MEGA move removes its staged object, and a whole-transfer retry succeeds.
+  verify that GitHub primary/secondary rate limits are distinguished from
+  permission failures, expose only a bounded retry deadline, survive a
+  scheduler restart without a request burst, and never render provider text.
+  They also verify that an interrupted Git LFS upload publishes no pointer, an
+  interrupted MEGA move removes its staged object, and a whole-transfer retry
+  succeeds.
   Cross-browser HTTP-boundary journeys also prove that a clean second device
   restores the exact PDF through Git/LFS and the exact EPUB through MEGA,
   including synchronized reading positions, bookmarks, highlights, and notes;
@@ -586,7 +633,7 @@ Application routes:
 /library
 /reader/:bookId
 /settings
-/settings/sync (deferred; redirects to /settings)
+/settings/sync
 ```
 
 The EPUB and PDF libraries must be loaded only when their respective formats
@@ -740,7 +787,14 @@ release.
 
 Book synchronization is explicit and visible in settings. Removing a local
 book must not silently delete the remote copy. Remote deletion is a separate
-confirmed action so another device cannot erase a user's only backup.
+confirmed action so another device cannot erase a user's only backup. A
+device-local exclusion set prevents a remotely backed-up edition from being
+restored after local removal; a successful explicit re-import clears that
+edition's exclusion. The separate remote-delete action writes a versioned
+per-book tombstone before deleting the publication object with an optimistic
+provider revision, so concurrent or offline devices cannot resurrect a stale
+backup. Existing local copies remain readable, and an explicit newer re-import
+may recreate the remote backup.
 
 ### 6.2 Offline operation journal
 
@@ -1034,17 +1088,29 @@ and Android WebView.
 - Implemented: host-neutral storage durability status, browser persistence
   requests and quota estimates, native persistent-storage reporting, and
   accessible Settings guidance for denied or unavailable browser grants.
-- Implemented: enable and test the PWA shell.
+- Implemented: enable and test the PWA shell. The production service-worker
+  gate now imports both formats into isolated persistent Chromium profiles,
+  saves a non-initial PDF page and EPUB chapter, closes and relaunches the
+  browser, disables networking before the cold start, and restores both the
+  publications and their exact reading positions with clean browser consoles.
 
 Exit gate: EPUB and PDF reading work offline and restore after forced
 termination.
 
 ### Phase 3: Full library synchronization
 
-Current delivery state: deferred. The implementation and opt-in simulated
-provider tests below are preserved, but none of this phase is registered by the
-active Angular build until authentication and credential management return to
-scope.
+Current delivery state: active for the Angular application, with GitHub as the
+supported priority path. Provider credentials are managed by same-origin
+gateway sessions rather than browser storage. The deterministic simulated
+provider journeys are opt-in; live credentialed GitHub validation and
+deployment to a real HTTPS environment remain release gates. A reference
+same-origin production stack is implemented with digest-pinned non-root web and
+gateway images, an internal-only gateway, streamed publication proxying,
+read-only filesystems, health checks, and an executable container smoke gate.
+MEGA is implemented but secondary. The default `npm start` build is
+deliberately local-only and cannot schedule or route remote synchronization;
+`npm run start:full` selects the sync-enabled development build and starts the
+gateway alongside it.
 
 - Implemented: operation journal and deterministic progress merge rules.
 - Implemented: canonical root schema/features manifest initialization,
@@ -1059,10 +1125,33 @@ scope.
   quote-backed locators, deterministic merge rules, complete snapshot seeding,
   and provider-neutral Git/MEGA synchronization.
 - Implemented in the web client contract: GitHub App authentication,
-  repository selection, Git LFS object transfer, and actionable error mapping.
-  The gateway implements OAuth state/callback rotation, installation-scoped
-  tokens, Contents API optimistic commits, and verified LFS batch/basic
-  transfers. Live credentialed provider testing remains pending.
+  App installation/repository-access onboarding, repository selection, Git LFS
+  object transfer, and actionable error mapping. The gateway implements OAuth
+  state validation, S256 PKCE with an encrypted one-time verifier, callback
+  rotation, sanitized cancellation/failure recovery, strict expiring
+  user/refresh-token rotation with per-process concurrent request coalescing
+  and one-time invalidation after definitive rejection, including a user-token
+  401 when the matching authorization has been revoked. Explicit disconnect
+  deletes the local session before revoking its single GitHub user token, and
+  refresh/disconnect races revoke any rotated token that can no longer be
+  attached to a live session. A raw-body HMAC-validated,
+  delivery-deduplicated `github_app_authorization` webhook advances a
+  user-scoped generation in memory or shared Redis, invalidates all of that
+  user's sessions without a scan, and rejects token-refresh races before they
+  can restore authority. Installation-scoped tokens, a validated public
+  installation URL, Contents API optimistic commits, verified LFS batch/basic
+  transfers, safe 403 recovery that clears only the matching stale repository
+  selection, and a reconnect UI are covered without exposing
+  provider-controlled error text. GitHub App authentication failures preserve
+  the selected destination for retry. Primary and secondary provider rate
+  limits map to a bounded `Retry-After` response, safe Settings guidance, and
+  persisted automatic-sync backoff so queued work cannot hot-loop. OAuth,
+  GitHub API, Git LFS metadata/verification, and whole-object transfers have
+  separate configurable deadlines; stalled and failed provider requests map
+  to application-owned errors without publishing a pointer. LFS actions also
+  require credential-free HTTPS URLs, reject explicit loopback/private
+  literal-IP targets, and accept only bounded non-hop-by-hop headers before any
+  object request. Live credentialed provider testing remains pending.
 - Implemented in the web client contract: MEGA authentication, folder
   selection, encrypted object transfer, and duplicate-node conflict handling.
   The gateway now includes its protected login page, encrypted SDK session,
@@ -1078,10 +1167,30 @@ scope.
   pending.
 - Implemented: pull, push, bounded conflict retry, durable offline operation
   queue, provider selection, manual sync, automatic lifecycle scheduling, and
-  visible automatic-sync status. Restart-safe whole-transfer retry is covered
-  for Git LFS and MEGA publication interruptions. Provider-native byte-range or
-  upload-session resume and guaranteed process-termination delivery are
-  pending.
+  visible automatic-sync status. Manual and automatic publication transfers
+  expose direction, bytes transferred, total bytes, percentage, and
+  cancellation.
+  Uploads send the original Blob through the browser-native request body and
+  downloads monitor the response stream, avoiding a second explicit full
+  binary copy in application code. Cancellation retains the local journal
+  operation for a safe retry. A deterministic Chromium/WebKit browser journey
+  holds an automatic PDF upload at the HTTP boundary, exposes progress and
+  cancellation through Settings, aborts it, and verifies that the local change
+  remains pending and manually retryable. Restart-safe whole-transfer retry is
+  covered for Git LFS and MEGA publication interruptions. Provider-native
+  byte-range or upload-session resume and guaranteed process-termination
+  delivery are pending.
+- Implemented: removing a book from one device preserves its remote backup and
+  durably excludes that exact edition from subsequent pulls and snapshot
+  seeding on that device. Re-importing the same EPUB/PDF opts it back into
+  synchronization.
+- Implemented: Settings lists publication files in the active remote
+  destination and exposes a separate confirmed deletion action. Deletion
+  commits a versioned book tombstone before revision-deleting the Git LFS
+  pointer or every matching MEGA node, retains existing local copies, discards
+  stale pending uploads, survives interrupted cleanup, and permits a
+  deliberately newer re-import. Core, gateway, Angular, Chromium, and WebKit
+  regressions cover conflicts, rollback, retry, and local-copy preservation.
 - Implemented: deterministic Chromium, Firefox, and WebKit HTTP-boundary
   journeys synchronize an exact PDF through Git/LFS and an exact EPUB through
   MEGA, then restore publication bytes, reading position, bookmark, highlighted
@@ -1152,9 +1261,9 @@ Exit gate: signed release candidates pass the full cross-platform test matrix.
   their files. The active local gate runs Chromium and WebKit with four workers,
   while CI scales across a browser-by-two-shard job matrix with one worker per
   machine. Firefox automation is temporarily opt-in so app feature work remains
-  the priority. The dedicated PWA and large-publication performance gates remain
-  serialized in a separate Chromium job. The first hosted execution of this
-  sharded topology remains required.
+  the priority. The dedicated installed-PWA cold-restart and large-publication
+  performance gates remain serialized in a separate Chromium job. The first
+  hosted execution of this sharded topology remains required.
 - Implemented: matching web and Tauri Content Security Policies plus a hostile
   EPUB corpus covering scripts, inline handlers, nested frames, refresh,
   forms, remote images, stylesheets, CSS imports, and CSS URLs. Unit and
@@ -1178,6 +1287,14 @@ Exit gate: signed release candidates pass the full cross-platform test matrix.
   verifies full Git commit and base-image digest pins; and writes deterministic
   SHA-256 artifact manifests. Post-build bridge image scanning and its
   operating-system package SBOM remain part of the native release gate.
+- Implemented: digest-pinned production web and gateway images plus a hardened
+  same-origin Compose topology. Nginx serves the PWA, applies the canonical
+  security-header policy, streams `/api/sync` publication bodies to an
+  internal-only gateway, and supports SPA fallback and immutable asset caching.
+  The smoke gate builds both images, waits for health, validates headers and
+  proxy routing, and proves provider-disabled behavior. A real HTTPS
+  deployment, shared production Redis, credentialed provider validation, image
+  scanning, signing, and publication remain release requirements.
 - Implemented: an executable release and rollback runbook covers immutable
   promotion, native/bridge signing and scanning requirements, canary and smoke
   gates, rollback triggers, per-runtime recovery, local-first data retention,
@@ -1204,7 +1321,8 @@ Unit and integration tests:
   capture/rendering.
 - Operation journal retry and acknowledgement.
 - Automatic sync coalescing, offline retry, quiet-period debounce, background
-  flush, and persisted Git rate limiting.
+  flush, persisted Git rate limiting, transfer progress, cancellation, and
+  scheduler-stop abort handling.
 - Deterministic multi-device merge rules.
 - Book manifest validation, immutable object identity, interrupted upload
   recovery, and downloaded-binary hash verification.

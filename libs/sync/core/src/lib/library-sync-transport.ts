@@ -18,7 +18,29 @@ export interface RemoteObject {
   sha256: string;
 }
 
-export interface ObjectUploadRequest {
+export type ObjectTransferDirection = 'download' | 'upload';
+
+export interface ObjectTransferProgress {
+  direction: ObjectTransferDirection;
+  path: string;
+  transferredBytes: number;
+  totalBytes: number;
+}
+
+export type ObjectTransferProgressListener = (
+  progress: ObjectTransferProgress,
+) => void;
+
+export interface ObjectTransferOptions {
+  signal?: AbortSignal;
+  onProgress?: ObjectTransferProgressListener;
+}
+
+export interface ObjectDownloadOptions extends ObjectTransferOptions {
+  expectedSize?: number;
+}
+
+export interface ObjectUploadRequest extends ObjectTransferOptions {
   path: string;
   content: Blob;
   size: number;
@@ -26,13 +48,19 @@ export interface ObjectUploadRequest {
   mediaType: string;
 }
 
+export interface ObjectDeleteRequest {
+  path: string;
+  expectedRevision?: string;
+}
+
 export interface LibrarySyncTransport {
   list(prefix: string): Promise<readonly RemoteDocument[]>;
   read(path: string): Promise<RemoteDocument | null>;
   write(request: DocumentWriteRequest): Promise<RemoteDocument>;
   headObject(path: string): Promise<RemoteObject | null>;
-  downloadObject(path: string): Promise<Blob>;
+  downloadObject(path: string, options?: ObjectDownloadOptions): Promise<Blob>;
   uploadObject(request: ObjectUploadRequest): Promise<RemoteObject>;
+  deleteObject?(request: ObjectDeleteRequest): Promise<void>;
 }
 
 export class SyncConflictError extends Error {

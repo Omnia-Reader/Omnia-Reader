@@ -524,6 +524,7 @@ export class EpubReaderEngine implements ReaderEngine {
       // promise settles can omit embedded fonts and races `Book.destroy()` in
       // slower WebKit environments.
       await this.book.replacementsReady;
+      await sanitizeEpubStyleResources(this.book);
       this.readingDirection = metadata.direction === 'rtl' ? 'rtl' : 'ltr';
       this.publicationLayout =
         metadata.layout === 'pre-paginated' ? 'pre-paginated' : 'reflowable';
@@ -2021,23 +2022,42 @@ function sanitizeEpubDocument(
     )
     .forEach((element) => element.remove());
 
+  for (const link of document.querySelectorAll('link[href]')) {
+    const href = link.getAttribute('href') ?? '';
+    if (isUnsafePublicationUrl(href) || isRemotePublicationUrl(href)) {
+      link.remove();
+    }
+  }
+
   for (const style of document.querySelectorAll('style')) {
-    if (containsBlockedCssUrl(style.textContent ?? '')) {
+    const authoredCss = style.textContent ?? '';
+    const sanitizedCss = sanitizePublicationCss(authoredCss);
+    if (!sanitizedCss.trim()) {
       style.remove();
+    } else if (sanitizedCss !== authoredCss) {
+      style.textContent = sanitizedCss;
     }
   }
 
   for (const element of document.querySelectorAll('*')) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLocaleLowerCase();
+      if (name === 'style' && containsBlockedCssUrl(attribute.value)) {
+        const sanitizedStyle = sanitizePublicationCss(attribute.value);
+        if (sanitizedStyle.trim()) {
+          element.setAttribute(attribute.name, sanitizedStyle);
+        } else {
+          element.removeAttribute(attribute.name);
+        }
+        continue;
+      }
       if (
         name.startsWith('on') ||
         DISABLED_NAVIGATION_ATTRIBUTES.has(name) ||
         (URL_ATTRIBUTES.has(name) &&
           (isUnsafePublicationUrl(attribute.value) ||
             (!isPublicationAnchorHref(element, name) &&
-              isRemotePublicationUrl(attribute.value)))) ||
-        (name === 'style' && containsBlockedCssUrl(attribute.value))
+              isRemotePublicationUrl(attribute.value))))
       ) {
         element.removeAttribute(attribute.name);
       }
@@ -2098,6 +2118,68 @@ function containsBlockedCssUrl(value: string): boolean {
   return /(?:url\(|@import(?:url\()?)['"]?(?:\/\/|https?:|javascript:|vbscript:|data:text\/html|data:application\/xhtml\+xml)/.test(
     normalized,
   );
+}
+
+export function sanitizePublicationCss(value: string): string {
+  const withoutRemoteImports = value.replace(
+    /@import\s+(?:url\(\s*)?(?:(['"])(.*?)\1|([^;\s)]+))\s*\)?[^;]*;/giu,
+    (statement, _quote: string, quotedUrl: string, unquotedUrl: string) => {
+      const url = quotedUrl ?? unquotedUrl ?? '';
+      return isBlockedCssResourceUrl(url) ? '' : statement;
+    },
+  );
+
+  return withoutRemoteImports.replace(
+    /url\(\s*(?:(['"])(.*?)\1|([^)]*))\s*\)/giu,
+    (token, _quote: string, quotedUrl: string, unquotedUrl: string) => {
+      const url = (quotedUrl ?? unquotedUrl ?? '').trim();
+      return isBlockedCssResourceUrl(url) ? 'url("data:,")' : token;
+    },
+  );
+}
+
+async function sanitizeEpubStyleResources(book: Book): Promise<void> {
+  const resources = book.resources;
+  if (
+    !resources ||
+    !Array.isArray(resources.cssUrls) ||
+    !Array.isArray(resources.urls) ||
+    !Array.isArray(resources.replacementUrls)
+  ) {
+    return;
+  }
+
+  for (const cssUrl of resources.cssUrls) {
+    const resourceIndex = resources.urls.indexOf(cssUrl);
+    const replacementUrl = resources.replacementUrls[resourceIndex];
+    if (resourceIndex < 0 || !replacementUrl) {
+      continue;
+    }
+
+    try {
+      const authoredCss = isBlockedCssResourceUrl(replacementUrl)
+        ? ''
+        : await (await fetch(replacementUrl)).text();
+      const sanitizedCss = sanitizePublicationCss(authoredCss);
+      if (sanitizedCss === authoredCss) {
+        continue;
+      }
+      const sanitizedUrl = URL.createObjectURL(
+        new Blob([sanitizedCss], { type: 'text/css' }),
+      );
+      resources.replacementUrls[resourceIndex] = sanitizedUrl;
+      if (replacementUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(replacementUrl);
+      }
+    } catch {
+      // CSP remains the final boundary if an optional publication stylesheet
+      // cannot be inspected. Rendering the readable chapter takes priority.
+    }
+  }
+}
+
+function isBlockedCssResourceUrl(value: string): boolean {
+  return isUnsafePublicationUrl(value) || isRemotePublicationUrl(value);
 }
 
 function isDocument(value: unknown): value is Document {

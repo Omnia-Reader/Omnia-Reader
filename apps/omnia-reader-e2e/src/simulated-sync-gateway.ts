@@ -27,8 +27,13 @@ interface SimulatedGitRepository {
 }
 
 interface SimulatedSyncGatewayOptions {
+  authenticated?: boolean;
+  expireGitHubAuthorizationOnRepositories?: boolean;
+  forbidRepositoryCreation?: boolean;
+  rateLimitGitHubRepositories?: boolean;
   interruptFirstObjectUpload?: boolean;
   conflictFirstBookManifestWrite?: boolean;
+  holdFirstObjectUpload?: boolean;
   expectedPublication?: Buffer;
 }
 
@@ -43,7 +48,20 @@ export class SimulatedSyncGateway {
   private revisionSequence = 0;
   private interruptNextObjectUpload: boolean;
   private conflictNextBookManifestWrite: boolean;
+  private holdNextObjectUpload: boolean;
+  private authenticated: boolean;
+  private expireGitHubAuthorizationOnRepositories: boolean;
+  private rateLimitGitHubRepositories: boolean;
+  private readonly forbidRepositoryCreation: boolean;
   private readonly expectedPublication?: Buffer;
+  private resolveObjectUploadStarted: () => void = () => undefined;
+  private readonly objectUploadStarted = new Promise<void>((resolve) => {
+    this.resolveObjectUploadStarted = resolve;
+  });
+  private releaseHeldObjectUpload: () => void = () => undefined;
+  private readonly heldObjectUploadReleased = new Promise<void>((resolve) => {
+    this.releaseHeldObjectUpload = resolve;
+  });
   private readonly gitRepositories: SimulatedGitRepository[] = [
     {
       id: 1,
@@ -59,10 +77,17 @@ export class SimulatedSyncGateway {
     readonly provider: SimulatedSyncProvider,
     options: SimulatedSyncGatewayOptions = {},
   ) {
+    this.authenticated = options.authenticated ?? true;
+    this.expireGitHubAuthorizationOnRepositories =
+      options.expireGitHubAuthorizationOnRepositories ?? false;
+    this.rateLimitGitHubRepositories =
+      options.rateLimitGitHubRepositories ?? false;
+    this.forbidRepositoryCreation = options.forbidRepositoryCreation ?? false;
     this.interruptNextObjectUpload =
       options.interruptFirstObjectUpload ?? false;
     this.conflictNextBookManifestWrite =
       options.conflictFirstBookManifestWrite ?? false;
+    this.holdNextObjectUpload = options.holdFirstObjectUpload ?? false;
     this.expectedPublication = options.expectedPublication
       ? Buffer.from(options.expectedPublication)
       : undefined;
@@ -79,8 +104,20 @@ export class SimulatedSyncGateway {
     return [...this.documents.keys()].sort();
   }
 
+  documentContent(path: string): string | null {
+    return this.documents.get(path)?.content ?? null;
+  }
+
   objectPaths(): readonly string[] {
     return [...this.objects.keys()].sort();
+  }
+
+  waitForObjectUploadStart(): Promise<void> {
+    return this.objectUploadStarted;
+  }
+
+  releaseObjectUpload(): void {
+    this.releaseHeldObjectUpload();
   }
 
   private async handle(route: Route): Promise<void> {
@@ -100,6 +137,26 @@ export class SimulatedSyncGateway {
       return;
     }
     if (this.provider === 'git' && path === '/repositories') {
+      if (this.rateLimitGitHubRepositories) {
+        this.rateLimitGitHubRepositories = false;
+        await this.fulfillJson(
+          route,
+          { message: 'Provider-controlled rate-limit detail' },
+          429,
+          { 'Retry-After': '120' },
+        );
+        return;
+      }
+      if (this.expireGitHubAuthorizationOnRepositories) {
+        this.expireGitHubAuthorizationOnRepositories = false;
+        this.authenticated = false;
+        await this.fulfillJson(
+          route,
+          { message: 'Provider-controlled revocation detail' },
+          401,
+        );
+        return;
+      }
       await this.fulfillJson(route, {
         repositories: this.gitRepositories,
       });
@@ -123,6 +180,14 @@ export class SimulatedSyncGateway {
       path === '/repository' &&
       method === 'POST'
     ) {
+      if (this.forbidRepositoryCreation) {
+        await this.fulfillJson(
+          route,
+          { message: 'Provider-controlled permission detail' },
+          403,
+        );
+        return;
+      }
       const value: unknown = request.postDataJSON();
       const name =
         isRecord(value) && typeof value['name'] === 'string'
@@ -233,14 +298,41 @@ export class SimulatedSyncGateway {
       });
       return;
     }
+    if (path === objectPath && method === 'DELETE') {
+      const remotePath = url.searchParams.get('path') ?? '';
+      const expectedRevision = url.searchParams.get('expectedRevision');
+      const object = this.objects.get(remotePath);
+      if (!object) {
+        await this.fulfillJson(route, { message: 'Not found' }, 404);
+        return;
+      }
+      if (expectedRevision !== null && expectedRevision !== object.revision) {
+        await this.fulfillJson(route, { message: 'Revision changed' }, 409);
+        return;
+      }
+      this.objects.delete(remotePath);
+      await route.fulfill({ status: 204 });
+      return;
+    }
 
     await this.fulfillJson(route, { message: 'Unsupported test route' }, 404);
   }
 
   private session(): object {
     if (this.provider === 'git') {
+      if (!this.authenticated) {
+        return {
+          configured: true,
+          authenticated: false,
+          installationUrl:
+            'https://github.test/apps/omnia-reader/installations/new',
+        };
+      }
       return {
+        configured: true,
         authenticated: true,
+        installationUrl:
+          'https://github.test/apps/omnia-reader/installations/new',
         user: { id: 1, login: 'omnia-e2e', avatarUrl: '' },
         repository: this.selectedGitRepository,
       };
@@ -336,6 +428,12 @@ export class SimulatedSyncGateway {
       return;
     }
 
+    if (this.holdNextObjectUpload) {
+      this.holdNextObjectUpload = false;
+      this.resolveObjectUploadStarted();
+      await this.heldObjectUploadReleased;
+    }
+
     const existing = this.objects.get(path);
     if (
       existing &&
@@ -397,11 +495,12 @@ export class SimulatedSyncGateway {
     route: Route,
     value: unknown,
     status = 200,
+    headers: Readonly<Record<string, string>> = {},
   ): Promise<void> {
     await route.fulfill({
       status,
       contentType: 'application/json',
-      headers: { 'Cache-Control': 'no-store' },
+      headers: { 'Cache-Control': 'no-store', ...headers },
       body: JSON.stringify(value),
     });
   }

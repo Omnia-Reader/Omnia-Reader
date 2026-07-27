@@ -1,6 +1,8 @@
 import {
   DocumentWriteRequest,
   LibrarySyncTransport,
+  ObjectDeleteRequest,
+  ObjectDownloadOptions,
   ObjectUploadRequest,
 } from './library-sync-transport';
 
@@ -60,12 +62,22 @@ export class SelectedLibrarySyncTransport implements LibrarySyncTransport {
     return this.active().headObject(path);
   }
 
-  downloadObject(path: string) {
-    return this.active().downloadObject(path);
+  downloadObject(path: string, options?: ObjectDownloadOptions) {
+    return this.active().downloadObject(path, options);
   }
 
   uploadObject(request: ObjectUploadRequest) {
     return this.active().uploadObject(request);
+  }
+
+  deleteObject(request: ObjectDeleteRequest) {
+    const active = this.active();
+    if (!active.deleteObject) {
+      throw new Error(
+        'The selected synchronization provider cannot delete remote publications',
+      );
+    }
+    return active.deleteObject(request);
   }
 
   private active(): LibrarySyncTransport {

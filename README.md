@@ -28,12 +28,17 @@ swipe gestures are isolated while a panel is open.
 Reader-owned password, external-link consent, and annotation dialogs contain
 keyboard focus, start on the safest useful control, restore focus when closed,
 and prevent page-navigation shortcuts from acting behind modal consent.
-The synchronization core journals books, progress, bookmark
-tombstones, and annotation tombstones, verify immutable publication objects,
-and communicate with Git/Git LFS and MEGA gateways. The Angular app exposes
+The synchronization core journals books, progress, bookmark tombstones, and
+annotation tombstones, verifies immutable publication objects, and communicates
+with Git/Git LFS and MEGA gateways. The Angular app exposes
 the sync route, durable operation journal, and automatic scheduler. GitHub uses
-a state-bound GitHub App login with encrypted server-side sessions; users can
-select an existing private repository or create one from the settings flow.
+a state-bound, S256 PKCE-protected GitHub App login with encrypted server-side
+sessions; users can install the App, grant repository access, and then select
+an existing private repository or create one from the settings flow. Provider
+authorization revocations use signed, replay-safe webhooks and shared
+user-generation invalidation across gateway replicas. Provider rate limits use
+bounded retry deadlines, safe UI guidance, and persisted automatic-sync
+backoff without blocking local reading.
 See the
 [universal reader development plan](docs/universal-reader-plan.md) for the
 architecture, verified status, and remaining release work. Release candidates
@@ -50,12 +55,17 @@ npm ci
 npm start
 ```
 
-The development application is served at <http://localhost:4300>.
+The local-only development application is served at
+<http://localhost:4300>. It keeps books and reading state in the browser,
+disables the remote-sync settings route, and never calls `/api/sync`.
 
 Offline reading needs no sync server. GitHub synchronization is available
-through the isolated same-origin gateway, which can be started with:
+through the isolated same-origin gateway. Start the gateway and the
+sync-enabled Angular development build together with:
 
 ```sh
+cp apps/sync-gateway/.env.local.example apps/sync-gateway/.env.local
+# Fill in the GitHub App values and generate OMNIA_SYNC_SESSION_KEY.
 npm run start:full
 ```
 
@@ -67,9 +77,11 @@ specified in [the MEGA SDK bridge contract](docs/mega-sdk-bridge.md).
 The provider clients use the same-origin endpoints documented in
 [the sync gateway contract](docs/sync-gateway-api.md). Provider credentials
 stay in that gateway; they are never stored by the Angular app. Development
-uses an encrypted in-memory session store. Multi-replica deployments can use
-the documented Redis store with atomic session rotation, TTL expiry, and
-rolling AES key rotation.
+can persist encrypted sessions across gateway restarts by setting
+`OMNIA_SYNC_SESSION_DIRECTORY`; otherwise sessions are held in memory.
+Multi-replica deployments use the documented Redis store with atomic session
+rotation and authorization revocation, TTL expiry, and rolling AES key
+rotation.
 
 The default browser E2E matrix covers GitHub repository onboarding. The longer
 two-device Git/LFS and MEGA convergence journeys remain opt-in:
@@ -163,15 +175,32 @@ platform signing identities and explicit release approval.
 
 ## Web deployment
 
-Deploy the built local-reader PWA behind HTTPS; it does not require the
-`/api/sync` gateway. If remote providers are re-enabled later, deploy their
-gateway behind the same origin. The required browser security policy is
-exported from
-`tools/web-security-headers.mjs`; the production-like Playwright server applies
-it and the cross-browser suite verifies it. Configure the same headers at the
-real CDN or reverse proxy and add HTTP Strict Transport Security at the TLS
-edge. The CSP meta element in `index.html` is a fallback, not a replacement for
-response headers.
+Deploy the production PWA behind HTTPS. Local EPUB/PDF reading remains
+available when synchronization is unconfigured or temporarily unavailable.
+The reference container stack serves the production build and proxies
+`/api/sync` to an internal, unexposed gateway:
+
+```sh
+cp deployment/gateway.env.example deployment/gateway.env
+# Replace the placeholders for each provider that this deployment supports.
+npm run container:smoke
+docker compose --file deployment/compose.yaml up --detach --build
+```
+
+Only the web service is published, on port `8080` by default. Set
+`OMNIA_HTTP_PORT` to change the host port. Terminate HTTPS at the external load
+balancer or reverse proxy, forward requests to this service, and add HTTP
+Strict Transport Security there. Use `OMNIA_SYNC_REDIS_URL` for production or
+any multi-replica gateway deployment; a filesystem session directory is only
+for a single development process.
+
+The web image derives its response headers from
+`tools/web-security-headers.mjs`, streams publication requests without proxy
+buffering, and keeps provider credentials inside the gateway. The CSP meta
+element in `index.html` is a fallback, not a replacement for response headers.
+Deploy only the providers configured in the untracked
+`deployment/gateway.env`; absent provider configuration fails closed without
+disabling local reading.
 
 ## Tauri desktop
 

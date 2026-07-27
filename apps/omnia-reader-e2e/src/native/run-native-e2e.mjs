@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import {
   NATIVE_EPUB_FIXTURE,
   NATIVE_PDF_FIXTURE,
@@ -16,15 +18,23 @@ const ARROW_RIGHT = '\uE014';
 const ARROW_UP = '\uE013';
 const PORT = 44_000 + (process.pid % 10_000);
 const SERVER_URL = `http://127.0.0.1:${PORT}`;
-const nativeBinary = resolve(
-  'src-tauri',
-  'target',
-  'debug',
-  process.platform === 'win32' ? 'omnia-reader.exe' : 'omnia-reader',
-);
+const execFileAsync = promisify(execFile);
+const packagedDesktopFile = process.env['OMNIA_NATIVE_DESKTOP_FILE'];
+const useDesktopActivation = packagedDesktopFile !== undefined;
+const nativeBinary = process.env['OMNIA_NATIVE_BINARY']
+  ? resolve(process.env['OMNIA_NATIVE_BINARY'])
+  : resolve(
+      'src-tauri',
+      'target',
+      'debug',
+      process.platform === 'win32' ? 'omnia-reader.exe' : 'omnia-reader',
+    );
 
 async function main() {
   await prepareNativeFixtures();
+  if (packagedDesktopFile) {
+    await configurePackagedDesktopActivation(packagedDesktopFile);
+  }
 
   const app = startNativeApp(NATIVE_PDF_FIXTURE);
   let driver;
@@ -39,7 +49,11 @@ async function main() {
     await verifyBookDeepLinkJourney(driver);
 
     console.log(
-      'Native E2E passed: startup open-with, single-instance forwarding, PDF/EPUB rendering, deep-link reopening, and keyboard/button navigation.',
+      `Native E2E passed: startup open-with, ${
+        useDesktopActivation
+          ? 'installed desktop activation'
+          : 'single-instance forwarding'
+      }, PDF/EPUB rendering, deep-link reopening, and keyboard/button navigation.`,
     );
   } catch (error) {
     const screenshotPath = join(
@@ -174,14 +188,7 @@ function startNativeApp(publicationPath) {
   let output = '';
   const child = spawn(nativeBinary, [publicationPath], {
     cwd: resolve('.'),
-    env: {
-      ...process.env,
-      XDG_CACHE_HOME: NATIVE_PROFILE_DIRECTORIES.cache,
-      XDG_CONFIG_HOME: NATIVE_PROFILE_DIRECTORIES.config,
-      XDG_DATA_HOME: NATIVE_PROFILE_DIRECTORIES.data,
-      GSETTINGS_BACKEND: 'memory',
-      TAURI_WEBDRIVER_PORT: String(PORT),
-    },
+    env: nativeEnvironment({ TAURI_WEBDRIVER_PORT: String(PORT) }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (chunk) => {
@@ -226,16 +233,21 @@ async function waitForServer(app, timeout) {
 }
 
 async function forwardArgumentToRunningInstance(argument) {
+  if (useDesktopActivation) {
+    const target = argument.startsWith('omnia-reader:')
+      ? argument
+      : pathToFileURL(argument).href;
+    await execFileAsync('gio', ['open', target], {
+      env: nativeEnvironment(),
+      timeout: 20_000,
+    });
+    return;
+  }
+
   await new Promise((resolvePromise, reject) => {
     const child = spawn(nativeBinary, [argument], {
       cwd: resolve('.'),
-      env: {
-        ...process.env,
-        XDG_CACHE_HOME: NATIVE_PROFILE_DIRECTORIES.cache,
-        XDG_CONFIG_HOME: NATIVE_PROFILE_DIRECTORIES.config,
-        XDG_DATA_HOME: NATIVE_PROFILE_DIRECTORIES.data,
-        GSETTINGS_BACKEND: 'memory',
-      },
+      env: nativeEnvironment(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
@@ -268,6 +280,62 @@ async function forwardArgumentToRunningInstance(argument) {
       );
     });
   });
+}
+
+async function configurePackagedDesktopActivation(desktopFile) {
+  assert.equal(
+    process.platform,
+    'linux',
+    'Packaged desktop activation is Linux-specific',
+  );
+  const source = resolve(desktopFile);
+  const contents = await readFile(source, 'utf8');
+  assert.match(contents, /^Exec=omnia-reader %U$/m);
+  assert.match(
+    contents,
+    /^MimeType=application\/epub\+zip;application\/pdf;x-scheme-handler\/omnia-reader;$/m,
+  );
+
+  const applicationsDirectory = join(
+    NATIVE_PROFILE_DIRECTORIES.data,
+    'applications',
+  );
+  await mkdir(applicationsDirectory, { recursive: true, mode: 0o700 });
+  const desktopName = basename(source);
+  await copyFile(source, join(applicationsDirectory, desktopName));
+
+  const environment = nativeEnvironment();
+  await execFileAsync('update-desktop-database', [applicationsDirectory], {
+    env: environment,
+  });
+  for (const mimeType of [
+    'application/epub+zip',
+    'application/pdf',
+    'x-scheme-handler/omnia-reader',
+  ]) {
+    await execFileAsync('xdg-mime', ['default', desktopName, mimeType], {
+      env: environment,
+    });
+    const { stdout } = await execFileAsync(
+      'xdg-mime',
+      ['query', 'default', mimeType],
+      { env: environment },
+    );
+    assert.equal(stdout.trim(), desktopName);
+  }
+  console.log('✓ packaged Linux desktop MIME and protocol registration');
+}
+
+function nativeEnvironment(overrides = {}) {
+  return {
+    ...process.env,
+    PATH: `${dirname(nativeBinary)}:${process.env['PATH'] ?? ''}`,
+    XDG_CACHE_HOME: NATIVE_PROFILE_DIRECTORIES.cache,
+    XDG_CONFIG_HOME: NATIVE_PROFILE_DIRECTORIES.config,
+    XDG_DATA_HOME: NATIVE_PROFILE_DIRECTORIES.data,
+    GSETTINGS_BACKEND: 'memory',
+    ...overrides,
+  };
 }
 
 async function stopProcess(child) {

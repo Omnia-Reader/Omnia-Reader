@@ -1,5 +1,10 @@
 import {
+  BrowserObjectUploadRequester,
+  browserObjectDownloadBlob,
+  browserObjectUploadRequest,
   LibrarySyncTransport,
+  ObjectDeleteRequest,
+  ObjectDownloadOptions,
   ObjectUploadRequest,
   RemoteObject,
 } from '@omnia-reader/sync/core';
@@ -24,9 +29,16 @@ export interface GitHubRepository {
 }
 
 export type GitHubGatewaySession =
-  | { authenticated: false }
+  | { configured: false; authenticated: false }
   | {
+      configured: true;
+      authenticated: false;
+      installationUrl: string;
+    }
+  | {
+      configured: true;
       authenticated: true;
+      installationUrl: string;
       user: GitHubGatewayUser;
       repository: GitHubRepository | null;
     };
@@ -44,13 +56,14 @@ export interface GitHubGateway extends LibrarySyncTransport {
   selectRepository(repositoryId: number): Promise<GitHubGatewaySession>;
   createRepository(name: string): Promise<GitHubRepositoryCreationResult>;
   disconnect(): Promise<void>;
-  beginAuthorization(returnTo?: string): void;
+  beginAuthorization(returnTo?: string): Promise<void>;
 }
 
 export class GitHubGatewayError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = 'GitHubGatewayError';
@@ -71,6 +84,7 @@ export interface GitHubGatewayClientOptions {
   fetcher?: typeof fetch;
   redirect?: (url: string) => void;
   currentPath?: () => string;
+  uploadRequester?: BrowserObjectUploadRequester;
 }
 
 const DEFAULT_BASE_URL = '/api/sync/github';
@@ -82,6 +96,7 @@ export class GitHubGatewayClient implements GitHubGateway {
   private readonly fetcher: typeof fetch;
   private readonly redirect: (url: string) => void;
   private readonly currentPath: () => string;
+  private readonly uploadRequester: BrowserObjectUploadRequester;
 
   constructor(options: GitHubGatewayClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
@@ -93,6 +108,8 @@ export class GitHubGatewayClient implements GitHubGateway {
       options.currentPath ??
       (() =>
         `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`);
+    this.uploadRequester =
+      options.uploadRequester ?? browserObjectUploadRequest;
   }
 
   async session(): Promise<GitHubGatewaySession> {
@@ -144,7 +161,14 @@ export class GitHubGatewayClient implements GitHubGateway {
     await this.request('/session', { method: 'DELETE' });
   }
 
-  beginAuthorization(returnTo = this.currentPath()): void {
+  async beginAuthorization(returnTo = this.currentPath()): Promise<void> {
+    const session = await this.session();
+    if (!session.configured) {
+      throw new GitHubGatewayError(
+        503,
+        'GitHub App authentication is not configured on this sync gateway',
+      );
+    }
     const safeReturnTo = sanitizeReturnPath(returnTo);
     this.redirect(
       `${this.baseUrl}/auth/start?returnTo=${encodeURIComponent(safeReturnTo)}`,
@@ -217,28 +241,41 @@ export class GitHubGatewayClient implements GitHubGateway {
     return value;
   }
 
-  async downloadObject(path: string): Promise<Blob> {
+  async downloadObject(
+    path: string,
+    options: ObjectDownloadOptions = {},
+  ): Promise<Blob> {
     const response = await this.request(
       `/lfs/object?path=${encodeURIComponent(path)}`,
+      { signal: options.signal },
     );
-    return response.blob();
+    return browserObjectDownloadBlob(response, path, options);
   }
 
   async uploadObject(request: ObjectUploadRequest): Promise<RemoteObject> {
     const headers = new Headers({
+      Accept: 'application/json',
       'Content-Type': request.mediaType,
+      [CSRF_HEADER]: '1',
       'X-Omnia-SHA256': request.sha256,
       'X-Omnia-Size': String(request.size),
     });
-    const response = await this.request(
-      `/lfs/object?path=${encodeURIComponent(request.path)}`,
-      {
-        method: 'PUT',
-        headers,
-        body: request.content,
-      },
-      [409],
-    );
+    const path = `/lfs/object?path=${encodeURIComponent(request.path)}`;
+    const response = request.onProgress
+      ? await this.uploadRequester(`${this.baseUrl}${path}`, headers, request)
+      : await this.request(
+          path,
+          {
+            method: 'PUT',
+            headers,
+            body: request.content,
+            signal: request.signal,
+          },
+          [409],
+        );
+    if (!response.ok && response.status !== 409) {
+      throw await gatewayError(response);
+    }
     if (response.status === 409) {
       throw new GitConflictError('The remote Git LFS object changed');
     }
@@ -247,6 +284,21 @@ export class GitHubGatewayClient implements GitHubGateway {
       throw new GitHubGatewayProtocolError();
     }
     return value;
+  }
+
+  async deleteObject(request: ObjectDeleteRequest): Promise<void> {
+    const parameters = new URLSearchParams({ path: request.path });
+    if (request.expectedRevision) {
+      parameters.set('expectedRevision', request.expectedRevision);
+    }
+    const response = await this.request(
+      `/lfs/object?${parameters.toString()}`,
+      { method: 'DELETE' },
+      [404, 409],
+    );
+    if (response.status === 409) {
+      throw new GitConflictError('The remote Git LFS object changed');
+    }
   }
 
   private async request(
@@ -296,15 +348,43 @@ async function gatewayError(response: Response): Promise<GitHubGatewayError> {
   } catch {
     // The status remains useful even when an upstream proxy returns non-JSON.
   }
-  return new GitHubGatewayError(response.status, message);
+  return new GitHubGatewayError(
+    response.status,
+    message,
+    parseRetryAfterSeconds(response.headers.get('retry-after')),
+  );
+}
+
+function parseRetryAfterSeconds(value: string | null): number | undefined {
+  if (!value || !/^[0-9]{1,5}$/.test(value)) {
+    return undefined;
+  }
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 86_400
+    ? seconds
+    : undefined;
 }
 
 function parseSession(value: unknown): GitHubGatewaySession {
-  if (!isRecord(value) || typeof value['authenticated'] !== 'boolean') {
+  if (
+    !isRecord(value) ||
+    typeof value['configured'] !== 'boolean' ||
+    typeof value['authenticated'] !== 'boolean'
+  ) {
+    throw new GitHubGatewayProtocolError();
+  }
+  if (!value['configured']) {
+    if (value['authenticated']) {
+      throw new GitHubGatewayProtocolError();
+    }
+    return { configured: false, authenticated: false };
+  }
+  const installationUrl = value['installationUrl'];
+  if (!isSafeExternalUrl(installationUrl)) {
     throw new GitHubGatewayProtocolError();
   }
   if (!value['authenticated']) {
-    return { authenticated: false };
+    return { configured: true, authenticated: false, installationUrl };
   }
   const user = value['user'];
   const repository = value['repository'];
@@ -321,7 +401,9 @@ function parseSession(value: unknown): GitHubGatewaySession {
     throw new GitHubGatewayProtocolError();
   }
   return {
+    configured: true,
     authenticated: true,
+    installationUrl,
     user,
     repository: selectedRepository,
   };

@@ -1,15 +1,22 @@
+import { BrowserObjectUploadRequester } from '@omnia-reader/sync/core';
 import { describe, expect, it, vi } from 'vitest';
 import { GitConflictError } from './git-repository-transport';
 import {
   GitHubGatewayClient,
+  GitHubGatewayError,
   GitHubGatewayProtocolError,
 } from './github-gateway-client';
+
+const INSTALLATION_URL =
+  'https://github.test/apps/omnia-reader/installations/new';
 
 describe('GitHubGatewayClient', () => {
   it('loads the authenticated session through an HttpOnly-cookie request', async () => {
     const fetcher = mockFetch(
       jsonResponse({
+        configured: true,
         authenticated: true,
+        installationUrl: INSTALLATION_URL,
         user: { id: 7, login: 'reader', avatarUrl: '' },
         repository: {
           id: 11,
@@ -32,18 +39,74 @@ describe('GitHubGatewayClient', () => {
     );
   });
 
-  it('redirects only to a local return path', () => {
+  it('preflights configuration and redirects only to a local return path', async () => {
     const redirect = vi.fn();
     const client = new GitHubGatewayClient({
-      fetcher: mockFetch(jsonResponse({})),
+      fetcher: mockFetch(
+        jsonResponse({
+          configured: true,
+          authenticated: false,
+          installationUrl: INSTALLATION_URL,
+        }),
+      ),
       redirect,
       currentPath: () => 'https://attacker.invalid/',
     });
 
-    client.beginAuthorization();
+    await client.beginAuthorization();
 
     expect(redirect).toHaveBeenCalledWith(
       '/api/sync/github/auth/start?returnTo=%2Fsettings%2Fsync',
+    );
+  });
+
+  it('keeps the user in the app when GitHub App credentials are absent', async () => {
+    const redirect = vi.fn();
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse({ configured: false, authenticated: false }),
+      ),
+      redirect,
+    });
+
+    await expect(client.beginAuthorization('/settings/sync')).rejects.toEqual(
+      expect.objectContaining<Partial<GitHubGatewayError>>({
+        status: 503,
+        message:
+          'GitHub App authentication is not configured on this sync gateway',
+      }),
+    );
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it('does not redirect when the local sync gateway is unavailable', async () => {
+    const redirect = vi.fn();
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(new Response(null, { status: 500 })),
+      redirect,
+    });
+
+    await expect(client.beginAuthorization('/settings/sync')).rejects.toEqual(
+      expect.objectContaining<Partial<GitHubGatewayError>>({
+        status: 500,
+      }),
+    );
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsafe installation URL returned by the gateway', async () => {
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse({
+          configured: true,
+          authenticated: false,
+          installationUrl: 'javascript:alert(1)',
+        }),
+      ),
+    });
+
+    await expect(client.session()).rejects.toBeInstanceOf(
+      GitHubGatewayProtocolError,
     );
   });
 
@@ -61,7 +124,9 @@ describe('GitHubGatewayClient', () => {
         ],
       }),
       jsonResponse({
+        configured: true,
         authenticated: true,
+        installationUrl: INSTALLATION_URL,
         user: { id: 7, login: 'reader', avatarUrl: '' },
         repository: {
           id: 11,
@@ -101,7 +166,9 @@ describe('GitHubGatewayClient', () => {
         repository,
         selected: true,
         session: {
+          configured: true,
           authenticated: true,
+          installationUrl: INSTALLATION_URL,
           user: { id: 7, login: 'reader', avatarUrl: '' },
           repository,
         },
@@ -123,6 +190,46 @@ describe('GitHubGatewayClient', () => {
     expect(init?.method).toBe('POST');
     expect(init?.body).toBe('{"name":"omnia-reader-library"}');
     expect(headers.get('X-Omnia-CSRF')).toBe('1');
+  });
+
+  it('preserves a repository permission denial for actionable UI recovery', async () => {
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse(
+          { message: 'Resource not accessible by integration' },
+          403,
+        ),
+      ),
+    });
+
+    await expect(
+      client.createRepository('omnia-reader-library'),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<GitHubGatewayError>>({
+        status: 403,
+        message: 'Resource not accessible by integration',
+      }),
+    );
+  });
+
+  it('preserves a bounded gateway retry delay for GitHub rate limits', async () => {
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse(
+          { message: 'GitHub is temporarily rate limiting synchronization' },
+          429,
+          { 'Retry-After': '120' },
+        ),
+      ),
+    });
+
+    await expect(client.repositories()).rejects.toEqual(
+      expect.objectContaining<Partial<GitHubGatewayError>>({
+        status: 429,
+        retryAfterSeconds: 120,
+        message: 'GitHub is temporarily rate limiting synchronization',
+      }),
+    );
   });
 
   it('implements list, missing-file reads, and optimistic writes', async () => {
@@ -198,6 +305,108 @@ describe('GitHubGatewayClient', () => {
     expect(headers.get('X-Omnia-CSRF')).toBe('1');
   });
 
+  it('streams publication bytes with upload and download progress', async () => {
+    const object = {
+      path: '.omnia-reader/v1/books/id/publication.pdf',
+      revision: 'lfs-object',
+      size: 3,
+      sha256: 'a'.repeat(64),
+    };
+    const uploadProgress: number[] = [];
+    const uploadRequester = vi.fn<BrowserObjectUploadRequester>(
+      async (_url, _headers, request) => {
+        request.onProgress?.({
+          direction: 'upload',
+          path: request.path,
+          transferredBytes: 0,
+          totalBytes: request.size,
+        });
+        request.onProgress?.({
+          direction: 'upload',
+          path: request.path,
+          transferredBytes: request.size,
+          totalBytes: request.size,
+        });
+        return jsonResponse(object);
+      },
+    );
+    const uploadClient = new GitHubGatewayClient({ uploadRequester });
+
+    await uploadClient.uploadObject({
+      path: object.path,
+      content: new Blob(['pdf']),
+      size: object.size,
+      sha256: object.sha256,
+      mediaType: 'application/pdf',
+      onProgress: (progress) => uploadProgress.push(progress.transferredBytes),
+    });
+
+    expect(uploadProgress[0]).toBe(0);
+    expect(uploadProgress[uploadProgress.length - 1]).toBe(3);
+    const uploadHeaders = uploadRequester.mock.calls[0]?.[1];
+    expect(uploadHeaders?.get('X-Omnia-CSRF')).toBe('1');
+    expect(uploadHeaders?.get('X-Omnia-SHA256')).toBe(object.sha256);
+
+    const downloadProgress: number[] = [];
+    const downloadClient = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        new Response('pdf', {
+          headers: {
+            'Content-Length': '3',
+            'Content-Type': 'application/pdf',
+          },
+        }),
+      ),
+    });
+    const downloaded = await downloadClient.downloadObject(object.path, {
+      expectedSize: object.size,
+      onProgress: (progress) =>
+        downloadProgress.push(progress.transferredBytes),
+    });
+
+    await expect(blobText(downloaded)).resolves.toBe('pdf');
+    expect(downloadProgress[0]).toBe(0);
+    expect(downloadProgress[downloadProgress.length - 1]).toBe(3);
+  });
+
+  it('revision-deletes a Git LFS pointer with CSRF protection', async () => {
+    const fetcher = mockFetch(new Response(null, { status: 204 }));
+    const client = new GitHubGatewayClient({ fetcher });
+    const path = '.omnia-reader/v1/books/id/publication.pdf';
+
+    await client.deleteObject({
+      path,
+      expectedRevision: 'pointer-revision',
+    });
+
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(url).toContain('/lfs/object?');
+    expect(url).toContain(`path=${encodeURIComponent(path)}`);
+    expect(url).toContain('expectedRevision=pointer-revision');
+    expect(init?.method).toBe('DELETE');
+    expect(init?.credentials).toBe('include');
+    expect(new Headers(init?.headers).get('X-Omnia-CSRF')).toBe('1');
+  });
+
+  it('treats missing object deletion as complete and maps revision conflicts', async () => {
+    const missingClient = new GitHubGatewayClient({
+      fetcher: mockFetch(new Response(null, { status: 404 })),
+    });
+    await expect(
+      missingClient.deleteObject({ path: 'publication.pdf' }),
+    ).resolves.toBeUndefined();
+
+    const conflictClient = new GitHubGatewayClient({
+      fetcher: mockFetch(new Response(null, { status: 409 })),
+    });
+    await expect(
+      conflictClient.deleteObject({
+        path: 'publication.pdf',
+        expectedRevision: 'stale',
+      }),
+    ).rejects.toBeInstanceOf(GitConflictError);
+  });
+
   it('rejects malformed gateway documents instead of trusting them', async () => {
     const client = new GitHubGatewayClient({
       fetcher: mockFetch(jsonResponse({ files: [{ path: '../escape' }] })),
@@ -209,10 +418,14 @@ describe('GitHubGatewayClient', () => {
   });
 });
 
-function jsonResponse(value: unknown, status = 200): Response {
+function jsonResponse(
+  value: unknown,
+  status = 200,
+  headers: Readonly<Record<string, string>> = {},
+): Response {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
   });
 }
 
@@ -227,5 +440,14 @@ function sequenceFetch(...responses: Response[]) {
       throw new Error('Unexpected fetch');
     }
     return Promise.resolve(response);
+  });
+}
+
+function blobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result)));
+    reader.addEventListener('error', () => reject(reader.error));
+    reader.readAsText(blob);
   });
 }
