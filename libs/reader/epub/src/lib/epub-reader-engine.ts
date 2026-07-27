@@ -70,12 +70,14 @@ export class EpubReaderEngine implements ReaderEngine {
   private rendition: Rendition | null = null;
   private viewport: HTMLElement | null = null;
   private toc: readonly TocEntry[] = [];
+  private readonly sectionEndLocations = new Map<string, string>();
   private locator: PublicationLocator | null = null;
   private lastNotifiedLocator = '';
   private pendingExpectedSection: {
     readonly href: string;
     readonly index?: number;
   } | null = null;
+  private previousBoundaryReturnTarget: string | null = null;
   private currentPageStatus: ReaderPageStatus | null = null;
   private readingDirection: PublicationReadingDirection = 'ltr';
   private publicationLayout: PublicationLayout = 'reflowable';
@@ -705,9 +707,11 @@ export class EpubReaderEngine implements ReaderEngine {
     this.book = null;
     this.viewport = null;
     this.toc = [];
+    this.sectionEndLocations.clear();
     this.locator = null;
     this.lastNotifiedLocator = '';
     this.pendingExpectedSection = null;
+    this.previousBoundaryReturnTarget = null;
     this.currentPageStatus = null;
     this.readingDirection = 'ltr';
     this.publicationLayout = 'reflowable';
@@ -836,6 +840,7 @@ export class EpubReaderEngine implements ReaderEngine {
 
   async goTo(locator: PublicationLocator): Promise<void> {
     const rendition = this.requireRendition();
+    this.previousBoundaryReturnTarget = null;
     const fragment = locator.locations?.fragments?.[0];
     let target: string;
     if (fragment?.startsWith('epubcfi(')) {
@@ -860,6 +865,7 @@ export class EpubReaderEngine implements ReaderEngine {
   async goToProgression(totalProgression: number): Promise<void> {
     const book = this.book;
     const rendition = this.requireRendition();
+    this.previousBoundaryReturnTarget = null;
     const locations = book?.locations;
     if (
       !locations ||
@@ -891,13 +897,20 @@ export class EpubReaderEngine implements ReaderEngine {
   async next(): Promise<void> {
     const rendition = this.requireRendition();
     this.updateLocator(rendition.currentLocation(), false);
+    const previousBoundaryReturnTarget = this.previousBoundaryReturnTarget;
+    this.previousBoundaryReturnTarget = null;
     const targetSection =
-      this.currentPageStatus &&
+      (previousBoundaryReturnTarget
+        ? this.sectionForTarget(previousBoundaryReturnTarget)
+        : undefined) ??
+      (this.currentPageStatus &&
       this.currentPageStatus.current >= this.currentPageStatus.total
         ? this.currentSection()?.next?.()
-        : undefined;
+        : undefined);
     this.prepareSectionTheme(targetSection);
-    if (targetSection?.href) {
+    if (previousBoundaryReturnTarget) {
+      await rendition.display(previousBoundaryReturnTarget);
+    } else if (targetSection?.href) {
       // After moving back from the first page of a spine item, epub.ts can
       // retain the former anchor offset and make next() consume an invisible
       // boundary step. Display the known next spine item directly so one
@@ -918,12 +931,29 @@ export class EpubReaderEngine implements ReaderEngine {
 
   async previous(): Promise<void> {
     const rendition = this.requireRendition();
+    this.previousBoundaryReturnTarget = null;
     this.updateLocator(rendition.currentLocation(), false);
+    const currentSection = this.currentSection();
     const targetSection =
       this.currentPageStatus && this.currentPageStatus.current <= 1
-        ? this.currentSection()?.prev?.()
+        ? currentSection?.prev?.()
         : undefined;
+    const returnTarget = targetSection
+      ? (this.locator?.locations?.fragments?.[0] ?? currentSection?.href)
+      : undefined;
     this.prepareSectionTheme(targetSection);
+    const targetLocation = this.lastReadableLocationForSection(targetSection);
+    if (targetSection && targetLocation) {
+      // epub.ts may end generated locations on trailing whitespace, which
+      // resolves to the chapter container and its first page. The captured
+      // final readable character remains anchored to the actual last page.
+      this.applySectionPresentation(targetSection, rendition);
+      await rendition.display(targetLocation);
+      this.attachRenditionContentHandlers();
+      await this.refreshRenditionLocation(rendition, true, targetSection);
+      this.previousBoundaryReturnTarget = returnTarget ?? null;
+      return;
+    }
     await rendition.prev();
     const renderedSection =
       targetSection ?? this.renderedSection(rendition, 'previous');
@@ -951,6 +981,7 @@ export class EpubReaderEngine implements ReaderEngine {
     } else if (targetSection) {
       this.updateLocator(rendition.currentLocation(), true, targetSection);
     }
+    this.previousBoundaryReturnTarget = returnTarget ?? null;
   }
 
   async *search(query: string): AsyncIterable<SearchResult> {
@@ -1331,10 +1362,36 @@ export class EpubReaderEngine implements ReaderEngine {
     if (!locations || typeof locations.generate !== 'function') {
       return;
     }
+    const captureSectionEnd = (document: Document, section?: Section): void => {
+      if (!section) {
+        return;
+      }
+      const location = lastReadableSectionCfi(document, section);
+      const key = sectionLocationKey(section);
+      if (location && key) {
+        this.sectionEndLocations.set(key, location);
+      }
+    };
+    if (typeof book.spine.each === 'function') {
+      book.spine.each((section) => {
+        if (section.document) {
+          captureSectionEnd(section.document, section);
+        }
+      });
+    }
+    const contentHooks = book.spine.hooks?.content;
+    const captureRegistered = typeof contentHooks?.register === 'function';
+    if (captureRegistered) {
+      contentHooks.register(captureSectionEnd);
+    }
     try {
       await locations.generate(EPUB_LOCATION_BREAK_SIZE);
     } catch {
       return;
+    } finally {
+      if (captureRegistered && typeof contentHooks?.deregister === 'function') {
+        contentHooks.deregister(captureSectionEnd);
+      }
     }
     this.enrichTableOfContentsProgressions(book);
     if (this.book === book && this.rendition) {
@@ -1444,6 +1501,7 @@ export class EpubReaderEngine implements ReaderEngine {
     if (!rendition) {
       return;
     }
+    this.previousBoundaryReturnTarget = null;
     const link = classifyPublicationLink(href);
     if (link.kind === 'internal') {
       const target =
@@ -1497,6 +1555,13 @@ export class EpubReaderEngine implements ReaderEngine {
 
   private sectionForTarget(target: string): Section | undefined {
     return this.book?.spine.get?.(target) ?? undefined;
+  }
+
+  private lastReadableLocationForSection(
+    section: Section | undefined,
+  ): string | null {
+    const key = sectionLocationKey(section);
+    return key ? (this.sectionEndLocations.get(key) ?? null) : null;
   }
 
   private sectionPresentation(section?: Section): {
@@ -2537,6 +2602,61 @@ function isDocument(value: unknown): value is Document {
 function sectionStartCfi(section: Section | null | undefined): string | null {
   const cfiBase = section?.cfiBase;
   return cfiBase ? `epubcfi(${cfiBase}!/)` : null;
+}
+
+function sectionLocationKey(
+  section: Section | null | undefined,
+): string | null {
+  return section?.cfiBase ?? section?.href ?? null;
+}
+
+function lastReadableSectionCfi(
+  document: Document,
+  section: Section,
+): string | null {
+  const root = document.body ?? document.documentElement;
+  if (!root || typeof section.cfiFromRange !== 'function') {
+    return null;
+  }
+
+  const walker = document.createTreeWalker(root, 4);
+  let finalText:
+    | {
+        readonly node: Text;
+        readonly start: number;
+        readonly end: number;
+      }
+    | undefined;
+  let current = walker.nextNode();
+  while (current) {
+    if (current.nodeType === 3) {
+      const node = current as Text;
+      const ignoredContainer = node.parentElement?.closest(
+        'script, style, template, noscript',
+      );
+      const match = ignoredContainer ? null : /\S(?=\s*$)/u.exec(node.data);
+      if (match?.index !== undefined) {
+        finalText = {
+          node,
+          start: match.index,
+          end: match.index + match[0].length,
+        };
+      }
+    }
+    current = walker.nextNode();
+  }
+  if (!finalText) {
+    return null;
+  }
+
+  try {
+    const range = document.createRange();
+    range.setStart(finalText.node, finalText.start);
+    range.setEnd(finalText.node, finalText.end);
+    return section.cfiFromRange(range);
+  } catch {
+    return null;
+  }
 }
 
 const URL_ATTRIBUTES = new Set([

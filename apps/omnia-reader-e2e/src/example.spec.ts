@@ -320,10 +320,96 @@ test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', a
   }
 
   await expect(chapterFourMilestone).toBeEnabled();
+  await page.evaluate(() => {
+    const observation = {
+      active: true,
+      chapterThreePages: [] as string[],
+    };
+    (
+      window as unknown as {
+        __omniaPreviousBoundaryObservation?: typeof observation;
+      }
+    ).__omniaPreviousBoundaryObservation = observation;
+    const sampleVisibleParagraph = (): void => {
+      if (!observation.active) {
+        return;
+      }
+      const frame = document.querySelector(
+        '[data-testid="publication-viewport"] iframe',
+      ) as HTMLIFrameElement | null;
+      const visibleParagraph = Array.from(
+        frame?.contentDocument?.querySelectorAll('p') ?? [],
+      ).find((paragraph) => {
+        const bounds = paragraph.getBoundingClientRect();
+        return (
+          bounds.right > 0 &&
+          bounds.left < (frame?.clientWidth ?? 0) &&
+          bounds.bottom > 0 &&
+          bounds.top < (frame?.clientHeight ?? 0)
+        );
+      });
+      const text = visibleParagraph?.textContent?.trim();
+      if (text?.startsWith('Chapter 3, paragraph ')) {
+        observation.chapterThreePages.push(text);
+      }
+      requestAnimationFrame(sampleVisibleParagraph);
+    };
+    requestAnimationFrame(sampleVisibleParagraph);
+  });
   await page.keyboard.press('ArrowLeft');
   await expect
     .poll(async () => Number(await progressSlider.inputValue()))
     .toBeLessThan(chapterFourPercent);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __omniaPreviousBoundaryObservation?: {
+                chapterThreePages: string[];
+              };
+            }
+          ).__omniaPreviousBoundaryObservation?.chapterThreePages.length ?? 0,
+      ),
+    )
+    .toBeGreaterThan(0);
+  const observedChapterThreePages = await page.evaluate(() => {
+    const observation = (
+      window as unknown as {
+        __omniaPreviousBoundaryObservation?: {
+          active: boolean;
+          chapterThreePages: string[];
+        };
+      }
+    ).__omniaPreviousBoundaryObservation;
+    if (!observation) {
+      return [];
+    }
+    observation.active = false;
+    return observation.chapterThreePages;
+  });
+  expect(new Set(observedChapterThreePages).size).toBe(1);
+  const lastVisibleChapterThreeParagraph = await page.evaluate(() => {
+    const frame = document.querySelector(
+      '[data-testid="publication-viewport"] iframe',
+    ) as HTMLIFrameElement | null;
+    return Array.from(frame?.contentDocument?.querySelectorAll('p') ?? [])
+      .filter((paragraph) => {
+        const bounds = paragraph.getBoundingClientRect();
+        return (
+          bounds.right > 0 &&
+          bounds.left < (frame?.clientWidth ?? 0) &&
+          bounds.bottom > 0 &&
+          bounds.top < (frame?.clientHeight ?? 0)
+        );
+      })
+      .at(-1)
+      ?.textContent?.trim();
+  });
+  expect(lastVisibleChapterThreeParagraph).toContain(
+    'Chapter 3, paragraph 48.',
+  );
   await expect(chapterFourMilestone).not.toHaveAttribute(
     'aria-current',
     'location',

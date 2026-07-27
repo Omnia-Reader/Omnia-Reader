@@ -103,6 +103,9 @@ describe('EpubReaderEngine annotations', () => {
   it('captures a CFI text quote and renders persisted annotation styles', async () => {
     const listeners = new Map<string, (...args: unknown[]) => void>();
     let sanitizeContent: ((document: Document) => void) | undefined;
+    const spineContentHooks = new Set<
+      (document: Document, section?: Section) => void | Promise<void>
+    >();
     let attachContent: ((contents: Contents) => void) | undefined;
     const annotationElement = globalThis.document.createElementNS(
       'http://www.w3.org/2000/svg',
@@ -179,9 +182,25 @@ describe('EpubReaderEngine annotations', () => {
       spine: {
         hooks: {
           content: {
-            register: vi.fn((listener: (document: Document) => void) => {
-              sanitizeContent = listener;
-            }),
+            register: vi.fn(
+              (
+                listener: (
+                  document: Document,
+                  section?: Section,
+                ) => void | Promise<void>,
+              ) => {
+                spineContentHooks.add(listener);
+                sanitizeContent ??= listener;
+              },
+            ),
+            deregister: vi.fn(
+              (
+                listener: (
+                  document: Document,
+                  section?: Section,
+                ) => void | Promise<void>,
+              ) => spineContentHooks.delete(listener),
+            ),
           },
         },
       },
@@ -589,11 +608,13 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       {
         index: 0,
         href: 'text.xhtml',
+        cfiBase: '/6/2',
         properties: [],
       },
       {
         index: 1,
         href: 'painting.xhtml',
+        cfiBase: '/6/4',
         properties: [
           'rendition:flow-paginated',
           'rendition:layout-pre-paginated',
@@ -604,6 +625,7 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       {
         index: 2,
         href: 'next-text.xhtml',
+        cfiBase: '/6/6',
         properties: [],
       },
     ] as Section[];
@@ -611,6 +633,19 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
     sections[1].prev = () => sections[0];
     sections[1].next = () => sections[2];
     sections[2].prev = () => sections[1];
+    const textSectionDocument =
+      globalThis.document.implementation.createHTMLDocument('Text section');
+    const finalParagraph = textSectionDocument.createElement('p');
+    finalParagraph.textContent = 'Last readable text.';
+    textSectionDocument.body.append(
+      finalParagraph,
+      textSectionDocument.createTextNode('\n   '),
+    );
+    const finalTextLocation = 'epubcfi(/6/2!/4/8/2,:18,:19)';
+    sections[0].cfiFromRange = vi.fn((range: Range) => {
+      expect(range.toString()).toBe('.');
+      return finalTextLocation;
+    });
 
     const locationState: { current: unknown } = { current: undefined };
     const renditionSettings = {
@@ -631,13 +666,22 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
     });
     const next = vi.fn().mockResolvedValue(undefined);
     const previous = vi.fn().mockResolvedValue(undefined);
+    const display = vi.fn(async (target?: string) => {
+      if (target === finalTextLocation) {
+        locationState.current = sectionLocation(0, 'text.xhtml', 4, 4, 4);
+        contents.sectionIndex = 0;
+      } else if (target?.startsWith('epubcfi(')) {
+        locationState.current = sectionLocation(1, 'painting.xhtml');
+        contents.sectionIndex = 1;
+      }
+    });
     const rendition = {
       settings: renditionSettings,
       on: vi.fn((name: string, listener: (...args: unknown[]) => void) =>
         listeners.set(name, listener),
       ),
       off: vi.fn((name: string) => listeners.delete(name)),
-      display: vi.fn().mockResolvedValue(undefined),
+      display,
       next,
       prev: previous,
       currentLocation: vi.fn(() => locationState.current),
@@ -654,6 +698,9 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       destroy: vi.fn(),
     } as unknown as Rendition;
     const renderTo = vi.fn(() => rendition);
+    const spineContentHooks = new Set<
+      (document: Document, section: Section) => void | Promise<void>
+    >();
     const spine = {
       get: vi.fn((target?: string | number) => {
         if (target === undefined) {
@@ -665,7 +712,29 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
         const href = target.split('#', 1)[0];
         return sections.find((section) => section.href === href) ?? null;
       }),
-      hooks: { content: { register: vi.fn() } },
+      each: vi.fn((callback: (section: Section) => void) =>
+        sections.forEach(callback),
+      ),
+      hooks: {
+        content: {
+          register: vi.fn(
+            (
+              callback: (
+                document: Document,
+                section: Section,
+              ) => void | Promise<void>,
+            ) => spineContentHooks.add(callback),
+          ),
+          deregister: vi.fn(
+            (
+              callback: (
+                document: Document,
+                section: Section,
+              ) => void | Promise<void>,
+            ) => spineContentHooks.delete(callback),
+          ),
+        },
+      },
     };
     const book = {
       loaded: {
@@ -679,6 +748,21 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       },
       ready: Promise.resolve(),
       spine,
+      locations: {
+        _locations: [
+          'epubcfi(/6/2!/4/2/2:0)',
+          finalTextLocation,
+          'epubcfi(/6/4!/4/2/2:0)',
+          'epubcfi(/6/6!/4/2/2:0)',
+        ],
+        total: 4,
+        generate: vi.fn(async () => {
+          for (const callback of spineContentHooks) {
+            await callback(textSectionDocument, sections[0]);
+          }
+        }),
+        percentageFromCfi: vi.fn().mockReturnValue(0.25),
+      },
       renderTo,
       coverUrl: vi.fn().mockResolvedValue(null),
       destroy: vi.fn(),
@@ -729,27 +813,25 @@ describe('EpubReaderEngine mixed-layout compatibility', () => {
       }),
     );
 
-    previous.mockImplementationOnce(async () => {
-      locationState.current = sectionLocation(0, 'text.xhtml', 3, 4, 3);
-      contents.sectionIndex = 0;
-    });
-    next.mockImplementationOnce(async () => {
-      locationState.current = sectionLocation(0, 'text.xhtml', 4, 4, 4);
-    });
+    const paintingReturnTarget =
+      engine.currentLocator()?.locations?.fragments?.[0];
+    expect(paintingReturnTarget).toMatch(/^epubcfi\(/);
     await engine.previous();
-    expect(previous).toHaveBeenCalledTimes(1);
-    expect(next).toHaveBeenCalledTimes(1);
+    expect(display).toHaveBeenLastCalledWith(finalTextLocation);
+    expect(previous).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
     expect(engine.currentLocator()).toMatchObject({
       href: 'text.xhtml',
       locations: { progression: 1 },
     });
-
-    locationState.current = sectionLocation(1, 'painting.xhtml');
-    contents.sectionIndex = 1;
-    listeners.get('relocated')?.(locationState.current);
+    await engine.next();
+    expect(display).toHaveBeenLastCalledWith(paintingReturnTarget);
+    expect(next).not.toHaveBeenCalled();
+    expect(engine.currentLocator()).toMatchObject({ href: 'painting.xhtml' });
     await vi.waitFor(() =>
       expect(viewport.dataset['currentSectionLayout']).toBe('pre-paginated'),
     );
+
     next.mockClear();
     relocations.length = 0;
     contents.sectionIndex = 2;
