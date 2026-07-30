@@ -1,6 +1,6 @@
 # https://learn.chatgpt.com/docs/config-file/config-basic
 model="gpt-5.6-sol"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 
 # https://learn.chatgpt.com/docs/agent-approvals-security#run-without-approval-prompts
 sandbox_mode="workspace-write"
