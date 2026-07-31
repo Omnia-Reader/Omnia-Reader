@@ -12,6 +12,9 @@ test('serves the application shell with the production security policy', async (
   expect(headers['content-security-policy']).toContain(
     "frame-ancestors 'none'",
   );
+  expect(headers['content-security-policy']).toContain(
+    "img-src 'self' data: blob: https://avatars.githubusercontent.com",
+  );
   expect(headers['cross-origin-resource-policy']).toBe('same-origin');
   expect(headers['permissions-policy']).toContain('camera=()');
   expect(headers['permissions-policy']).toContain('microphone=()');

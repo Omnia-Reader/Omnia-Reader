@@ -175,6 +175,11 @@ test('the HTTP CSP preserves the application HTML fallback policy', async () => 
     /font-src 'self' data: blob: https:\/\/fonts\.gstatic\.com/,
     'EPUB fonts may use embedded URLs or the explicitly allowed Google Fonts host',
   );
+  assert.match(
+    WEB_CONTENT_SECURITY_POLICY,
+    /img-src 'self' data: blob: https:\/\/avatars\.githubusercontent\.com/,
+    'GitHub account avatars must remain visible in synchronization settings',
+  );
 
   const tauriConfig = JSON.parse(
     await readFile(
@@ -186,6 +191,11 @@ test('the HTTP CSP preserves the application HTML fallback policy', async () => 
     tauriConfig.app.security.csp,
     /font-src 'self' data: blob: https:\/\/fonts\.gstatic\.com/,
     'Tauri must preserve embedded and explicitly allowed Google font rendering',
+  );
+  assert.match(
+    tauriConfig.app.security.csp,
+    /img-src 'self' data: blob: https:\/\/avatars\.githubusercontent\.com/,
+    'Tauri must allow GitHub account avatars in synchronization settings',
   );
 });
 

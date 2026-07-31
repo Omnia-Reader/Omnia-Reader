@@ -5,7 +5,7 @@ export const WEB_CONTENT_SECURITY_POLICY = [
   "font-src 'self' data: blob: https://fonts.gstatic.com",
   "form-action 'none'",
   "frame-src 'self' blob:",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://avatars.githubusercontent.com",
   "object-src 'none'",
   "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline' blob:",
