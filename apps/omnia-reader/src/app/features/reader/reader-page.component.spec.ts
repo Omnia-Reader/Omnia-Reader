@@ -40,6 +40,7 @@ describe('ReaderPageComponent annotations', () => {
     });
     const callbacks: {
       selection?: (selection: PublicationSelection | null) => void;
+      selectionActionRequest?: (selection: PublicationSelection) => void;
       relocation?: (locator: PublicationLocator) => void;
       annotationActivation?: (annotationId: string) => void;
       navigation?: (direction: 'previous' | 'next') => void;
@@ -153,6 +154,14 @@ describe('ReaderPageComponent annotations', () => {
         callbacks.selection = listener;
         return () => {
           delete callbacks.selection;
+        };
+      },
+      onSelectionActionRequested: (
+        listener: (selection: PublicationSelection) => void,
+      ) => {
+        callbacks.selectionActionRequest = listener;
+        return () => {
+          delete callbacks.selectionActionRequest;
         };
       },
       onAnnotationActivated: (listener: (annotationId: string) => void) => {
@@ -1141,7 +1150,7 @@ describe('ReaderPageComponent annotations', () => {
       'https://example.com/reference',
     );
 
-    callbacks.selection?.({
+    const publicationSelection: PublicationSelection = {
       locator: {
         href: '',
         type: 'application/pdf',
@@ -1152,7 +1161,8 @@ describe('ReaderPageComponent annotations', () => {
         },
         text: { highlight: 'Important' },
       },
-    });
+    };
+    callbacks.selection?.(publicationSelection);
     expect(fixture.componentInstance.pendingSelection).toEqual(
       expect.objectContaining({
         locator: expect.objectContaining({ text: { highlight: 'Important' } }),
@@ -1160,7 +1170,7 @@ describe('ReaderPageComponent annotations', () => {
     );
     expect(
       fixture.nativeElement.querySelector(
-        '[role="dialog"][aria-labelledby="annotation-editor-title"]',
+        '[role="region"][aria-labelledby="annotation-editor-title"]',
       ),
     ).toBeNull();
     const selectionContextMenu = new MouseEvent('contextmenu', {
@@ -1173,24 +1183,277 @@ describe('ReaderPageComponent annotations', () => {
     fixture.detectChanges();
     expect(
       fixture.nativeElement.querySelector(
-        '[role="dialog"][aria-labelledby="annotation-editor-title"]',
+        '[role="region"][aria-labelledby="annotation-editor-title"]',
       )?.textContent,
     ).toContain('New annotation');
-    fixture.componentInstance.annotationColor = 'pink';
-    fixture.componentInstance.annotationStyle = 'strikethrough';
+    expect(
+      fixture.nativeElement.querySelector(
+        '[role="region"][aria-labelledby="annotation-editor-title"]',
+      )?.textContent,
+    ).not.toContain('Annotation tools');
+    expect(
+      fixture.nativeElement.querySelector(
+        '[role="region"][aria-labelledby="annotation-editor-title"]',
+      )?.textContent,
+    ).not.toContain('Format');
+    fixture.componentInstance.cancelAnnotationEditor();
+    await Promise.resolve();
+    callbacks.selection?.(publicationSelection);
+    callbacks.selectionActionRequest?.(publicationSelection);
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[role="region"][aria-labelledby="annotation-editor-title"]',
+      )?.textContent,
+    ).toContain('New annotation');
+    let colorSelectionEditor = fixture.nativeElement.querySelector(
+      '[role="region"][aria-labelledby="annotation-editor-title"]',
+    ) as HTMLElement;
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="reader-toolbar"]')
+        ?.contains(colorSelectionEditor),
+    ).toBe(true);
+    callbacks.selection?.(null);
+    await Promise.resolve();
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="annotation-dashboard"]',
+      ),
+    ).toBeNull();
+    callbacks.selection?.(publicationSelection);
+    callbacks.selectionActionRequest?.(publicationSelection);
+    fixture.detectChanges();
+    colorSelectionEditor = fixture.nativeElement.querySelector(
+      '[role="region"][aria-labelledby="annotation-editor-title"]',
+    ) as HTMLElement;
+    const formattingButton = (label: string): HTMLButtonElement => {
+      const button = colorSelectionEditor.querySelector(
+        `button[aria-label="${label}"]`,
+      );
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error(`Missing ${label} annotation formatting button`);
+      }
+      return button;
+    };
+    const colorTrigger = (label: string): HTMLButtonElement => {
+      const button = colorSelectionEditor.querySelector(
+        `button[aria-label^="${label} color:"]`,
+      );
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error(`Missing ${label} annotation color button`);
+      }
+      return button;
+    };
+    const paletteColor = (
+      formatLabel: string,
+      colorLabel: string,
+    ): HTMLButtonElement => {
+      const button = globalThis.document.querySelector(
+        `button[aria-label="${colorLabel} ${formatLabel.toLocaleLowerCase()} color"]`,
+      );
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error(
+          `Missing ${colorLabel} ${formatLabel.toLocaleLowerCase()} color`,
+        );
+      }
+      return button;
+    };
+    const chooseColor = (formatLabel: string, colorLabel: string): void => {
+      colorTrigger(formatLabel).click();
+      fixture.detectChanges();
+      paletteColor(formatLabel, colorLabel).click();
+      fixture.detectChanges();
+    };
+    const highlightButton = formattingButton('Highlight');
+    const underlineButton = formattingButton('Underline');
+    expect(formattingButton('Strikethrough')).toBeDefined();
+    expect(highlightButton.getAttribute('aria-pressed')).toBe('false');
+    expect(highlightButton.classList).not.toContain('bg-[#d9eaf7]');
+    const highlightColor = colorTrigger('Highlight');
+    const underlineColor = colorTrigger('Underline');
+    const strikethroughColor = colorTrigger('Strikethrough');
+    const highlightControl = colorSelectionEditor.querySelector(
+      '[data-testid="annotation-highlight-control"]',
+    ) as HTMLElement;
+    expect(highlightControl.querySelectorAll(':scope > button')).toHaveLength(
+      2,
+    );
+    expect(
+      highlightControl.querySelector(
+        'button[aria-label^="Highlight color:"] > span',
+      ),
+    ).toBeNull();
+    expect(
+      highlightControl.querySelectorAll(
+        '[data-testid="annotation-color-chevron"]',
+      ),
+    ).toHaveLength(1);
+    expect(
+      highlightControl.querySelector(
+        'button[aria-label^="Highlight color:"] mat-icon',
+      ),
+    ).toBeNull();
+    expect(
+      highlightControl.querySelector('svg path[stroke="#F0E442"]'),
+    ).not.toBeNull();
+    highlightButton.focus();
+    highlightButton.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(globalThis.document.activeElement).toBe(highlightColor);
+    expect(highlightColor.getAttribute('aria-label')).toBe(
+      'Highlight color: Yellow',
+    );
+    expect(underlineColor.getAttribute('aria-label')).toBe(
+      'Underline color: Sky blue',
+    );
+    expect(strikethroughColor.getAttribute('aria-label')).toBe(
+      'Strikethrough color: Vermilion',
+    );
+    const noteButton = colorSelectionEditor.querySelector(
+      'button[aria-controls="annotation-note"]',
+    ) as HTMLButtonElement;
+    expect(noteButton.getAttribute('aria-expanded')).toBe('false');
+    expect(colorSelectionEditor.querySelector('#annotation-note')).toBeNull();
+    noteButton.click();
+    fixture.detectChanges();
+    expect(noteButton.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      colorSelectionEditor.querySelector('#annotation-note'),
+    ).not.toBeNull();
+    highlightColor.click();
+    fixture.detectChanges();
+    expect(
+      Array.from(
+        globalThis.document.querySelectorAll(
+          'button[aria-label$="highlight color"]',
+        ),
+        (button) => button.getAttribute('aria-label'),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        'Orange highlight color',
+        'Sky blue highlight color',
+        'Bluish green highlight color',
+        'Yellow highlight color',
+        'Dark blue highlight color',
+        'Vermilion highlight color',
+        'Purple highlight color',
+        'Brown highlight color',
+        'Gray highlight color',
+      ]),
+    );
+    expect(
+      globalThis.document.querySelectorAll(
+        'button[aria-label$="highlight color"]',
+      ),
+    ).toHaveLength(9);
+    expect(
+      globalThis.document.querySelector(
+        'button[aria-label="Black highlight color"]',
+      ),
+    ).toBeNull();
+    expect(
+      paletteColor('Highlight', 'Yellow').querySelector('mat-icon'),
+    ).toBeNull();
+    highlightColor.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    expect(
+      globalThis.document.querySelector(
+        '[aria-label="Highlight color palette"]',
+      ),
+    ).toBeNull();
+    highlightColor.click();
+    fixture.detectChanges();
+    expect(highlightColor.disabled).toBe(false);
+    expect(underlineColor.disabled).toBe(false);
+    const customHighlightColor =
+      globalThis.document.querySelector<HTMLInputElement>(
+        'input[aria-label="Custom highlight color"]',
+      );
+    expect(customHighlightColor?.value).toBe('#f0e442');
+    if (!customHighlightColor) {
+      throw new Error('Missing custom highlight color picker');
+    }
+    customHighlightColor.value = '#123456';
+    customHighlightColor.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(highlightColor.getAttribute('aria-label')).toBe(
+      'Highlight color: Custom #123456',
+    );
+    paletteColor('Highlight', 'Purple').click();
+    fixture.detectChanges();
+    expect(underlineColor.disabled).toBe(false);
+    expect(strikethroughColor.disabled).toBe(false);
+    underlineColor.click();
+    fixture.detectChanges();
+    expect(paletteColor('Underline', 'Black')).toBeDefined();
+    paletteColor('Underline', 'Dark blue').click();
+    fixture.detectChanges();
+    chooseColor('Strikethrough', 'Vermilion');
+    expect(highlightColor.getAttribute('aria-label')).toBe(
+      'Highlight color: Purple',
+    );
+    expect(underlineColor.getAttribute('aria-label')).toBe(
+      'Underline color: Dark blue',
+    );
+    expect(strikethroughColor.getAttribute('aria-label')).toBe(
+      'Strikethrough color: Vermilion',
+    );
+    const styleAutosave = vi
+      .spyOn(fixture.componentInstance, 'saveAnnotation')
+      .mockResolvedValue();
+    underlineButton.click();
+    await vi.waitFor(() => expect(styleAutosave).toHaveBeenCalledOnce());
+    styleAutosave.mockRestore();
+    fixture.componentInstance.annotationStyles = new Set();
+    fixture.detectChanges();
     fixture.componentInstance.annotationNote = 'Revisit this evidence.';
-    expect(fixture.componentInstance.annotationColor).toBe('pink');
+    fixture.componentInstance.annotationStyles = new Set([
+      'highlight',
+      'underline',
+      'strikethrough',
+    ]);
     expect(fixture.componentInstance.annotationNote).toBe(
       'Revisit this evidence.',
     );
+    const shortcutSave = vi
+      .spyOn(fixture.componentInstance, 'saveAnnotation')
+      .mockResolvedValue();
+    const saveShortcut = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      ctrlKey: true,
+      cancelable: true,
+    });
+    fixture.componentInstance.onAnnotationDashboardKeydown(saveShortcut);
+    expect(saveShortcut.defaultPrevented).toBe(true);
+    expect(shortcutSave).toHaveBeenCalledOnce();
+    shortcutSave.mockRestore();
     await fixture.componentInstance.saveAnnotation();
     fixture.detectChanges();
 
     expect(saveAnnotation).toHaveBeenCalledWith(
       expect.objectContaining({
         bookId: BOOK.id,
-        color: 'pink',
-        style: 'strikethrough',
+        color: 'purple',
+        style: 'highlight',
+        decorations: [
+          { style: 'highlight', color: 'purple' },
+          { style: 'underline', color: 'dark-blue' },
+          { style: 'strikethrough', color: 'vermilion' },
+        ],
         note: 'Revisit this evidence.',
         locator: expect.objectContaining({
           text: { highlight: 'Important' },
@@ -1201,9 +1464,14 @@ describe('ReaderPageComponent annotations', () => {
       expect.objectContaining({ entity: 'annotation' }),
     );
     expect(setAnnotations).toHaveBeenLastCalledWith([
-      expect.objectContaining({ color: 'pink' }),
+      expect.objectContaining({ color: 'purple' }),
     ]);
-    const storedAnnotation = saveAnnotation.mock.calls[0]?.[0] as
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="annotation-dashboard"]',
+      ),
+    ).toBeNull();
+    let storedAnnotation = saveAnnotation.mock.calls[0]?.[0] as
       | PublicationAnnotation
       | undefined;
     expect(storedAnnotation).toBeDefined();
@@ -1216,7 +1484,30 @@ describe('ReaderPageComponent annotations', () => {
       )?.textContent,
     ).toContain('1');
     expect(fixture.componentInstance.annotationCount('strikethrough')).toBe(1);
+    expect(fixture.componentInstance.annotationCount('underline')).toBe(1);
     expect(fixture.componentInstance.annotationCount('notes')).toBe(1);
+    await fixture.componentInstance.removeAnnotationDecoration(
+      storedAnnotation,
+      'underline',
+    );
+    fixture.detectChanges();
+    storedAnnotation = saveAnnotation.mock.calls[
+      saveAnnotation.mock.calls.length - 1
+    ]?.[0] as PublicationAnnotation | undefined;
+    expect(storedAnnotation).toEqual(
+      expect.objectContaining({
+        decorations: [
+          { style: 'highlight', color: 'purple' },
+          { style: 'strikethrough', color: 'vermilion' },
+        ],
+      }),
+    );
+    if (!storedAnnotation) {
+      throw new Error('Expected the annotation after removing underline');
+    }
+    expect(fixture.componentInstance.annotationCount('highlight')).toBe(1);
+    expect(fixture.componentInstance.annotationCount('underline')).toBe(0);
+    expect(fixture.componentInstance.annotationCount('strikethrough')).toBe(1);
     fixture.componentInstance.annotationQuery = 'evidence';
     fixture.componentInstance.setAnnotationFilter('notes');
     expect(fixture.componentInstance.filteredAnnotations).toEqual([
@@ -1307,6 +1598,9 @@ describe('ReaderPageComponent annotations', () => {
       Buffer.concat(exportedAnnotationBytes.map((chunk) => Buffer.from(chunk))),
     );
     expect(exportedAnnotations).toContain('Revisit this evidence.');
+    expect(exportedAnnotations).toContain(
+      'Highlight · Purple + Strikethrough · Vermilion',
+    );
     expect(annotationsPanel.textContent).toContain(
       '1 annotation saved as Annotation fixture-highlights-and-notes.md.',
     );
@@ -1315,11 +1609,13 @@ describe('ReaderPageComponent annotations', () => {
     callbacks.annotationActivation?.(storedAnnotation.id);
     fixture.detectChanges();
     const annotationEditor = fixture.nativeElement.querySelector(
-      '[role="dialog"][aria-labelledby="annotation-editor-title"]',
+      '[role="region"][aria-labelledby="annotation-editor-title"]',
     ) as HTMLElement;
     expect(annotationEditor.textContent).toContain('Edit annotation');
-    expect(annotationEditor.textContent).toContain('Delete annotation');
-    expect(fixture.componentInstance.annotationStyle).toBe('strikethrough');
+    expect(
+      annotationEditor.querySelector('button[aria-label="Delete annotation"]'),
+    ).not.toBeNull();
+    expect(fixture.componentInstance.annotationStyle).toBe('highlight');
 
     await fixture.componentInstance.removeEditingAnnotation();
     fixture.detectChanges();

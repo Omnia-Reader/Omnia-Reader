@@ -8,12 +8,16 @@ import type {
   Section,
 } from '@likecoin/epub-ts';
 import {
+  annotationDecorations,
   BookSource,
   DEFAULT_EPUB_READER_PREFERENCES,
   EpubReaderPreferences,
   keyboardNavigationDirection,
   keyboardReaderCommand,
   PublicationAnnotation,
+  PublicationAnnotationColor,
+  PublicationAnnotationStyle,
+  publicationAnnotationColorHex,
   PublicationLayout,
   PublicationLocator,
   PublicationMetadata,
@@ -45,8 +49,6 @@ import {
 export type EpubRuntimeLoader = () => Promise<
   typeof import('@likecoin/epub-ts')
 >;
-
-type EpubAnnotationType = 'highlight' | 'underline';
 
 const WHEEL_NAVIGATION_INTERVAL_MS = 400;
 const EPUB_LOCATION_BREAK_SIZE = 150;
@@ -93,11 +95,6 @@ export class EpubReaderEngine implements ReaderEngine {
     ...DEFAULT_EPUB_READER_PREFERENCES,
   };
   private annotations: readonly PublicationAnnotation[] = [];
-  private appliedAnnotationDecorations: Array<{
-    readonly cfi: string;
-    readonly type: EpubAnnotationType;
-  }> = [];
-  private readonly adjustedStrikethroughMarks = new WeakSet<object>();
   private selectedDocument: Document | null = null;
   private contentObserver: MutationObserver | null = null;
   private selectionMonitor: ReturnType<typeof setInterval> | null = null;
@@ -120,6 +117,9 @@ export class EpubReaderEngine implements ReaderEngine {
   private readonly selectionListeners = new Set<
     (selection: PublicationSelection | null) => void
   >();
+  private readonly selectionActionRequestListeners = new Set<
+    (selection: PublicationSelection) => void
+  >();
   private readonly navigationRequestListeners = new Set<
     (direction: ReaderNavigationDirection) => void
   >();
@@ -131,6 +131,9 @@ export class EpubReaderEngine implements ReaderEngine {
   >();
   private readonly annotationActivationListeners = new Set<
     (annotationId: string) => void
+  >();
+  private readonly annotationGroupActivationListeners = new Set<
+    (annotationIds: readonly string[]) => void
   >();
   private readonly externalLinkRequestListeners = new Set<
     (url: string) => void
@@ -157,6 +160,22 @@ export class EpubReaderEngine implements ReaderEngine {
   private readonly contentContextMenuHandlers = new Map<
     Document,
     EventListener
+  >();
+  private readonly contentAnnotationActivationHandlers = new Map<
+    Document,
+    EventListener
+  >();
+  private readonly contentAnnotationHighlightNames = new Map<
+    Document,
+    Set<string>
+  >();
+  private readonly contentAnnotationRanges = new Map<
+    Document,
+    Map<string, Range>
+  >();
+  private readonly contentAnnotationStyles = new Map<
+    Document,
+    HTMLStyleElement
   >();
   private readonly contentLinkHandlers = new Map<Document, EventListener>();
   private readonly contentTouchNavigationGestures = new Map<
@@ -396,11 +415,55 @@ export class EpubReaderEngine implements ReaderEngine {
       }
       event.preventDefault();
       this.notifySelection(selection);
+      this.notifySelectionActionRequested(selection);
     };
     const handledSelectionActionEvents = new WeakSet<Event>();
     this.installSelectionActionHandler(document, contextMenuHandler);
     this.contentContextMenuHandlers.set(document, contextMenuHandler);
+    const annotationActivationHandler = (event: Event): void => {
+      const marker = (event.target as Element | null)?.closest<HTMLElement>(
+        '[data-omnia-annotation-note-id]',
+      );
+      const markerAnnotationId = marker?.dataset['omniaAnnotationNoteId'];
+      if (markerAnnotationId) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.notifyAnnotationGroupActivated([markerAnnotationId]);
+        return;
+      }
+      if (selectionHasText(document.defaultView?.getSelection())) {
+        return;
+      }
+      const mouseEvent = event as MouseEvent;
+      if (
+        !Number.isFinite(mouseEvent.clientX) ||
+        !Number.isFinite(mouseEvent.clientY)
+      ) {
+        return;
+      }
+      const annotationIds = this.annotationIdsAtPoint(
+        document,
+        mouseEvent.clientX,
+        mouseEvent.clientY,
+      );
+      if (annotationIds.length === 0) {
+        if (event.type === 'click') {
+          this.notifySelection(null);
+        }
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      this.notifyAnnotationGroupActivated(annotationIds);
+    };
+    document.addEventListener('click', annotationActivationHandler);
+    document.addEventListener('contextmenu', annotationActivationHandler);
+    this.contentAnnotationActivationHandlers.set(
+      document,
+      annotationActivationHandler,
+    );
     this.contentDocuments.add(document);
+    this.applyAnnotationsToDocument(document);
   };
   private readonly handleContentKeydown = (event: KeyboardEvent): void => {
     if (this.handledKeyboardEvents.has(event)) {
@@ -685,6 +748,10 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentSelectionChangeHandlers.clear();
     this.contentSelectionTimeouts.clear();
     this.contentContextMenuHandlers.clear();
+    this.contentAnnotationActivationHandlers.clear();
+    this.contentAnnotationHighlightNames.clear();
+    this.contentAnnotationRanges.clear();
+    this.contentAnnotationStyles.clear();
     this.contentLinkHandlers.clear();
     this.contentTouchNavigationGestures.clear();
     this.contentTouchEventNavigationGestures.clear();
@@ -724,7 +791,6 @@ export class EpubReaderEngine implements ReaderEngine {
     this.currentSectionFlow = 'paginated';
     this.readerThemeCss = '';
     this.annotations = [];
-    this.appliedAnnotationDecorations = [];
     this.selectedDocument = null;
     this.capturedSelectionDocument = null;
     this.capturedSelectionKey = null;
@@ -763,9 +829,23 @@ export class EpubReaderEngine implements ReaderEngine {
     return () => this.selectionListeners.delete(listener);
   }
 
+  onSelectionActionRequested(
+    listener: (selection: PublicationSelection) => void,
+  ): () => void {
+    this.selectionActionRequestListeners.add(listener);
+    return () => this.selectionActionRequestListeners.delete(listener);
+  }
+
   onAnnotationActivated(listener: (annotationId: string) => void): () => void {
     this.annotationActivationListeners.add(listener);
     return () => this.annotationActivationListeners.delete(listener);
+  }
+
+  onAnnotationGroupActivated(
+    listener: (annotationIds: readonly string[]) => void,
+  ): () => void {
+    this.annotationGroupActivationListeners.add(listener);
+    return () => this.annotationGroupActivationListeners.delete(listener);
   }
 
   onNavigationRequested(
@@ -1177,6 +1257,13 @@ export class EpubReaderEngine implements ReaderEngine {
     if (contextMenuHandler) {
       this.removeSelectionActionHandler(document, contextMenuHandler);
     }
+    const annotationActivationHandler =
+      this.contentAnnotationActivationHandlers.get(document);
+    if (annotationActivationHandler) {
+      document.removeEventListener('click', annotationActivationHandler);
+      document.removeEventListener('contextmenu', annotationActivationHandler);
+    }
+    this.clearAnnotationHighlights(document);
     const linkHandler = this.contentLinkHandlers.get(document);
     if (linkHandler) {
       document.removeEventListener('click', linkHandler, true);
@@ -1227,6 +1314,7 @@ export class EpubReaderEngine implements ReaderEngine {
     this.contentSelectionChangeHandlers.delete(document);
     this.contentSelectionTimeouts.delete(document);
     this.contentContextMenuHandlers.delete(document);
+    this.contentAnnotationActivationHandlers.delete(document);
     this.contentLinkHandlers.delete(document);
     this.contentTouchNavigationGestures.delete(document);
     this.contentTouchEventNavigationGestures.delete(document);
@@ -1809,18 +1897,29 @@ export class EpubReaderEngine implements ReaderEngine {
   }
 
   private applyAnnotationsToRendition(): void {
-    if (!this.rendition) {
+    for (const document of this.contentDocuments) {
+      this.applyAnnotationsToDocument(document);
+    }
+  }
+
+  private applyAnnotationsToDocument(document: Document): void {
+    this.clearAnnotationHighlights(document);
+    const contents = this.contentsByDocument.get(document);
+    const view = document.defaultView as
+      | (Window & { CSS?: typeof CSS; Highlight?: typeof Highlight })
+      | null;
+    if (
+      !contents ||
+      !view?.CSS?.highlights ||
+      !view.Highlight ||
+      !document.head
+    ) {
       return;
     }
-    for (const decoration of this.appliedAnnotationDecorations) {
-      try {
-        this.rendition.annotations.remove(decoration.cfi, decoration.type);
-      } catch {
-        // A stale CFI must not prevent the remaining annotations from rendering.
-      }
-    }
-    this.appliedAnnotationDecorations = [];
 
+    const names = new Set<string>();
+    const ranges = new Map<string, Range>();
+    const rules: string[] = [];
     for (const annotation of this.annotations) {
       const cfi = annotation.locator.locations?.fragments?.find((fragment) =>
         fragment.startsWith('epubcfi('),
@@ -1829,104 +1928,104 @@ export class EpubReaderEngine implements ReaderEngine {
         continue;
       }
       try {
-        const activateAnnotation: EventListener = (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          for (const listener of this.annotationActivationListeners) {
-            listener(annotation.id);
-          }
-        };
-        const style = annotation.style ?? 'highlight';
-        const annotationType: EpubAnnotationType =
-          style === 'highlight' ? 'highlight' : 'underline';
-        const renderedAnnotation =
-          annotationType === 'highlight'
-            ? this.rendition.annotations.highlight(
-                cfi,
-                { annotationId: annotation.id },
-                activateAnnotation,
-                `omnia-annotation-${annotation.color}`,
-                EPUB_HIGHLIGHT_STYLES[annotation.color],
-              )
-            : this.rendition.annotations.underline(
-                cfi,
-                { annotationId: annotation.id },
-                activateAnnotation,
-                `omnia-annotation-${annotation.color}-${style}`,
-                EPUB_LINE_STYLES[annotation.color],
-              );
-        const decorateMark = (mark: unknown): void => {
-          this.decorateAnnotationMark(mark, annotation, activateAnnotation);
-        };
-        renderedAnnotation?.on('attach', decorateMark);
-        decorateMark(renderedAnnotation?.mark);
-        this.appliedAnnotationDecorations.push({
-          cfi,
-          type: annotationType,
-        });
+        const range = contents.range(cfi);
+        if (
+          range.collapsed ||
+          range.startContainer.ownerDocument !== document ||
+          range.endContainer.ownerDocument !== document
+        ) {
+          continue;
+        }
+        ranges.set(annotation.id, range);
+        appendEpubNoteMarker(document, range, annotation);
+        for (const decoration of annotationDecorations(annotation)) {
+          const name = annotationHighlightName(annotation.id, decoration.style);
+          view.CSS.highlights.set(name, new view.Highlight(range));
+          names.add(name);
+          rules.push(
+            annotationHighlightRule(name, decoration.style, decoration.color),
+          );
+        }
       } catch {
         // Keep a stale or malformed anchor in storage for later repair.
       }
     }
+    this.contentAnnotationHighlightNames.set(document, names);
+    this.contentAnnotationRanges.set(document, ranges);
+    if (rules.length > 0) {
+      const style = document.createElement('style');
+      style.dataset['omniaAnnotationHighlights'] = 'true';
+      style.textContent = rules.join('\n');
+      document.head.append(style);
+      this.contentAnnotationStyles.set(document, style);
+    }
   }
 
-  private decorateAnnotationMark(
-    mark: unknown,
-    annotation: PublicationAnnotation,
-    activate: EventListener,
+  private clearAnnotationHighlights(document: Document): void {
+    const view = document.defaultView as (Window & { CSS?: typeof CSS }) | null;
+    for (const name of this.contentAnnotationHighlightNames.get(document) ??
+      []) {
+      view?.CSS?.highlights?.delete(name);
+    }
+    this.contentAnnotationStyles.get(document)?.remove();
+    document
+      .querySelectorAll<HTMLElement>('[data-omnia-annotation-note-id]')
+      .forEach((marker) => marker.remove());
+    this.contentAnnotationHighlightNames.delete(document);
+    this.contentAnnotationRanges.delete(document);
+    this.contentAnnotationStyles.delete(document);
+  }
+
+  private annotationIdsAtPoint(
+    document: Document,
+    clientX: number,
+    clientY: number,
+  ): readonly string[] {
+    const ranges = this.contentAnnotationRanges.get(document);
+    if (!ranges) {
+      return [];
+    }
+    return this.annotations
+      .filter((annotation) => {
+        const range = ranges.get(annotation.id);
+        return (
+          range !== undefined && rangeContainsPoint(range, clientX, clientY)
+        );
+      })
+      .map((annotation) => annotation.id);
+  }
+
+  private notifyAnnotationGroupActivated(
+    annotationIds: readonly string[],
   ): void {
-    const renderedMark = mark as
-      | {
-          element?: Element;
-          render?: () => void;
-        }
-      | null
-      | undefined;
-    const element = renderedMark?.element;
-    if (!element) {
+    if (annotationIds.length === 0) {
       return;
     }
-    if (annotation.style === 'strikethrough' && renderedMark) {
-      this.installStrikethroughPositioning(renderedMark);
-    }
-    element.setAttribute('role', 'button');
-    element.setAttribute('tabindex', '0');
-    element.setAttribute(
-      'aria-label',
-      annotation.locator.text?.highlight
-        ? `Edit ${annotationStyleLabel(annotation)}: ${annotation.locator.text.highlight.slice(0, 120)}`
-        : `Edit ${annotationStyleLabel(annotation)}`,
-    );
-    element.addEventListener('contextmenu', activate);
-    element.addEventListener('keydown', (event) => {
-      const keyboardEvent = event as KeyboardEvent;
-      if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') {
-        activate(event);
+    if (this.annotationGroupActivationListeners.size > 0) {
+      for (const listener of this.annotationGroupActivationListeners) {
+        listener(annotationIds);
       }
-    });
-  }
-
-  private installStrikethroughPositioning(mark: {
-    element?: Element;
-    render?: () => void;
-  }): void {
-    if (this.adjustedStrikethroughMarks.has(mark)) {
-      positionStrikethroughLines(mark.element);
       return;
     }
-    this.adjustedStrikethroughMarks.add(mark);
-    const render = mark.render;
-    if (render) {
-      mark.render = () => {
-        render.call(mark);
-        positionStrikethroughLines(mark.element);
-      };
+    const annotationId = annotationIds[0];
+    if (!annotationId) {
+      return;
     }
-    positionStrikethroughLines(mark.element);
+    for (const listener of this.annotationActivationListeners) {
+      listener(annotationId);
+    }
   }
 
   private notifySelection(selection: PublicationSelection | null): void {
     for (const listener of this.selectionListeners) {
+      listener(selection);
+    }
+  }
+
+  private notifySelectionActionRequested(
+    selection: PublicationSelection,
+  ): void {
+    for (const listener of this.selectionActionRequestListeners) {
       listener(selection);
     }
   }
@@ -2062,6 +2161,7 @@ export class EpubReaderEngine implements ReaderEngine {
           }
           event.preventDefault();
           this.notifySelection(selection);
+          this.notifySelectionActionRequested(selection);
         };
         frame.addEventListener('load', loadHandler);
         frame.addEventListener('mousedown', selectionActionHandler, true);
@@ -2159,90 +2259,115 @@ const EPUB_THEME_PALETTES = {
   dark: { background: '#171717', foreground: '#e7e5e4' },
 } as const;
 
-const EPUB_HIGHLIGHT_STYLES = {
-  yellow: {
-    fill: '#facc15',
-    'fill-opacity': '0.42',
-    'pointer-events': 'all',
-    cursor: 'pointer',
-  },
-  green: {
-    fill: '#4ade80',
-    'fill-opacity': '0.38',
-    'pointer-events': 'all',
-    cursor: 'pointer',
-  },
-  blue: {
-    fill: '#60a5fa',
-    'fill-opacity': '0.38',
-    'pointer-events': 'all',
-    cursor: 'pointer',
-  },
-  pink: {
-    fill: '#f472b6',
-    'fill-opacity': '0.38',
-    'pointer-events': 'all',
-    cursor: 'pointer',
-  },
-} as const;
-
-const EPUB_LINE_COLORS = {
-  yellow: '#ca8a04',
-  green: '#16a34a',
-  blue: '#2563eb',
-  pink: '#db2777',
-} as const;
-
-const EPUB_LINE_STYLES: Record<
-  keyof typeof EPUB_LINE_COLORS,
-  Record<string, string>
-> = {
-  yellow: epubLineStyle(EPUB_LINE_COLORS.yellow),
-  green: epubLineStyle(EPUB_LINE_COLORS.green),
-  blue: epubLineStyle(EPUB_LINE_COLORS.blue),
-  pink: epubLineStyle(EPUB_LINE_COLORS.pink),
-};
-
-function epubLineStyle(stroke: string): Record<string, string> {
-  return {
-    fill: 'transparent',
-    stroke,
-    'stroke-width': '2',
-    'stroke-linecap': 'round',
-    'pointer-events': 'all',
-    cursor: 'pointer',
-  };
+function annotationHighlightName(
+  annotationId: string,
+  style: PublicationAnnotationStyle,
+): string {
+  const encodedId = Array.from(annotationId, (character) =>
+    character.codePointAt(0)?.toString(16),
+  ).join('-');
+  return `omnia-annotation-${encodedId}-${style}`;
 }
 
-function positionStrikethroughLines(element: Element | undefined): void {
-  if (!element) {
+function annotationHighlightRule(
+  name: string,
+  style: PublicationAnnotationStyle,
+  color: PublicationAnnotationColor,
+): string {
+  const resolvedColor = publicationAnnotationColorHex(color);
+  if (style === 'highlight') {
+    return `::highlight(${name}) { background-color: ${resolvedColor}66; }`;
+  }
+  const line = style === 'underline' ? 'underline' : 'line-through';
+  const offset = style === 'underline' ? ' text-underline-offset: 0.12em;' : '';
+  return `::highlight(${name}) { text-decoration-line: ${line}; text-decoration-color: ${resolvedColor}; text-decoration-style: solid; text-decoration-thickness: 0.12em;${offset} }`;
+}
+
+function appendEpubNoteMarker(
+  document: Document,
+  range: Range,
+  annotation: PublicationAnnotation,
+): void {
+  const note = annotation.note?.trim();
+  const view = document.defaultView;
+  const host = document.body;
+  if (!note || !view || !host) {
     return;
   }
-  for (const line of element.querySelectorAll('line')) {
-    const rectangle = line.previousElementSibling;
-    if (rectangle?.localName !== 'rect') {
-      continue;
-    }
-    const top = Number(rectangle.getAttribute('y'));
-    const height = Number(rectangle.getAttribute('height'));
-    if (!Number.isFinite(top) || !Number.isFinite(height)) {
-      continue;
-    }
-    const middle = String(top + height / 2);
-    line.setAttribute('y1', middle);
-    line.setAttribute('y2', middle);
+  const rectangles = Array.from(range.getClientRects()).filter(
+    (rectangle) => rectangle.width > 0 && rectangle.height > 0,
+  );
+  const rectangle =
+    rectangles[rectangles.length - 1] ?? range.getBoundingClientRect();
+  if (!Number.isFinite(rectangle.right) || !Number.isFinite(rectangle.top)) {
+    return;
   }
+  const marker = annotationNoteMarker(document, annotation);
+  Object.assign(marker.style, {
+    left: `${Math.max(0, rectangle.right + view.scrollX + 4)}px`,
+    top: `${Math.max(0, rectangle.top + view.scrollY - 2)}px`,
+  });
+  host.append(marker);
 }
 
-function annotationStyleLabel(annotation: PublicationAnnotation): string {
-  switch (annotation.style) {
-    case 'underline':
-      return 'underline';
-    case 'strikethrough':
-      return 'strikethrough';
-    default:
-      return 'highlight';
+function annotationNoteMarker(
+  document: Document,
+  annotation: PublicationAnnotation,
+): HTMLButtonElement {
+  const marker = document.createElement('button');
+  marker.type = 'button';
+  marker.dataset['omniaAnnotationNoteId'] = annotation.id;
+  marker.setAttribute(
+    'aria-label',
+    `Open note: ${annotation.note?.trim().slice(0, 120)}`,
+  );
+  marker.title = 'Open note';
+  marker.textContent = '📝';
+  Object.assign(marker.style, {
+    position: 'absolute',
+    display: 'grid',
+    placeItems: 'center',
+    width: '24px',
+    height: '24px',
+    padding: '0',
+    border: '1px solid #d97706',
+    borderRadius: '9999px',
+    background: '#fef3c7',
+    color: '#92400e',
+    fontSize: '14px',
+    lineHeight: '1',
+    cursor: 'pointer',
+    pointerEvents: 'auto',
+    zIndex: '2147483646',
+    boxShadow: '0 1px 3px rgb(0 0 0 / 25%)',
+  });
+  return marker;
+}
+
+function rectangleContainsPoint(
+  rectangle: DOMRect,
+  clientX: number,
+  clientY: number,
+): boolean {
+  return (
+    clientX >= rectangle.left &&
+    clientX <= rectangle.right &&
+    clientY >= rectangle.top &&
+    clientY <= rectangle.bottom
+  );
+}
+
+function rangeContainsPoint(
+  range: Range,
+  clientX: number,
+  clientY: number,
+): boolean {
+  for (const rectangle of range.getClientRects()) {
+    if (rectangleContainsPoint(rectangle, clientX, clientY)) {
+      return true;
+    }
   }
+  return false;
 }
 
 function quoteFromRange(

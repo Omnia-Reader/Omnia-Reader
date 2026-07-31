@@ -135,15 +135,16 @@ test('PDF reader shell has no automated WCAG A or AA violations', async ({
 
   await createPdfHighlight(page, 1, 'Page One', 'Accessibility note.');
   const savedHighlight = firstPage.locator('[data-omnia-annotation-id]');
-  await savedHighlight.click();
-  const annotationDialog = page.getByRole('dialog', {
-    name: 'Edit annotation',
-  });
+  await savedHighlight.evaluate((element) => (element as HTMLElement).click());
+  const annotationDashboard = page.getByTestId('annotation-dashboard');
   await expect(
-    annotationDialog.getByRole('textbox', { name: 'Note (optional)' }),
-  ).toBeFocused();
+    annotationDashboard.getByRole('textbox', { name: 'Note' }),
+  ).toHaveValue('Accessibility note.');
   await expectAccessible(page);
-  await annotationDialog.getByRole('button', { name: 'Cancel' }).click();
+  await page
+    .getByTestId('publication-viewport')
+    .click({ position: { x: 8, y: 8 } });
+  await expect(annotationDashboard).toBeHidden();
 
   await page.goBack();
   await importPublication(
@@ -194,6 +195,8 @@ async function expectAccessible(
   page: Page,
   excludePublicationContents = false,
 ): Promise<void> {
+  await page.mouse.move(0, 0);
+  await expect(page.getByRole('tooltip')).toBeHidden();
   let builder = new AxeBuilder({ page }).withTags(wcagTags);
   if (excludePublicationContents) {
     // EPUB contents are untrusted author-controlled documents in a

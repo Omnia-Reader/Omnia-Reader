@@ -9,7 +9,7 @@ import {
   ViewChild,
   inject,
 } from '@angular/core';
-import { NgClass } from '@angular/common';
+import { NgClass, NgTemplateOutlet } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -22,18 +22,24 @@ import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { ReaderEngineRegistry } from '@omnia-reader/reader/core';
 import {
+  annotationDecorations,
+  annotationHasStyle,
   BookRecord,
   DEFAULT_EPUB_READER_PREFERENCES,
   DEFAULT_PDF_READER_PREFERENCES,
   EpubReaderPreferences,
   keyboardNavigationDirection,
   keyboardReaderCommand,
+  isPublicationAnnotationColor,
   PdfReaderPreferences,
   PdfRotation,
   PageNavigation,
   PublicationAnnotation,
   PublicationAnnotationColor,
+  PublicationAnnotationDecoration,
   PublicationAnnotationStyle,
+  PUBLICATION_ANNOTATION_BLACK_COLOR_OPTION,
+  PUBLICATION_ANNOTATION_COLOR_OPTIONS,
   PublicationBookmark,
   PublicationLocator,
   PublicationMetadata,
@@ -48,6 +54,8 @@ import {
   ReadingProgress,
   SearchResult,
   selectionHasText,
+  publicationAnnotationColorHex,
+  publicationAnnotationColorLabel,
   startTouchEventNavigationGesture,
   startTouchNavigationGesture,
   TocEntry,
@@ -74,6 +82,22 @@ type ReaderPanel =
 
 type AnnotationFilter = 'all' | 'notes' | PublicationAnnotationStyle;
 type AnnotationSort = 'reading-order' | 'updated-desc';
+const ANNOTATION_STYLE_ORDER: readonly PublicationAnnotationStyle[] = [
+  'highlight',
+  'underline',
+  'strikethrough',
+];
+
+function decorationColor(
+  decorations: readonly PublicationAnnotationDecoration[],
+  style: PublicationAnnotationStyle,
+  fallback: PublicationAnnotationColor,
+): PublicationAnnotationColor {
+  return (
+    decorations.find((decoration) => decoration.style === style)?.color ??
+    fallback
+  );
+}
 
 @Component({
   selector: 'omnia-reader-page',
@@ -92,6 +116,7 @@ type AnnotationSort = 'reading-order' | 'updated-desc';
     MatTooltipModule,
     CdkTrapFocus,
     NgClass,
+    NgTemplateOutlet,
     ScrollingModule,
     FormsModule,
     RouterLink,
@@ -99,6 +124,19 @@ type AnnotationSort = 'reading-order' | 'updated-desc';
   ],
 })
 export class ReaderPageComponent implements AfterViewInit, OnDestroy {
+  readonly annotationColorOptions = PUBLICATION_ANNOTATION_COLOR_OPTIONS;
+  readonly annotationLineColorOptions = [
+    PUBLICATION_ANNOTATION_BLACK_COLOR_OPTION,
+    ...PUBLICATION_ANNOTATION_COLOR_OPTIONS,
+  ];
+  readonly annotationFormatOptions = [
+    { style: 'highlight', label: 'Highlight' },
+    { style: 'underline', label: 'Underline' },
+    {
+      style: 'strikethrough',
+      label: 'Strikethrough',
+    },
+  ] as const;
   @ViewChild('readerRoot', { static: true })
   private readerRoot!: ElementRef<HTMLElement>;
 
@@ -204,9 +242,21 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   pendingSelection: PublicationSelection | null = null;
   annotationEditorOpen = false;
   editingAnnotation: PublicationAnnotation | null = null;
-  annotationColor: PublicationAnnotationColor = 'yellow';
   annotationStyle: PublicationAnnotationStyle = 'highlight';
+  annotationStyles = new Set<PublicationAnnotationStyle>();
+  annotationDecorationColors: Record<
+    PublicationAnnotationStyle,
+    PublicationAnnotationColor
+  > = {
+    highlight: 'yellow',
+    underline: 'sky-blue',
+    strikethrough: 'vermilion',
+  };
+  annotationColorPalette: PublicationAnnotationStyle | null = null;
   annotationNote = '';
+  annotationNoteOpen = false;
+  annotationGroup: readonly PublicationAnnotation[] = [];
+  annotationGroupOpen = false;
   annotationQuery = '';
   annotationFilter: AnnotationFilter = 'all';
   annotationSort: AnnotationSort = 'reading-order';
@@ -258,6 +308,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private removeBackgroundListener: (() => void) | null = null;
   private removeRelocationListener: (() => void) | null = null;
   private removeSelectionListener: (() => void) | null = null;
+  private removeSelectionActionRequestListener: (() => void) | null = null;
   private removePasswordListener: (() => void) | null = null;
   private removeAnnotationActivationListener: (() => void) | null = null;
   private removeNavigationRequestListener: (() => void) | null = null;
@@ -275,6 +326,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private zoomWrite: Promise<void> = Promise.resolve();
   private zoomIndicatorTimeout: ReturnType<typeof setTimeout> | null = null;
   private annotationStatusTimeout: ReturnType<typeof setTimeout> | null = null;
+  private annotationAutosaveTimeout: ReturnType<typeof setTimeout> | null =
+    null;
   private readerPanelReturnFocus: HTMLElement | null = null;
   private shortcutsReturnFocus: HTMLElement | null = null;
   private clearSelectionInProgress = false;
@@ -327,17 +380,17 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         ? serializeLocator(progress.locator)
         : '';
       this.engine = await this.engines.create(book.format);
-      this.removeAnnotationActivationListener =
-        this.engine.onAnnotationActivated?.((annotationId) => {
-          const annotation = this.annotations.find(
-            (candidate) => candidate.id === annotationId,
-          );
-          if (!annotation) {
-            return;
-          }
-          this.beginEditAnnotation(annotation);
-          this.changeDetector.markForCheck();
-        }) ?? null;
+      if (this.engine.onAnnotationGroupActivated) {
+        this.removeAnnotationActivationListener =
+          this.engine.onAnnotationGroupActivated((annotationIds) => {
+            this.openAnnotationGroup(annotationIds);
+          });
+      } else {
+        this.removeAnnotationActivationListener =
+          this.engine.onAnnotationActivated?.((annotationId) => {
+            this.openAnnotationGroup([annotationId]);
+          }) ?? null;
+      }
       this.removeNavigationRequestListener =
         this.engine.onNavigationRequested?.((direction) => {
           void this.navigate(direction);
@@ -392,26 +445,31 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
             this.clearSelectionInProgress = false;
             return;
           }
-          if (!this.annotationEditorOpen) {
+          if (this.annotationEditorOpen) {
+            void this.autosaveAnnotationAndClose();
+          } else {
             this.pendingSelection = null;
             this.editingAnnotation = null;
-            this.annotationEditorOpen = false;
-            this.annotationStyle = 'highlight';
+            this.resetAnnotationDraft();
             this.annotationNote = '';
             this.annotationError = null;
-            this.changeDetector.markForCheck();
           }
+          this.changeDetector.markForCheck();
           return;
         }
         this.pendingSelection = selection;
         this.annotationEditorOpen = false;
         this.annotationError = null;
         this.editingAnnotation = null;
-        this.annotationColor = 'yellow';
-        this.annotationStyle = 'highlight';
+        this.resetAnnotationDraft();
         this.annotationNote = '';
         this.changeDetector.markForCheck();
       });
+      this.removeSelectionActionRequestListener =
+        this.engine.onSelectionActionRequested?.((selection) => {
+          this.pendingSelection = selection;
+          this.openPendingSelectionEditor();
+        }) ?? null;
       await this.engine.setAnnotations(this.annotations);
       if (progress) {
         await this.engine.goTo(progress.locator);
@@ -468,6 +526,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       return;
     }
     event.preventDefault();
+    this.openPendingSelectionEditor();
+  }
+
+  private openPendingSelectionEditor(): void {
     if (
       this.passwordChallenge ||
       this.pendingExternalUrl ||
@@ -1543,22 +1605,297 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.closeReaderPanelsForReading();
   }
 
+  get annotationColor(): PublicationAnnotationColor {
+    return this.annotationDecorationColors[this.annotationStyle];
+  }
+
+  set annotationColor(color: PublicationAnnotationColor) {
+    this.annotationDecorationColors = {
+      ...this.annotationDecorationColors,
+      [this.annotationStyle]: color,
+    };
+  }
+
+  get canSaveAnnotation(): boolean {
+    return (
+      this.annotationStyles.size > 0 || this.annotationNote.trim().length > 0
+    );
+  }
+
+  annotationStyleSelected(style: PublicationAnnotationStyle): boolean {
+    return this.annotationStyles.has(style);
+  }
+
+  async applyAnnotationStyle(style: PublicationAnnotationStyle): Promise<void> {
+    this.clearAnnotationAutosaveTimeout();
+    await this.waitForAnnotationIdle();
+    const selected = new Set(this.annotationStyles);
+    if (selected.has(style)) {
+      selected.delete(style);
+    } else {
+      selected.add(style);
+    }
+    this.annotationStyle = style;
+    this.annotationStyles = selected;
+    this.annotationColorPalette = null;
+    if (selected.size === 0 && !this.annotationNote.trim()) {
+      if (this.editingAnnotation) {
+        await this.removeEditingAnnotation();
+      }
+      return;
+    }
+    await this.saveAnnotation(false);
+  }
+
+  toggleAnnotationColorPalette(style: PublicationAnnotationStyle): void {
+    if (this.annotationColorPalette === style) {
+      this.closeAnnotationColorPalette();
+      return;
+    }
+    this.annotationColorPalette = style;
+    setTimeout(() => {
+      this.readerRoot.nativeElement.ownerDocument
+        .getElementById(`annotation-${style}-color-palette`)
+        ?.querySelector<HTMLElement>('button, input')
+        ?.focus();
+    }, 0);
+  }
+
+  closeAnnotationColorPalette(event?: Event): void {
+    const style = this.annotationColorPalette;
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.annotationColorPalette = null;
+    if (!style) {
+      return;
+    }
+    setTimeout(() => {
+      this.readerRoot.nativeElement.ownerDocument
+        .querySelector<HTMLElement>(
+          `button[aria-controls="annotation-${style}-color-palette"]`,
+        )
+        ?.focus();
+    }, 0);
+  }
+
+  async chooseAnnotationColor(
+    style: PublicationAnnotationStyle,
+    color: PublicationAnnotationColor,
+  ): Promise<void> {
+    this.setAnnotationDecorationColor(style, color);
+    this.closeAnnotationColorPalette();
+    if (this.annotationStyleSelected(style) && this.editingAnnotation) {
+      await this.waitForAnnotationIdle();
+      await this.saveAnnotation(false);
+    }
+  }
+
+  toggleAnnotationNote(): void {
+    if (this.annotationNoteOpen) {
+      void this.flushAnnotationAutosave();
+    }
+    this.annotationNoteOpen = !this.annotationNoteOpen;
+    this.annotationColorPalette = null;
+  }
+
+  onAnnotationNoteChange(): void {
+    this.scheduleAnnotationAutosave();
+  }
+
+  onAnnotationColorInput(
+    style: PublicationAnnotationStyle,
+    color: unknown,
+  ): void {
+    this.setAnnotationDecorationColor(style, color);
+    if (this.annotationStyleSelected(style) && this.editingAnnotation) {
+      this.scheduleAnnotationAutosave();
+    }
+  }
+
+  async autosaveAnnotationAndClose(): Promise<void> {
+    const hasPendingAutosave =
+      !!this.annotationAutosaveTimeout && this.canSaveAnnotation;
+    if (hasPendingAutosave) {
+      this.clearAnnotationAutosaveTimeout();
+    }
+    await this.waitForAnnotationIdle();
+    if (hasPendingAutosave) {
+      await this.saveAnnotation();
+      return;
+    }
+    this.cancelAnnotationEditor();
+  }
+
+  async flushAnnotationAutosave(): Promise<void> {
+    if (!this.annotationAutosaveTimeout) {
+      return;
+    }
+    this.clearAnnotationAutosaveTimeout();
+    if (this.canSaveAnnotation) {
+      await this.waitForAnnotationIdle();
+      await this.saveAnnotation(false);
+    }
+  }
+
+  onAnnotationDashboardKeydown(event: KeyboardEvent): void {
+    if (
+      event.key === 'Enter' &&
+      (event.ctrlKey || event.metaKey) &&
+      this.canSaveAnnotation &&
+      !this.annotationBusy
+    ) {
+      event.preventDefault();
+      void this.saveAnnotation();
+    }
+  }
+
+  onAnnotationFormattingKeydown(event: KeyboardEvent): void {
+    if (
+      !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) ||
+      !(event.currentTarget instanceof HTMLElement)
+    ) {
+      return;
+    }
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        'button:not(:disabled)',
+      ),
+    );
+    if (buttons.length === 0) {
+      return;
+    }
+    const currentIndex = buttons.indexOf(
+      event.currentTarget.ownerDocument.activeElement as HTMLButtonElement,
+    );
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? buttons.length - 1
+          : event.key === 'ArrowLeft'
+            ? (Math.max(currentIndex, 0) - 1 + buttons.length) % buttons.length
+            : (Math.max(currentIndex, -1) + 1) % buttons.length;
+    event.preventDefault();
+    buttons[nextIndex]?.focus();
+  }
+
+  setAnnotationDecorationColor(
+    style: PublicationAnnotationStyle,
+    color: unknown,
+  ): void {
+    if (!isPublicationAnnotationColor(color)) {
+      return;
+    }
+    this.annotationDecorationColors = {
+      ...this.annotationDecorationColors,
+      [style]: color.startsWith('#')
+        ? publicationAnnotationColorHex(color)
+        : color,
+    };
+  }
+
+  annotationColorPickerValue(style: PublicationAnnotationStyle): string {
+    return publicationAnnotationColorHex(
+      this.annotationDecorationColors[style],
+    );
+  }
+
+  annotationColorIsCustom(style: PublicationAnnotationStyle): boolean {
+    return this.annotationDecorationColors[style].startsWith('#');
+  }
+
+  annotationColorHex(color: PublicationAnnotationColor): string {
+    return publicationAnnotationColorHex(color);
+  }
+
+  annotationColorLabel(color: PublicationAnnotationColor): string {
+    return color.startsWith('#')
+      ? `Custom ${color.toUpperCase()}`
+      : publicationAnnotationColorLabel(color);
+  }
+
+  annotationColorOptionsFor(style: PublicationAnnotationStyle) {
+    return style === 'highlight'
+      ? this.annotationColorOptions
+      : this.annotationLineColorOptions;
+  }
+
+  annotationDecorationsOf(
+    annotation: PublicationAnnotation,
+  ): readonly PublicationAnnotationDecoration[] {
+    return annotationDecorations(annotation);
+  }
+
+  annotationContainsStyle(
+    annotation: PublicationAnnotation,
+    style: PublicationAnnotationStyle,
+  ): boolean {
+    return annotationHasStyle(annotation, style);
+  }
+
+  openAnnotationGroup(annotationIds: readonly string[]): void {
+    const ids = new Set(annotationIds);
+    const annotations = this.annotations.filter((annotation) =>
+      ids.has(annotation.id),
+    );
+    if (annotations.length === 0) {
+      return;
+    }
+    if (annotations.length === 1) {
+      this.beginEditAnnotation(annotations[0]);
+      this.changeDetector.markForCheck();
+      return;
+    }
+    this.annotationGroup = annotations;
+    this.annotationGroupOpen = true;
+    this.annotationsOpen = false;
+    this.changeDetector.markForCheck();
+  }
+
+  closeAnnotationGroup(): void {
+    this.annotationGroup = [];
+    this.annotationGroupOpen = false;
+  }
+
+  editAnnotationFromGroup(annotation: PublicationAnnotation): void {
+    this.closeAnnotationGroup();
+    this.beginEditAnnotation(annotation);
+  }
+
+  async removeAnnotationFromGroup(
+    annotation: PublicationAnnotation,
+  ): Promise<void> {
+    if (await this.removeAnnotation(annotation)) {
+      this.refreshOpenAnnotationGroup();
+    }
+  }
+
   beginEditAnnotation(annotation: PublicationAnnotation): void {
+    const decorations = annotationDecorations(annotation);
     this.editingAnnotation = annotation;
     this.annotationEditorOpen = true;
     this.pendingSelection = { locator: structuredClone(annotation.locator) };
-    this.annotationColor = annotation.color;
-    this.annotationStyle = annotation.style ?? 'highlight';
+    this.annotationStyles = new Set(
+      decorations.map((decoration) => decoration.style),
+    );
+    this.annotationDecorationColors = {
+      highlight: decorationColor(decorations, 'highlight', 'yellow'),
+      underline: decorationColor(decorations, 'underline', 'sky-blue'),
+      strikethrough: decorationColor(decorations, 'strikethrough', 'vermilion'),
+    };
+    this.annotationStyle = decorations[0]?.style ?? 'highlight';
     this.annotationNote = annotation.note ?? '';
+    this.annotationNoteOpen = !!annotation.note;
     this.annotationError = null;
     this.annotationsOpen = false;
   }
 
   cancelAnnotationEditor(): void {
+    this.clearAnnotationAutosaveTimeout();
     this.pendingSelection = null;
     this.editingAnnotation = null;
     this.annotationEditorOpen = false;
-    this.annotationStyle = 'highlight';
+    this.resetAnnotationDraft();
     this.annotationNote = '';
     this.annotationError = null;
     if (!this.engine) {
@@ -1574,7 +1911,19 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async saveAnnotation(): Promise<void> {
+  private resetAnnotationDraft(): void {
+    this.annotationStyle = 'highlight';
+    this.annotationStyles = new Set();
+    this.annotationDecorationColors = {
+      highlight: 'yellow',
+      underline: 'sky-blue',
+      strikethrough: 'vermilion',
+    };
+    this.annotationColorPalette = null;
+    this.annotationNoteOpen = false;
+  }
+
+  async saveAnnotation(closeEditor = true): Promise<void> {
     if (
       this.annotationBusy ||
       !this.book ||
@@ -1588,6 +1937,25 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     try {
       const timestamp = new Date().toISOString();
       const note = this.annotationNote.trim();
+      const decorations = ANNOTATION_STYLE_ORDER.filter((style) =>
+        this.annotationStyles.has(style),
+      ).map((style) => ({
+        style,
+        color: this.annotationDecorationColors[style],
+      }));
+      if (decorations.length === 0 && !note) {
+        if (this.editingAnnotation) {
+          const annotation = this.editingAnnotation;
+          this.annotationBusy = false;
+          await this.removeAnnotation(annotation);
+          this.cancelAnnotationEditor();
+        }
+        return;
+      }
+      const primaryDecoration = decorations[0] ?? {
+        style: this.editingAnnotation?.style ?? 'highlight',
+        color: this.editingAnnotation?.color ?? 'yellow',
+      };
       const annotation: PublicationAnnotation = {
         schemaVersion: 1,
         id: this.editingAnnotation?.id ?? crypto.randomUUID(),
@@ -1595,8 +1963,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         format: this.book.format,
         deviceId: getDeviceId(),
         locator: structuredClone(this.pendingSelection.locator),
-        color: this.annotationColor,
-        style: this.annotationStyle,
+        color: primaryDecoration.color,
+        style: primaryDecoration.style,
+        decorations,
         note: note || undefined,
         createdAt: this.editingAnnotation?.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -1610,7 +1979,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       ];
       await this.journalAnnotation(annotation);
       await this.engine.setAnnotations(this.annotations);
-      this.cancelAnnotationEditor();
+      if (closeEditor) {
+        this.cancelAnnotationEditor();
+      } else {
+        this.editingAnnotation = annotation;
+      }
     } catch (error) {
       this.annotationError =
         error instanceof Error ? error.message : 'Unable to save annotation';
@@ -1651,6 +2024,77 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.changeDetector.markForCheck();
     }
     return removed;
+  }
+
+  async removeAnnotationDecoration(
+    annotation: PublicationAnnotation,
+    style: PublicationAnnotationStyle,
+  ): Promise<void> {
+    const decorations = annotationDecorations(annotation).filter(
+      (decoration) => decoration.style !== style,
+    );
+    if (decorations.length === annotationDecorations(annotation).length) {
+      return;
+    }
+    if (decorations.length === 0 && !annotation.note) {
+      if (await this.removeAnnotation(annotation)) {
+        this.refreshOpenAnnotationGroup();
+      }
+      return;
+    }
+    if (this.annotationBusy) {
+      return;
+    }
+    this.annotationBusy = true;
+    this.annotationError = null;
+    try {
+      const primaryDecoration = decorations[0] ?? {
+        style: annotation.style ?? 'highlight',
+        color: annotation.color,
+      };
+      const updated: PublicationAnnotation = {
+        ...annotation,
+        deviceId: getDeviceId(),
+        color: primaryDecoration.color,
+        style: primaryDecoration.style,
+        decorations,
+        updatedAt: timestampAfter(annotation.updatedAt),
+      };
+      await this.repository.saveAnnotation(updated);
+      this.annotations = [
+        updated,
+        ...this.annotations.filter((candidate) => candidate.id !== updated.id),
+      ];
+      await this.journalAnnotation(updated);
+      await this.engine?.setAnnotations(this.annotations);
+      this.refreshOpenAnnotationGroup();
+      this.annotationStatus = `${this.annotationStyleLabel(style)} removed.`;
+      this.annotationStatusIsError = false;
+      this.scheduleAnnotationStatusDismissal(4_000);
+    } catch (error) {
+      this.annotationError =
+        error instanceof Error
+          ? error.message
+          : `Unable to remove ${this.annotationStyleLabel(style).toLocaleLowerCase()}`;
+    } finally {
+      this.annotationBusy = false;
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  private refreshOpenAnnotationGroup(): void {
+    if (!this.annotationGroupOpen) {
+      return;
+    }
+    const ids = new Set(
+      this.annotationGroup.map((annotation) => annotation.id),
+    );
+    this.annotationGroup = this.annotations.filter((annotation) =>
+      ids.has(annotation.id),
+    );
+    if (this.annotationGroup.length === 0) {
+      this.closeAnnotationGroup();
+    }
   }
 
   async removeEditingAnnotation(): Promise<void> {
@@ -1721,12 +2165,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     const query = this.annotationQuery.trim().toLocaleLowerCase();
     return this.annotations
       .filter((annotation) => {
-        const style = this.annotationStyleOf(annotation);
         if (
           this.annotationFilter !== 'all' &&
           (this.annotationFilter === 'notes'
             ? !annotation.note
-            : style !== this.annotationFilter)
+            : !annotationHasStyle(annotation, this.annotationFilter))
         ) {
           return false;
         }
@@ -1738,7 +2181,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
           annotation.note,
           annotation.locator.title,
           this.annotationLocationLabel(annotation),
-          this.annotationStyleLabel(style),
+          this.annotationStyleSummary(annotation),
         ].some((value) => value?.toLocaleLowerCase().includes(query));
       })
       .sort((left, right) => this.compareAnnotationOverviewOrder(left, right));
@@ -1751,8 +2194,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (filter === 'notes') {
       return this.annotations.filter((annotation) => !!annotation.note).length;
     }
-    return this.annotations.filter(
-      (annotation) => this.annotationStyleOf(annotation) === filter,
+    return this.annotations.filter((annotation) =>
+      annotationHasStyle(annotation, filter),
     ).length;
   }
 
@@ -1864,7 +2307,14 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   annotationStyleOf(
     annotation: PublicationAnnotation,
   ): PublicationAnnotationStyle {
-    return annotation.style ?? 'highlight';
+    return annotationDecorations(annotation)[0]?.style ?? 'highlight';
+  }
+
+  annotationStyleSummary(annotation: PublicationAnnotation): string {
+    const labels = annotationDecorations(annotation).map((decoration) =>
+      this.annotationStyleLabel(decoration.style),
+    );
+    return labels.length > 0 ? labels.join(' + ') : 'Note';
   }
 
   annotationStyleLabel(style: PublicationAnnotationStyle): string {
@@ -2091,6 +2541,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.removeBackgroundListener?.();
     this.removeRelocationListener?.();
     this.removeSelectionListener?.();
+    this.removeSelectionActionRequestListener?.();
     this.removeAnnotationActivationListener?.();
     this.removeNavigationRequestListener?.();
     this.removeCommandRequestListener?.();
@@ -2100,6 +2551,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       clearTimeout(this.zoomIndicatorTimeout);
       this.zoomIndicatorTimeout = null;
     }
+    this.clearAnnotationAutosaveTimeout();
     this.clearAnnotationStatusTimeout();
     this.passwordChallenge?.cancel();
     this.removePasswordListener?.();
@@ -2288,6 +2740,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.changeDetector.markForCheck();
       return true;
     }
+    if (this.annotationGroupOpen) {
+      this.closeAnnotationGroup();
+      this.changeDetector.markForCheck();
+      return true;
+    }
     if (this.closeKeyboardShortcuts()) {
       return true;
     }
@@ -2304,7 +2761,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (
       this.passwordChallenge ||
       this.pendingExternalUrl ||
-      this.pendingSelection
+      this.pendingSelection ||
+      this.annotationGroupOpen
     ) {
       return true;
     }
@@ -2488,6 +2946,37 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
     clearTimeout(this.annotationStatusTimeout);
     this.annotationStatusTimeout = null;
+  }
+
+  private scheduleAnnotationAutosave(): void {
+    this.clearAnnotationAutosaveTimeout();
+    this.annotationAutosaveTimeout = setTimeout(() => {
+      this.annotationAutosaveTimeout = null;
+      if (this.canSaveAnnotation) {
+        void this.autosaveAnnotation();
+      }
+    }, 400);
+  }
+
+  private async autosaveAnnotation(): Promise<void> {
+    await this.waitForAnnotationIdle();
+    if (this.canSaveAnnotation) {
+      await this.saveAnnotation(false);
+    }
+  }
+
+  private async waitForAnnotationIdle(): Promise<void> {
+    while (this.annotationBusy && !this.destroyed) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  private clearAnnotationAutosaveTimeout(): void {
+    if (!this.annotationAutosaveTimeout) {
+      return;
+    }
+    clearTimeout(this.annotationAutosaveTimeout);
+    this.annotationAutosaveTimeout = null;
   }
 
   private async persistPreferences(

@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 export async function createPdfHighlight(
   page: Page,
@@ -35,20 +35,27 @@ export async function createPdfHighlight(
       y: selectionRect.top - layerRect.top + selectionRect.height / 2,
     };
   }, selectedText);
-  const editor = page.getByRole('dialog', { name: 'New annotation' });
+  const editor = page.getByTestId('annotation-dashboard');
   await expect(editor).toBeHidden();
   await textLayer.click({ button: 'right', position: selectionPosition });
   await expect(editor).toBeVisible();
-  if (style !== 'highlight') {
-    await editor
-      .getByRole('button', {
-        name: style === 'underline' ? 'Underline' : 'Strikethrough',
-      })
-      .click();
+  await chooseAnnotationColor(page, editor, style, 'Purple');
+  if (note) {
+    await editor.getByRole('button', { name: 'Add note' }).click();
+    await editor.getByRole('textbox', { name: 'Note' }).fill(note);
   }
-  await editor.getByRole('button', { name: 'Pink' }).click();
-  await editor.getByRole('textbox', { name: 'Note (optional)' }).fill(note);
-  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await editor
+    .getByRole('button', {
+      name:
+        style === 'highlight'
+          ? 'Highlight'
+          : style === 'underline'
+            ? 'Underline'
+            : 'Strikethrough',
+      exact: true,
+    })
+    .click();
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(editor).toBeHidden();
 }
 
@@ -93,11 +100,9 @@ export async function createEpubHighlight(
       }),
     )
     .toContain(selectedText);
-  const editor = page.getByRole('dialog', { name: 'New annotation' });
+  const editor = page.getByTestId('annotation-dashboard');
   await expect(editor).toBeHidden();
-  const browserName = page.context().browser()?.browserType().name();
-  const viewport = page.getByTestId('publication-viewport');
-  if (browserName === 'webkit') {
+  if (page.context().browser()?.browserType().name() === 'webkit') {
     const contextMenuAllowed = await page
       .getByTestId('publication-viewport')
       .locator('iframe')
@@ -112,21 +117,67 @@ export async function createEpubHighlight(
         ),
       );
     expect(contextMenuAllowed).toBe(false);
-  } else if (browserName === 'firefox') {
-    await viewport.dispatchEvent('contextmenu');
   } else {
     await paragraph.click({ button: 'right', position: selectionPosition });
   }
   await expect(editor).toBeVisible();
-  if (style !== 'highlight') {
-    await editor
-      .getByRole('button', {
-        name: style === 'underline' ? 'Underline' : 'Strikethrough',
-      })
-      .click();
+  const colorLabel = annotationStyleLabel(style);
+  const color = editor.getByRole('button', {
+    name: new RegExp(`^${colorLabel} color:`),
+  });
+  await expect(color).toHaveAccessibleName(
+    `${colorLabel} color: ${
+      style === 'highlight'
+        ? 'Yellow'
+        : style === 'underline'
+          ? 'Sky blue'
+          : 'Vermilion'
+    }`,
+  );
+  await chooseAnnotationColor(page, editor, style, 'Bluish green');
+  await expect(color).toHaveAccessibleName(`${colorLabel} color: Bluish green`);
+  if (note) {
+    await editor.getByRole('button', { name: 'Add note' }).click();
+    await editor.getByRole('textbox', { name: 'Note' }).fill(note);
   }
-  await editor.getByRole('button', { name: 'Green' }).click();
-  await editor.getByRole('textbox', { name: 'Note (optional)' }).fill(note);
-  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await editor
+    .getByRole('button', {
+      name:
+        style === 'highlight'
+          ? 'Highlight'
+          : style === 'underline'
+            ? 'Underline'
+            : 'Strikethrough',
+      exact: true,
+    })
+    .click();
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(editor).toBeHidden();
+}
+
+async function chooseAnnotationColor(
+  page: Page,
+  editor: Locator,
+  style: 'highlight' | 'underline' | 'strikethrough',
+  color: string,
+): Promise<void> {
+  const styleLabel = annotationStyleLabel(style);
+  await editor
+    .getByRole('button', { name: new RegExp(`^${styleLabel} color:`) })
+    .click();
+  await page
+    .getByRole('button', {
+      name: `${color} ${styleLabel.toLocaleLowerCase()} color`,
+    })
+    .click();
+}
+
+function annotationStyleLabel(
+  style: 'highlight' | 'underline' | 'strikethrough',
+): string {
+  return style === 'strikethrough'
+    ? 'Strikethrough'
+    : style === 'underline'
+      ? 'Underline'
+      : 'Highlight';
 }

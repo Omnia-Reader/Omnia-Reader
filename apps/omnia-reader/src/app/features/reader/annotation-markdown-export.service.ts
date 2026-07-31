@@ -1,9 +1,11 @@
 import { inject, Injectable } from '@angular/core';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import {
+  annotationDecorations,
   BookRecord,
   PublicationAnnotation,
-  PublicationAnnotationStyle,
+  PublicationAnnotationColor,
+  publicationAnnotationColorLabel,
 } from '@omnia-reader/reader/domain';
 
 export const ANNOTATION_MARKDOWN_MEDIA_TYPE = 'text/markdown';
@@ -81,11 +83,16 @@ export function serializeAnnotationsAsMarkdown(
   lines.push(`**Annotations:** ${annotations.length}`, '', '---', '');
 
   annotations.forEach((annotation, index) => {
-    const style = annotationStyleLabel(annotation.style);
+    const formats = annotationDecorations(annotation)
+      .map(
+        (decoration) =>
+          `${annotationStyleLabel(decoration.style)} · ${annotationColorLabel(decoration.color)}`,
+      )
+      .join(' + ');
     lines.push(
       `## ${index + 1}. ${escapeMarkdown(annotationLocation(annotation))}`,
       '',
-      `**${style} · ${capitalize(annotation.color)}**`,
+      `**${formats || 'Note'}**`,
       '',
       ...markdownQuote(
         annotation.locator.text?.highlight?.trim() || 'No quoted text',
@@ -135,7 +142,7 @@ function annotationLocation(annotation: PublicationAnnotation): string {
 }
 
 function annotationStyleLabel(
-  style: PublicationAnnotationStyle | undefined,
+  style: 'highlight' | 'underline' | 'strikethrough',
 ): string {
   switch (style) {
     case 'underline':
@@ -162,8 +169,8 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function capitalize(value: string): string {
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+function annotationColorLabel(color: PublicationAnnotationColor): string {
+  return publicationAnnotationColorLabel(color);
 }
 
 function blobReadableStream(blob: Blob): ReadableStream<Uint8Array> {

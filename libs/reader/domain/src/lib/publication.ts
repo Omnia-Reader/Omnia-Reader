@@ -110,7 +110,13 @@ export interface ReaderEngine {
   onSelection(
     listener: (selection: PublicationSelection | null) => void,
   ): () => void;
+  onSelectionActionRequested?(
+    listener: (selection: PublicationSelection) => void,
+  ): () => void;
   onAnnotationActivated?(listener: (annotationId: string) => void): () => void;
+  onAnnotationGroupActivated?(
+    listener: (annotationIds: readonly string[]) => void,
+  ): () => void;
   onNavigationRequested?(
     listener: (direction: ReaderNavigationDirection) => void,
   ): () => void;

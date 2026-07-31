@@ -5,11 +5,14 @@ import type {
   PDFViewer,
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import {
+  annotationDecorations,
   BookSource,
   DEFAULT_PDF_READER_PREFERENCES,
   PageNavigation,
   PdfReaderPreferences,
   PublicationAnnotation,
+  PublicationAnnotationDecoration,
+  publicationAnnotationColorHex,
   PublicationLocator,
   PublicationMetadata,
   PublicationPasswordChallenge,
@@ -97,6 +100,9 @@ export class PdfReaderEngine implements ReaderEngine {
   >();
   private readonly annotationActivationListeners = new Set<
     (annotationId: string) => void
+  >();
+  private readonly annotationGroupActivationListeners = new Set<
+    (annotationIds: readonly string[]) => void
   >();
   private readonly externalLinkRequestListeners = new Set<
     (url: string) => void
@@ -274,6 +280,14 @@ export class PdfReaderEngine implements ReaderEngine {
       this.handleSelectionAction,
       true,
     );
+    viewport.ownerDocument.addEventListener(
+      'click',
+      this.handleAnnotationActivation,
+    );
+    viewport.ownerDocument.addEventListener(
+      'contextmenu',
+      this.handleAnnotationActivation,
+    );
     linkService.setViewer(pdfViewer);
     linkService.setDocument(document);
 
@@ -291,6 +305,7 @@ export class PdfReaderEngine implements ReaderEngine {
     this.passwordListeners.clear();
     this.selectionListeners.clear();
     this.annotationActivationListeners.clear();
+    this.annotationGroupActivationListeners.clear();
     this.externalLinkRequestListeners.clear();
   }
 
@@ -334,6 +349,13 @@ export class PdfReaderEngine implements ReaderEngine {
   onAnnotationActivated(listener: (annotationId: string) => void): () => void {
     this.annotationActivationListeners.add(listener);
     return () => this.annotationActivationListeners.delete(listener);
+  }
+
+  onAnnotationGroupActivated(
+    listener: (annotationIds: readonly string[]) => void,
+  ): () => void {
+    this.annotationGroupActivationListeners.add(listener);
+    return () => this.annotationGroupActivationListeners.delete(listener);
   }
 
   onExternalLinkRequested(listener: (url: string) => void): () => void {
@@ -812,6 +834,7 @@ export class PdfReaderEngine implements ReaderEngine {
             rectangle !== null,
         );
       if (rectangles?.length) {
+        let finalRectangle: [number, number, number, number] | null = null;
         for (const rectangle of rectangles) {
           const first = pageView.viewport.convertToViewportPoint(
             rectangle[0],
@@ -821,17 +844,24 @@ export class PdfReaderEngine implements ReaderEngine {
             rectangle[2],
             rectangle[3],
           );
+          finalRectangle = normalizeRectangle([...first, ...second]);
           if (
             appendHighlightRectangle(
               layer,
-              normalizeRectangle([...first, ...second]),
+              finalRectangle,
               annotation,
               focusable,
-              (annotationId) => this.notifyAnnotationActivated(annotationId),
+              (annotationIds) =>
+                this.notifyAnnotationGroupActivated(annotationIds),
             )
           ) {
             focusable = false;
           }
+        }
+        if (finalRectangle) {
+          appendPdfNoteMarker(layer, finalRectangle, annotation, () =>
+            this.notifyAnnotationGroupActivated([annotation.id]),
+          );
         }
         continue;
       }
@@ -846,23 +876,31 @@ export class PdfReaderEngine implements ReaderEngine {
           : null;
       const pageRect = page.getBoundingClientRect();
       if (range) {
+        let finalRectangle: [number, number, number, number] | null = null;
         for (const rectangle of range.getClientRects()) {
+          finalRectangle = [
+            rectangle.left - pageRect.left,
+            rectangle.top - pageRect.top,
+            rectangle.right - pageRect.left,
+            rectangle.bottom - pageRect.top,
+          ];
           if (
             appendHighlightRectangle(
               layer,
-              [
-                rectangle.left - pageRect.left,
-                rectangle.top - pageRect.top,
-                rectangle.right - pageRect.left,
-                rectangle.bottom - pageRect.top,
-              ],
+              finalRectangle,
               annotation,
               focusable,
-              (annotationId) => this.notifyAnnotationActivated(annotationId),
+              (annotationIds) =>
+                this.notifyAnnotationGroupActivated(annotationIds),
             )
           ) {
             focusable = false;
           }
+        }
+        if (finalRectangle) {
+          appendPdfNoteMarker(layer, finalRectangle, annotation, () =>
+            this.notifyAnnotationGroupActivated([annotation.id]),
+          );
         }
       }
     }
@@ -935,6 +973,14 @@ export class PdfReaderEngine implements ReaderEngine {
       this.handleSelectionAction,
       true,
     );
+    this.viewport?.ownerDocument.removeEventListener(
+      'click',
+      this.handleAnnotationActivation,
+    );
+    this.viewport?.ownerDocument.removeEventListener(
+      'contextmenu',
+      this.handleAnnotationActivation,
+    );
     this.pdfViewer?.cleanup();
     if (this.pdfViewer) {
       this.pdfViewer.setDocument(null as unknown as PDFDocumentProxy);
@@ -968,6 +1014,46 @@ export class PdfReaderEngine implements ReaderEngine {
       listener(annotationId);
     }
   }
+
+  private notifyAnnotationGroupActivated(
+    annotationIds: readonly string[],
+  ): void {
+    const uniqueIds = [...new Set(annotationIds)];
+    if (uniqueIds.length === 0) {
+      return;
+    }
+    for (const listener of this.annotationGroupActivationListeners) {
+      listener(uniqueIds);
+    }
+    this.notifyAnnotationActivated(uniqueIds[0]);
+  }
+
+  private readonly handleAnnotationActivation = (event: MouseEvent): void => {
+    if (
+      !(event.target instanceof Node) ||
+      !this.viewport?.contains(event.target)
+    ) {
+      return;
+    }
+    const selection = this.viewport?.ownerDocument.getSelection();
+    if (selection && !selection.isCollapsed) {
+      return;
+    }
+    const annotationIds = pdfAnnotationIdsAtPoint(
+      this.viewport?.ownerDocument,
+      event.clientX,
+      event.clientY,
+    );
+    if (annotationIds.length === 0) {
+      if (event.type === 'click') {
+        this.notifySelection(null);
+      }
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    this.notifyAnnotationGroupActivated(annotationIds);
+  };
 }
 
 function pageLocator(
@@ -1120,7 +1206,7 @@ function appendHighlightRectangle(
   rectangle: [number, number, number, number],
   annotation: PublicationAnnotation,
   focusable: boolean,
-  activate: (annotationId: string) => void,
+  activate: (annotationIds: readonly string[]) => void,
 ): boolean {
   const [left, top, right, bottom] = rectangle;
   if (
@@ -1130,68 +1216,89 @@ function appendHighlightRectangle(
   ) {
     return false;
   }
-  const annotationMark = layer.ownerDocument.createElement('div');
-  const annotationStyle = annotation.style ?? 'highlight';
-  annotationMark.dataset['omniaAnnotationId'] = annotation.id;
-  annotationMark.dataset['omniaAnnotationStyle'] = annotationStyle;
-  annotationMark.setAttribute('role', 'button');
-  annotationMark.setAttribute(
-    'aria-label',
-    annotation.locator.text?.highlight
-      ? `Edit ${annotationStyleLabel(annotationStyle)}: ${annotation.locator.text.highlight.slice(0, 120)}`
-      : `Edit ${annotationStyleLabel(annotationStyle)}`,
-  );
-  annotationMark.tabIndex = focusable ? 0 : -1;
-  Object.assign(annotationMark.style, {
-    position: 'absolute',
-    left: `${left}px`,
-    top: `${top}px`,
-    width: `${right - left}px`,
-    height: `${bottom - top}px`,
-    cursor: 'pointer',
-    pointerEvents: 'auto',
+  const decorations = annotationDecorations(annotation);
+  decorations.forEach((decoration, index) => {
+    const annotationMark = layer.ownerDocument.createElement('div');
+    annotationMark.dataset['omniaAnnotationId'] = annotation.id;
+    annotationMark.dataset['omniaAnnotationStyle'] = decoration.style;
+    annotationMark.setAttribute('role', 'button');
+    annotationMark.setAttribute(
+      'aria-label',
+      annotation.locator.text?.highlight
+        ? `Edit ${annotationStyleLabel(decoration.style)}: ${annotation.locator.text.highlight.slice(0, 120)}`
+        : `Edit ${annotationStyleLabel(decoration.style)}`,
+    );
+    annotationMark.tabIndex = focusable && index === 0 ? 0 : -1;
+    Object.assign(annotationMark.style, {
+      position: 'absolute',
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${right - left}px`,
+      height: `${bottom - top}px`,
+      pointerEvents: 'none',
+    });
+    applyPdfAnnotationStyle(annotationMark, decoration);
+    const activateAnnotation = (event: Event): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      const mouseEvent = event as MouseEvent;
+      const annotationIds = pdfAnnotationIdsAtPoint(
+        layer.ownerDocument,
+        mouseEvent.clientX,
+        mouseEvent.clientY,
+      );
+      activate(annotationIds.length > 0 ? annotationIds : [annotation.id]);
+    };
+    annotationMark.addEventListener('click', activateAnnotation);
+    annotationMark.addEventListener('contextmenu', activateAnnotation);
+    annotationMark.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        activateAnnotation(event);
+      }
+    });
+    layer.append(annotationMark);
   });
-  applyPdfAnnotationStyle(annotationMark, annotation);
-  const activateAnnotation = (event: Event): void => {
-    event.preventDefault();
-    event.stopPropagation();
-    activate(annotation.id);
-  };
-  annotationMark.addEventListener('click', activateAnnotation);
-  annotationMark.addEventListener('contextmenu', activateAnnotation);
-  annotationMark.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      activateAnnotation(event);
+  return decorations.length > 0;
+}
+
+function pdfAnnotationIdsAtPoint(
+  document: Document | undefined,
+  clientX: number,
+  clientY: number,
+): readonly string[] {
+  if (!document || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return [];
+  }
+  const ids = new Set<string>();
+  for (const mark of document.querySelectorAll<HTMLElement>(
+    '[data-omnia-annotation-id]',
+  )) {
+    const rectangle = mark.getBoundingClientRect();
+    if (
+      clientX >= rectangle.left &&
+      clientX <= rectangle.right &&
+      clientY >= rectangle.top &&
+      clientY <= rectangle.bottom
+    ) {
+      const id = mark.dataset['omniaAnnotationId'];
+      if (id) {
+        ids.add(id);
+      }
     }
-  });
-  layer.append(annotationMark);
-  return true;
+  }
+  return [...ids];
 }
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-const PDF_ANNOTATION_COLORS = {
-  yellow: 'rgb(250 204 21 / 42%)',
-  green: 'rgb(74 222 128 / 38%)',
-  blue: 'rgb(96 165 250 / 38%)',
-  pink: 'rgb(244 114 182 / 38%)',
-} as const;
-
-const PDF_ANNOTATION_LINE_COLORS = {
-  yellow: '#ca8a04',
-  green: '#16a34a',
-  blue: '#2563eb',
-  pink: '#db2777',
-} as const;
-
 function applyPdfAnnotationStyle(
   element: HTMLElement,
-  annotation: PublicationAnnotation,
+  decoration: PublicationAnnotationDecoration,
 ): void {
-  const style = annotation.style ?? 'highlight';
-  const color = PDF_ANNOTATION_LINE_COLORS[annotation.color];
+  const { style, color: annotationColor } = decoration;
+  const color = publicationAnnotationColorHex(annotationColor);
   if (style === 'underline') {
     Object.assign(element.style, {
       background: 'transparent',
@@ -1210,10 +1317,65 @@ function applyPdfAnnotationStyle(
     return;
   }
   Object.assign(element.style, {
-    background: PDF_ANNOTATION_COLORS[annotation.color],
+    background: `${color}66`,
     borderRadius: '2px',
     mixBlendMode: 'multiply',
   });
+}
+
+function appendPdfNoteMarker(
+  layer: HTMLElement,
+  rectangle: [number, number, number, number],
+  annotation: PublicationAnnotation,
+  activate: () => void,
+): void {
+  const note = annotation.note?.trim();
+  if (!note) {
+    return;
+  }
+  const [, top, right] = rectangle;
+  if (!Number.isFinite(top) || !Number.isFinite(right)) {
+    return;
+  }
+  const marker = layer.ownerDocument.createElement('button');
+  marker.type = 'button';
+  marker.dataset['omniaAnnotationNoteId'] = annotation.id;
+  marker.setAttribute('aria-label', `Open note: ${note.slice(0, 120)}`);
+  marker.title = 'Open note';
+  marker.textContent = '📝';
+  const desiredLeft = right + 4;
+  const left =
+    layer.clientWidth > 0
+      ? Math.min(desiredLeft, Math.max(0, layer.clientWidth - 24))
+      : desiredLeft;
+  Object.assign(marker.style, {
+    position: 'absolute',
+    left: `${Math.max(0, left)}px`,
+    top: `${Math.max(0, top - 2)}px`,
+    display: 'grid',
+    placeItems: 'center',
+    width: '24px',
+    height: '24px',
+    padding: '0',
+    border: '1px solid #d97706',
+    borderRadius: '9999px',
+    background: '#fef3c7',
+    color: '#92400e',
+    fontSize: '14px',
+    lineHeight: '1',
+    cursor: 'pointer',
+    pointerEvents: 'auto',
+    zIndex: '2',
+    boxShadow: '0 1px 3px rgb(0 0 0 / 25%)',
+  });
+  const openNote = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  };
+  marker.addEventListener('click', openNote);
+  marker.addEventListener('contextmenu', openNote);
+  layer.append(marker);
 }
 
 function annotationStyleLabel(

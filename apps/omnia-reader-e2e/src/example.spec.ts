@@ -1171,25 +1171,22 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   );
   await expect(pdfSavedHighlight).toHaveAttribute('role', 'button');
   await pdfSavedHighlight.click();
-  const pdfAnnotationEditor = page.getByRole('dialog', {
-    name: 'Edit annotation',
-  });
+  const pdfAnnotationEditor = page.getByTestId('annotation-dashboard');
   const pdfAnnotationNote = pdfAnnotationEditor.getByRole('textbox', {
-    name: 'Note (optional)',
+    name: 'Note',
   });
   await expect(pdfAnnotationNote).toHaveValue('Review this second page.');
-  await expect(pdfAnnotationNote).toBeFocused();
-  await page.keyboard.press('Shift+Tab');
-  await expect(
-    pdfAnnotationEditor.getByRole('button', { name: 'Pink' }),
-  ).toBeFocused();
-  await page.keyboard.press('Tab');
-  await expect(pdfAnnotationNote).toBeFocused();
   await pdfAnnotationNote.fill('Updated PDF note.');
-  await pdfAnnotationEditor.getByRole('button', { name: 'Blue' }).click();
+  await pdfAnnotationEditor
+    .getByRole('button', { name: 'Strikethrough', exact: true })
+    .click();
   await pdfAnnotationEditor.getByRole('button', { name: 'Underline' }).click();
   await pdfAnnotationEditor
-    .getByRole('button', { name: 'Save', exact: true })
+    .getByRole('button', { name: /^Underline color:/ })
+    .click();
+  await page.getByRole('button', { name: 'Dark blue underline color' }).click();
+  await pdfAnnotationEditor
+    .getByRole('button', { name: 'Close', exact: true })
     .click();
   await expect(pdfAnnotationEditor).toBeHidden();
   await expect(pdfSavedHighlight).toHaveAttribute(
@@ -1996,21 +1993,27 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await expect(epubSavedHighlight).toBeVisible();
   await expect(epubSavedHighlight).toHaveAttribute('role', 'button');
   await epubSavedHighlight.click();
-  const epubAnnotationEditor = page.getByRole('dialog', {
-    name: 'Edit annotation',
-  });
+  const epubAnnotationEditor = page.getByTestId('annotation-dashboard');
   await expect(
-    epubAnnotationEditor.getByRole('textbox', { name: 'Note (optional)' }),
+    epubAnnotationEditor.getByRole('textbox', { name: 'Note' }),
   ).toHaveValue('Portable EPUB note.');
   await epubAnnotationEditor
-    .getByRole('textbox', { name: 'Note (optional)' })
+    .getByRole('textbox', { name: 'Note' })
     .fill('Updated EPUB note.');
-  await epubAnnotationEditor.getByRole('button', { name: 'Pink' }).click();
   await epubAnnotationEditor
-    .getByRole('button', { name: 'Strikethrough' })
+    .getByRole('button', { name: 'Underline', exact: true })
     .click();
   await epubAnnotationEditor
-    .getByRole('button', { name: 'Save', exact: true })
+    .getByRole('button', { name: 'Strikethrough', exact: true })
+    .click();
+  await epubAnnotationEditor
+    .getByRole('button', { name: /^Strikethrough color:/ })
+    .click();
+  await page
+    .getByRole('button', { name: 'Purple strikethrough color' })
+    .click();
+  await epubAnnotationEditor
+    .getByRole('button', { name: 'Close', exact: true })
     .click();
   await expect(epubAnnotationEditor).toBeHidden();
   await page
@@ -2021,7 +2024,7 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     .getByRole('button', { name: 'Toggle highlights and notes' })
     .click();
   const updatedEpubHighlight = page.locator(
-    '.omnia-annotation-pink-strikethrough[data-annotation-id]',
+    '.omnia-annotation-purple-strikethrough[data-annotation-id]',
   );
   await expect(updatedEpubHighlight).toBeVisible();
   await updatedEpubHighlight.click();

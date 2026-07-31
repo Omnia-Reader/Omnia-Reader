@@ -29,7 +29,9 @@
     #readerToolbar
     id="reader-toolbar"
     data-testid="reader-toolbar"
-    class="z-10 flex items-center bg-white/95 px-4 py-2 shadow-[0_1px_10px_rgb(15_23_42/10%)] transition-transform duration-200"
+    class="z-10 flex items-center bg-white/95 shadow-[0_1px_10px_rgb(15_23_42/10%)] transition-transform duration-200"
+    [class.px-4]="!annotationEditorOpen || !pendingSelection"
+    [class.py-2]="!annotationEditorOpen || !pendingSelection"
     [ngClass]="
       immersiveMode
         ? immersiveToolbarRevealed
@@ -40,177 +42,186 @@
     [attr.aria-hidden]="
       immersiveMode && !immersiveToolbarRevealed ? 'true' : null
     "
+    [style.box-shadow]="
+      annotationEditorOpen && pendingSelection
+        ? 'inset 0 -1px 0 #a8b4c3, 0 2px 12px rgb(15 23 42 / 14%)'
+        : null
+    "
     (focusout)="onReaderToolbarFocusOut($event)"
     (mouseleave)="hideImmersiveToolbar()"
   >
-    <button
-      #tocTrigger
-      mat-icon-button
-      matTooltip="Table of contents"
-      type="button"
-      aria-label="Toggle table of contents"
-      aria-controls="reader-toc-panel"
-      [attr.aria-expanded]="tocOpen"
-      [disabled]="tableOfContents.length === 0"
-      (click)="toggleToc()"
-    >
-      <mat-icon>toc</mat-icon>
-    </button>
-    <div class="grid min-w-0 flex-1 px-3">
-      <strong class="overflow-hidden text-ellipsis whitespace-nowrap">
-        {{ metadata?.title || book?.title || 'Reader' }}
-      </strong>
-      @if (metadata?.authors?.length) {
-        <span
-          class="overflow-hidden text-xs text-ellipsis whitespace-nowrap text-slate-500"
-        >
-          {{ metadata.authors.join(', ') }}
-        </span>
-      }
-    </div>
-    <button
-      #actionsTrigger
-      mat-icon-button
-      matTooltip="Reader actions"
-      class="sm:!hidden"
-      type="button"
-      aria-label="Toggle reader actions"
-      aria-controls="reader-actions-panel"
-      [attr.aria-expanded]="actionsOpen"
-      (click)="toggleReaderActions()"
-    >
-      <mat-icon>more_vert</mat-icon>
-    </button>
-    <button
-      #searchTrigger
-      mat-icon-button
-      matTooltip="Search publication"
-      class="!hidden sm:!inline-flex"
-      type="button"
-      aria-label="Open publication search"
-      aria-controls="reader-search-panel"
-      [attr.aria-expanded]="searchOpen"
-      (click)="toggleSearch()"
-    >
-      <mat-icon>search</mat-icon>
-    </button>
-    <button
-      #bookmarksTrigger
-      mat-icon-button
-      matTooltip="Bookmarks"
-      class="!hidden sm:!inline-flex"
-      type="button"
-      aria-label="Toggle bookmarks"
-      aria-controls="reader-bookmarks-panel"
-      [attr.aria-expanded]="bookmarksOpen"
-      (click)="toggleBookmarks()"
-    >
-      <mat-icon>{{ currentBookmark ? 'bookmark' : 'bookmarks' }}</mat-icon>
-    </button>
-    <button
-      #annotationsTrigger
-      mat-icon-button
-      matTooltip="Highlights and notes"
-      class="relative !hidden sm:!inline-flex"
-      type="button"
-      aria-label="Toggle highlights and notes"
-      [attr.aria-describedby]="
-        annotations.length > 0 ? 'reader-annotation-count' : null
-      "
-      aria-controls="reader-annotations-panel"
-      [attr.aria-expanded]="annotationsOpen"
-      (click)="toggleAnnotations()"
-    >
-      <mat-icon>highlight</mat-icon>
-      @if (annotations.length > 0) {
-        <span
-          id="reader-annotation-count"
-          class="pointer-events-none absolute top-0 right-0 grid min-h-4 min-w-4 place-items-center rounded-full bg-violet-700 px-1 text-[0.625rem] leading-4 font-bold text-white"
-          data-testid="annotation-count-badge"
-        >
-          {{ annotations.length > 99 ? '99+' : annotations.length }}
-          <span class="sr-only">
-            {{
-              annotations.length === 1
-                ? 'saved annotation'
-                : 'saved annotations'
-            }}
-          </span>
-        </span>
-      }
-    </button>
-    @if (pageNavigation) {
+    @if (annotationEditorOpen && pendingSelection) {
+      <ng-container [ngTemplateOutlet]="annotationDashboard"></ng-container>
+    } @else {
       <button
-        #thumbnailsTrigger
+        #tocTrigger
         mat-icon-button
-        matTooltip="Page thumbnails"
+        matTooltip="Table of contents"
+        type="button"
+        aria-label="Toggle table of contents"
+        aria-controls="reader-toc-panel"
+        [attr.aria-expanded]="tocOpen"
+        [disabled]="tableOfContents.length === 0"
+        (click)="toggleToc()"
+      >
+        <mat-icon>toc</mat-icon>
+      </button>
+      <div class="grid min-w-0 flex-1 px-3">
+        <strong class="overflow-hidden text-ellipsis whitespace-nowrap">
+          {{ metadata?.title || book?.title || 'Reader' }}
+        </strong>
+        @if (metadata?.authors?.length) {
+          <span
+            class="overflow-hidden text-xs text-ellipsis whitespace-nowrap text-slate-500"
+          >
+            {{ metadata.authors.join(', ') }}
+          </span>
+        }
+      </div>
+      <button
+        #actionsTrigger
+        mat-icon-button
+        matTooltip="Reader actions"
+        class="sm:!hidden"
+        type="button"
+        aria-label="Toggle reader actions"
+        aria-controls="reader-actions-panel"
+        [attr.aria-expanded]="actionsOpen"
+        (click)="toggleReaderActions()"
+      >
+        <mat-icon>more_vert</mat-icon>
+      </button>
+      <button
+        #searchTrigger
+        mat-icon-button
+        matTooltip="Search publication"
         class="!hidden sm:!inline-flex"
         type="button"
-        aria-label="Toggle PDF page thumbnails"
-        aria-controls="reader-thumbnails-panel"
-        [attr.aria-expanded]="thumbnailsOpen"
-        (click)="toggleThumbnails()"
+        aria-label="Open publication search"
+        aria-controls="reader-search-panel"
+        [attr.aria-expanded]="searchOpen"
+        (click)="toggleSearch()"
       >
-        <mat-icon>view_sidebar</mat-icon>
+        <mat-icon>search</mat-icon>
       </button>
-    }
-    <button
-      #settingsTrigger
-      mat-icon-button
-      matTooltip="Reader settings"
-      class="!hidden sm:!inline-flex"
-      type="button"
-      aria-label="Open reader settings"
-      aria-controls="reader-settings-panel"
-      [attr.aria-expanded]="settingsOpen"
-      (click)="toggleSettings()"
-    >
-      <mat-icon>text_fields</mat-icon>
-    </button>
-    <button
-      #shortcutsTrigger
-      mat-icon-button
-      matTooltip="Keyboard shortcuts"
-      class="!hidden sm:!inline-flex"
-      type="button"
-      aria-label="Open keyboard shortcuts"
-      aria-haspopup="dialog"
-      aria-controls="reader-keyboard-shortcuts-dialog"
-      [attr.aria-expanded]="shortcutsOpen"
-      (click)="toggleKeyboardShortcuts()"
-    >
-      <mat-icon>keyboard</mat-icon>
-    </button>
-    <button
-      mat-icon-button
-      [matTooltip]="
-        immersiveMode
-          ? 'Exit immersive reading mode'
-          : 'Enter immersive reading mode'
-      "
-      class="!hidden sm:!inline-flex"
-      type="button"
-      [attr.aria-label]="
-        immersiveMode
-          ? 'Exit immersive reading mode'
-          : 'Enter immersive reading mode'
-      "
-      (click)="toggleImmersiveMode()"
-    >
-      <mat-icon>{{
-        immersiveMode ? 'fullscreen_exit' : 'fullscreen'
-      }}</mat-icon>
-    </button>
-    @if (immersiveMode) {
+      <button
+        #bookmarksTrigger
+        mat-icon-button
+        matTooltip="Bookmarks"
+        class="!hidden sm:!inline-flex"
+        type="button"
+        aria-label="Toggle bookmarks"
+        aria-controls="reader-bookmarks-panel"
+        [attr.aria-expanded]="bookmarksOpen"
+        (click)="toggleBookmarks()"
+      >
+        <mat-icon>{{ currentBookmark ? 'bookmark' : 'bookmarks' }}</mat-icon>
+      </button>
+      <button
+        #annotationsTrigger
+        mat-icon-button
+        matTooltip="Highlights and notes"
+        class="relative !hidden sm:!inline-flex"
+        type="button"
+        aria-label="Toggle highlights and notes"
+        [attr.aria-describedby]="
+          annotations.length > 0 ? 'reader-annotation-count' : null
+        "
+        aria-controls="reader-annotations-panel"
+        [attr.aria-expanded]="annotationsOpen"
+        (click)="toggleAnnotations()"
+      >
+        <mat-icon>highlight</mat-icon>
+        @if (annotations.length > 0) {
+          <span
+            id="reader-annotation-count"
+            class="pointer-events-none absolute top-0 right-0 grid min-h-4 min-w-4 place-items-center rounded-full bg-violet-700 px-1 text-[0.625rem] leading-4 font-bold text-white"
+            data-testid="annotation-count-badge"
+          >
+            {{ annotations.length > 99 ? '99+' : annotations.length }}
+            <span class="sr-only">
+              {{
+                annotations.length === 1
+                  ? 'saved annotation'
+                  : 'saved annotations'
+              }}
+            </span>
+          </span>
+        }
+      </button>
+      @if (pageNavigation) {
+        <button
+          #thumbnailsTrigger
+          mat-icon-button
+          matTooltip="Page thumbnails"
+          class="!hidden sm:!inline-flex"
+          type="button"
+          aria-label="Toggle PDF page thumbnails"
+          aria-controls="reader-thumbnails-panel"
+          [attr.aria-expanded]="thumbnailsOpen"
+          (click)="toggleThumbnails()"
+        >
+          <mat-icon>view_sidebar</mat-icon>
+        </button>
+      }
+      <button
+        #settingsTrigger
+        mat-icon-button
+        matTooltip="Reader settings"
+        class="!hidden sm:!inline-flex"
+        type="button"
+        aria-label="Open reader settings"
+        aria-controls="reader-settings-panel"
+        [attr.aria-expanded]="settingsOpen"
+        (click)="toggleSettings()"
+      >
+        <mat-icon>text_fields</mat-icon>
+      </button>
+      <button
+        #shortcutsTrigger
+        mat-icon-button
+        matTooltip="Keyboard shortcuts"
+        class="!hidden sm:!inline-flex"
+        type="button"
+        aria-label="Open keyboard shortcuts"
+        aria-haspopup="dialog"
+        aria-controls="reader-keyboard-shortcuts-dialog"
+        [attr.aria-expanded]="shortcutsOpen"
+        (click)="toggleKeyboardShortcuts()"
+      >
+        <mat-icon>keyboard</mat-icon>
+      </button>
       <button
         mat-icon-button
-        matTooltip="Hide reader controls"
+        [matTooltip]="
+          immersiveMode
+            ? 'Exit immersive reading mode'
+            : 'Enter immersive reading mode'
+        "
+        class="!hidden sm:!inline-flex"
         type="button"
-        aria-label="Hide reader controls"
-        (click)="hideImmersiveToolbar()"
+        [attr.aria-label]="
+          immersiveMode
+            ? 'Exit immersive reading mode'
+            : 'Enter immersive reading mode'
+        "
+        (click)="toggleImmersiveMode()"
       >
-        <mat-icon>keyboard_arrow_up</mat-icon>
+        <mat-icon>{{
+          immersiveMode ? 'fullscreen_exit' : 'fullscreen'
+        }}</mat-icon>
       </button>
+      @if (immersiveMode) {
+        <button
+          mat-icon-button
+          matTooltip="Hide reader controls"
+          type="button"
+          aria-label="Hide reader controls"
+          (click)="hideImmersiveToolbar()"
+        >
+          <mat-icon>keyboard_arrow_up</mat-icon>
+        </button>
+      }
     }
   </header>
 
@@ -675,19 +686,58 @@
             @for (annotation of shownAnnotations; track annotation.id) {
               <article
                 class="rounded-lg border border-stone-200 border-l-4 bg-stone-50 p-3"
-                [class.border-l-yellow-500]="annotation.color === 'yellow'"
-                [class.border-l-green-500]="annotation.color === 'green'"
-                [class.border-l-blue-500]="annotation.color === 'blue'"
-                [class.border-l-pink-500]="annotation.color === 'pink'"
+                [style.border-left-color]="annotationColorHex(annotation.color)"
               >
                 <div class="mb-2 flex items-center gap-2 text-xs">
-                  <span
-                    class="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 font-medium text-stone-700"
-                  >
-                    <mat-icon class="text-base" aria-hidden="true">
-                      {{ annotationStyleIcon(annotationStyleOf(annotation)) }}
-                    </mat-icon>
-                    {{ annotationStyleLabel(annotationStyleOf(annotation)) }}
+                  <span class="flex min-w-0 flex-wrap gap-1">
+                    @for (
+                      decoration of annotationDecorationsOf(annotation);
+                      track decoration.style
+                    ) {
+                      <span
+                        class="inline-flex items-center gap-1 rounded-full bg-white py-1 pr-1 pl-2 font-medium text-stone-700"
+                      >
+                        <mat-icon class="text-base" aria-hidden="true">
+                          {{ annotationStyleIcon(decoration.style) }}
+                        </mat-icon>
+                        <span
+                          class="size-3 rounded-full border border-black/10"
+                          aria-hidden="true"
+                          [style.background-color]="
+                            annotationColorHex(decoration.color)
+                          "
+                        ></span>
+                        {{ annotationStyleLabel(decoration.style) }}
+                        <button
+                          class="grid size-6 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-stone-500 hover:bg-stone-200 hover:text-stone-900"
+                          type="button"
+                          [attr.aria-label]="
+                            'Remove ' +
+                            annotationStyleLabel(
+                              decoration.style
+                            ).toLocaleLowerCase()
+                          "
+                          [disabled]="annotationBusy"
+                          (click)="
+                            removeAnnotationDecoration(
+                              annotation,
+                              decoration.style
+                            )
+                          "
+                        >
+                          <mat-icon class="text-base">close</mat-icon>
+                        </button>
+                      </span>
+                    } @empty {
+                      <span
+                        class="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 font-medium text-stone-700"
+                      >
+                        <mat-icon class="text-base" aria-hidden="true">
+                          comment
+                        </mat-icon>
+                        Note
+                      </span>
+                    }
                   </span>
                   <span
                     class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-stone-500"
@@ -710,8 +760,11 @@
                     class="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-stone-700"
                   >
                     <span
-                      class="mb-1 block text-xs font-semibold text-amber-800"
+                      class="mb-1 flex items-center gap-1 text-xs font-semibold text-amber-800"
                     >
+                      <mat-icon class="text-base" aria-hidden="true">
+                        sticky_note_2
+                      </mat-icon>
                       Note
                     </span>
                     {{ annotation.note }}
@@ -1217,150 +1270,454 @@
     </section>
   }
 
-  @if (annotationEditorOpen && pendingSelection) {
+  @if (annotationGroupOpen) {
     <section
-      class="absolute right-4 bottom-20 left-4 z-8 mx-auto grid max-w-xl gap-4 rounded-2xl bg-white p-5 shadow-2xl"
+      class="absolute right-4 bottom-20 left-4 z-8 mx-auto grid max-h-[calc(100vh-8rem)] max-w-xl gap-4 overflow-auto rounded-2xl bg-white p-5 shadow-2xl"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="annotation-editor-title"
+      aria-labelledby="annotation-group-title"
       cdkTrapFocus
       [cdkTrapFocusAutoCapture]="true"
     >
-      <div>
-        <h2 id="annotation-editor-title" class="mt-0 mb-2 text-lg">
-          {{ editingAnnotation ? 'Edit annotation' : 'New annotation' }}
-        </h2>
-        <q class="block max-h-24 overflow-auto text-stone-700">
-          {{ pendingSelection.locator.text?.highlight }}
-        </q>
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h2 id="annotation-group-title" class="m-0 text-lg">
+            Formatting on this text
+          </h2>
+          <p class="mt-1 mb-0 text-sm text-stone-600">
+            Edit or remove only the layer you want to change.
+          </p>
+        </div>
+        <button
+          mat-icon-button
+          type="button"
+          aria-label="Close text formatting"
+          (click)="closeAnnotationGroup()"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
       </div>
-
-      <fieldset class="border-0 p-0">
-        <legend class="mb-2 font-medium">Style</legend>
-        <div class="grid grid-cols-3 gap-2">
-          <button
-            class="grid min-w-0 justify-items-center gap-1 rounded-lg border border-stone-300 p-2"
-            type="button"
-            [class.bg-stone-100]="annotationStyle === 'highlight'"
-            [class.border-stone-900]="annotationStyle === 'highlight'"
-            [attr.aria-pressed]="annotationStyle === 'highlight'"
-            (click)="annotationStyle = 'highlight'"
-          >
-            <mat-icon>highlight</mat-icon>
-            <span class="text-xs">Highlight</span>
-          </button>
-          <button
-            class="grid min-w-0 justify-items-center gap-1 rounded-lg border border-stone-300 p-2"
-            type="button"
-            [class.bg-stone-100]="annotationStyle === 'underline'"
-            [class.border-stone-900]="annotationStyle === 'underline'"
-            [attr.aria-pressed]="annotationStyle === 'underline'"
-            (click)="annotationStyle = 'underline'"
-          >
-            <mat-icon>format_underlined</mat-icon>
-            <span class="text-xs">Underline</span>
-          </button>
-          <button
-            class="grid min-w-0 justify-items-center gap-1 rounded-lg border border-stone-300 p-2"
-            type="button"
-            [class.bg-stone-100]="annotationStyle === 'strikethrough'"
-            [class.border-stone-900]="annotationStyle === 'strikethrough'"
-            [attr.aria-pressed]="annotationStyle === 'strikethrough'"
-            (click)="annotationStyle = 'strikethrough'"
-          >
-            <mat-icon>strikethrough_s</mat-icon>
-            <span class="text-xs">Strikethrough</span>
-          </button>
-        </div>
-      </fieldset>
-
-      <fieldset class="border-0 p-0">
-        <legend class="mb-2 font-medium">Annotation color</legend>
-        <div class="grid grid-cols-4 gap-2">
-          <button
-            class="rounded-lg border border-stone-300 p-2"
-            type="button"
-            [attr.aria-pressed]="annotationColor === 'yellow'"
-            (click)="annotationColor = 'yellow'"
-          >
-            <span class="block h-4 rounded bg-yellow-400"></span>
-            <span class="sr-only">Yellow</span>
-          </button>
-          <button
-            class="rounded-lg border border-stone-300 p-2"
-            type="button"
-            [attr.aria-pressed]="annotationColor === 'green'"
-            (click)="annotationColor = 'green'"
-          >
-            <span class="block h-4 rounded bg-green-400"></span>
-            <span class="sr-only">Green</span>
-          </button>
-          <button
-            class="rounded-lg border border-stone-300 p-2"
-            type="button"
-            [attr.aria-pressed]="annotationColor === 'blue'"
-            (click)="annotationColor = 'blue'"
-          >
-            <span class="block h-4 rounded bg-blue-400"></span>
-            <span class="sr-only">Blue</span>
-          </button>
-          <button
-            class="rounded-lg border border-stone-300 p-2"
-            type="button"
-            [attr.aria-pressed]="annotationColor === 'pink'"
-            (click)="annotationColor = 'pink'"
-          >
-            <span class="block h-4 rounded bg-pink-400"></span>
-            <span class="sr-only">Pink</span>
-          </button>
-        </div>
-      </fieldset>
-
-      <label class="grid gap-2" for="annotation-note">
-        <span class="font-medium">Note (optional)</span>
-        <textarea
-          id="annotation-note"
-          class="min-h-20 resize-y rounded-lg border border-stone-400 px-3 py-2"
-          name="annotationNote"
-          maxlength="16384"
-          cdkFocusInitial
-          [(ngModel)]="annotationNote"
-        ></textarea>
-      </label>
-      @if (annotationError) {
-        <p class="m-0 text-red-700" role="alert">{{ annotationError }}</p>
-      }
-      <div class="flex justify-end gap-2">
-        @if (editingAnnotation) {
-          <button
-            mat-button
-            class="mr-auto text-red-700"
-            type="button"
-            [disabled]="annotationBusy"
-            (click)="removeEditingAnnotation()"
-          >
-            {{ annotationBusy ? 'Deleting…' : 'Delete annotation' }}
-          </button>
+      <q class="block max-h-24 overflow-auto text-stone-700">
+        {{ annotationGroup[0]?.locator?.text?.highlight }}
+      </q>
+      <div class="grid gap-2">
+        @for (annotation of annotationGroup; track annotation.id) {
+          <article class="grid gap-3 rounded-xl border border-stone-200 p-3">
+            <div class="flex flex-wrap gap-2">
+              @for (
+                decoration of annotationDecorationsOf(annotation);
+                track decoration.style
+              ) {
+                <span
+                  class="inline-flex items-center gap-1 rounded-full bg-stone-100 py-1 pr-1 pl-2 text-sm font-medium"
+                >
+                  <mat-icon class="text-base" aria-hidden="true">
+                    {{ annotationStyleIcon(decoration.style) }}
+                  </mat-icon>
+                  <span
+                    class="size-3 rounded-full border border-black/10"
+                    aria-hidden="true"
+                    [style.background-color]="
+                      annotationColorHex(decoration.color)
+                    "
+                  ></span>
+                  {{ annotationStyleLabel(decoration.style) }}
+                  <button
+                    class="grid size-6 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-stone-500 hover:bg-stone-200 hover:text-stone-900"
+                    type="button"
+                    [disabled]="annotationBusy"
+                    [attr.aria-label]="
+                      'Remove ' +
+                      annotationStyleLabel(
+                        decoration.style
+                      ).toLocaleLowerCase() +
+                      ' from selected text'
+                    "
+                    (click)="
+                      removeAnnotationDecoration(annotation, decoration.style)
+                    "
+                  >
+                    <mat-icon class="text-base">close</mat-icon>
+                  </button>
+                </span>
+              }
+            </div>
+            @if (annotation.note) {
+              <p
+                class="m-0 flex items-start gap-2 rounded-lg bg-amber-50 p-2 text-sm"
+              >
+                <mat-icon class="text-amber-700" aria-hidden="true">
+                  sticky_note_2
+                </mat-icon>
+                {{ annotation.note }}
+              </p>
+            }
+            <div class="flex justify-end gap-2">
+              <button
+                mat-button
+                type="button"
+                [disabled]="annotationBusy"
+                (click)="editAnnotationFromGroup(annotation)"
+              >
+                Edit
+              </button>
+              <button
+                mat-button
+                class="text-red-700"
+                type="button"
+                [disabled]="annotationBusy"
+                (click)="removeAnnotationFromGroup(annotation)"
+              >
+                Delete item
+              </button>
+            </div>
+          </article>
         }
-        <button
-          mat-button
-          type="button"
-          [disabled]="annotationBusy"
-          (click)="cancelAnnotationEditor()"
-        >
-          Cancel
-        </button>
-        <button
-          mat-flat-button
-          type="button"
-          [disabled]="annotationBusy"
-          (click)="saveAnnotation()"
-        >
-          {{ annotationBusy ? 'Saving…' : 'Save' }}
-        </button>
       </div>
     </section>
   }
+
+  <ng-template #annotationDashboard>
+    <section
+      data-testid="annotation-dashboard"
+      class="relative grid w-full font-['Segoe_UI',Arial,sans-serif]"
+      role="region"
+      aria-labelledby="annotation-editor-title"
+      (keydown)="onAnnotationDashboardKeydown($event)"
+    >
+      <h2 id="annotation-editor-title" class="sr-only">
+        {{ editingAnnotation ? 'Edit annotation' : 'New annotation' }}
+      </h2>
+
+      <div
+        data-testid="annotation-command-row"
+        class="flex min-w-0 flex-nowrap items-stretch overflow-hidden bg-[#f5f6f8] text-slate-800"
+      >
+        <div
+          data-testid="annotation-command-rail"
+          class="flex min-w-0 flex-1 items-center overflow-x-auto overscroll-x-contain px-1 py-1 lg:overflow-visible"
+        >
+          <div class="flex shrink-0 border-r border-[#c8cdd3] px-1">
+            <div
+              class="flex min-h-7 flex-nowrap items-center gap-0.5"
+              role="toolbar"
+              aria-label="Annotation formatting"
+              (keydown)="onAnnotationFormattingKeydown($event)"
+            >
+              @for (format of annotationFormatOptions; track format.style) {
+                <div
+                  class="group relative flex items-center overflow-hidden rounded-sm border border-[#c8cdd3] bg-white transition hover:bg-[#e5f1fb]"
+                  [attr.data-testid]="'annotation-' + format.style + '-control'"
+                  [ngClass]="
+                    annotationStyleSelected(format.style)
+                      ? 'bg-[#d9eaf7] text-[#185abd] shadow-[inset_0_-2px_0_#185abd]'
+                      : 'bg-white'
+                  "
+                >
+                  <button
+                    class="grid h-7 w-7 place-items-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb]"
+                    type="button"
+                    [attr.aria-label]="format.label"
+                    [matTooltip]="format.label"
+                    [matTooltipShowDelay]="700"
+                    [attr.aria-pressed]="annotationStyleSelected(format.style)"
+                    [disabled]="annotationBusy"
+                    (click)="applyAnnotationStyle(format.style)"
+                  >
+                    @switch (format.style) {
+                      @case ('highlight') {
+                        <span
+                          class="relative grid size-5 place-items-center"
+                          aria-hidden="true"
+                        >
+                          <svg viewBox="0 0 24 24" class="size-5">
+                            <path
+                              d="m14.8 3.2 6 6-9.1 9.1-6.2 1.3 1.3-6.2 8-10.2Z"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-linejoin="round"
+                              stroke-width="1.8"
+                            />
+                            <path
+                              d="m7.1 13.1 4 4"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                            />
+                            <path
+                              d="M3 21h18"
+                              [attr.stroke]="
+                                annotationColorHex(
+                                  annotationDecorationColors.highlight
+                                )
+                              "
+                              stroke-width="2.5"
+                            />
+                          </svg>
+                        </span>
+                      }
+                      @case ('underline') {
+                        <span
+                          class="relative grid size-5 place-items-center font-serif text-[17px] leading-none font-semibold"
+                          aria-hidden="true"
+                        >
+                          U
+                          <span
+                            class="absolute right-0 bottom-0 left-0 h-0.5"
+                            [style.background-color]="
+                              annotationColorHex(
+                                annotationDecorationColors.underline
+                              )
+                            "
+                          ></span>
+                        </span>
+                      }
+                      @default {
+                        <span
+                          class="relative grid size-5 place-items-center font-serif text-sm leading-none font-semibold"
+                          aria-hidden="true"
+                        >
+                          ab
+                          <span
+                            class="absolute right-0 left-0 top-1/2 h-0.5 -translate-y-1/2"
+                            [style.background-color]="
+                              annotationColorHex(
+                                annotationDecorationColors.strikethrough
+                              )
+                            "
+                          ></span>
+                        </span>
+                      }
+                    }
+                  </button>
+                  <button
+                    class="flex h-7 w-4 items-center justify-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb] hover:!bg-[#d6e8f5]"
+                    type="button"
+                    aria-haspopup="true"
+                    matTooltip="Choose {{
+                      format.label.toLocaleLowerCase()
+                    }} color"
+                    [matTooltipShowDelay]="700"
+                    [matTooltipDisabled]="
+                      annotationColorPalette === format.style
+                    "
+                    [disabled]="annotationBusy"
+                    [attr.aria-expanded]="
+                      annotationColorPalette === format.style
+                    "
+                    [attr.aria-controls]="
+                      'annotation-' + format.style + '-color-palette'
+                    "
+                    [attr.aria-label]="
+                      format.label +
+                      ' color: ' +
+                      annotationColorLabel(
+                        annotationDecorationColors[format.style]
+                      )
+                    "
+                    (click)="toggleAnnotationColorPalette(format.style)"
+                    (keydown.escape)="closeAnnotationColorPalette($event)"
+                  >
+                    <svg
+                      data-testid="annotation-color-chevron"
+                      viewBox="0 0 10 6"
+                      class="h-1.5 w-2.5 overflow-visible text-slate-600"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M1 1 5 5 9 1"
+                        stroke="currentColor"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="1.4"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              }
+            </div>
+          </div>
+
+          <div class="flex shrink-0 border-r border-[#c8cdd3] px-1">
+            <div class="flex min-h-7 items-center">
+              <button
+                class="grid size-7 place-items-center rounded-sm border border-transparent p-0 transition hover:border-[#c8cdd3] hover:bg-[#e5f1fb]"
+                type="button"
+                aria-controls="annotation-note"
+                [attr.aria-label]="annotationNote ? 'Edit note' : 'Add note'"
+                [matTooltip]="annotationNote ? 'Edit note' : 'Add note'"
+                [matTooltipShowDelay]="700"
+                [ngClass]="
+                  annotationNoteOpen || !!annotationNote
+                    ? 'border-[#9cc2e5] bg-[#d9eaf7] text-[#185abd]'
+                    : 'bg-transparent'
+                "
+                [attr.aria-expanded]="annotationNoteOpen"
+                [attr.aria-pressed]="annotationNoteOpen || !!annotationNote"
+                (click)="toggleAnnotationNote()"
+              >
+                <mat-icon class="!size-5 text-[20px]">sticky_note_2</mat-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          data-testid="annotation-action-group"
+          class="relative z-10 ml-auto flex shrink-0 items-center border-l border-[#c8cdd3] bg-[#f5f6f8] px-1 shadow-[-5px_0_8px_rgb(15_23_42/8%)]"
+        >
+          <div class="flex min-h-7 items-center gap-0.5">
+            @if (editingAnnotation) {
+              <button
+                class="grid size-7 place-items-center rounded-sm border border-transparent bg-transparent text-red-700 transition hover:border-[#c8cdd3] hover:bg-red-50"
+                type="button"
+                aria-label="Delete annotation"
+                matTooltip="Delete annotation"
+                [matTooltipShowDelay]="700"
+                [disabled]="annotationBusy"
+                (click)="removeEditingAnnotation()"
+              >
+                <mat-icon class="!size-5 text-[20px]">delete</mat-icon>
+              </button>
+            }
+            <button
+              class="grid size-7 place-items-center rounded-sm border border-transparent bg-transparent text-slate-700 transition hover:border-[#c8cdd3] hover:bg-white"
+              type="button"
+              aria-label="Close"
+              matTooltip="Close"
+              [matTooltipShowDelay]="700"
+              [disabled]="annotationBusy"
+              (click)="autosaveAnnotationAndClose()"
+            >
+              <mat-icon class="!size-5 text-[20px]">close</mat-icon>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      @if (annotationColorPalette; as paletteStyle) {
+        <div
+          class="absolute top-[calc(100%+4px)] left-2 z-30 grid gap-2 rounded-sm border border-[#aeb6c0] bg-white p-3 text-slate-800 shadow-[0_8px_24px_rgb(15_23_42/24%)]"
+          role="group"
+          [ngClass]="
+            paletteStyle === 'highlight' ? 'grid-cols-5' : 'grid-cols-6'
+          "
+          [id]="'annotation-' + paletteStyle + '-color-palette'"
+          [attr.aria-label]="
+            annotationStyleLabel(paletteStyle) + ' color palette'
+          "
+          (keydown.escape)="closeAnnotationColorPalette($event)"
+        >
+          <span
+            class="mb-0.5 text-xs font-semibold text-slate-600"
+            [ngClass]="
+              paletteStyle === 'highlight' ? 'col-span-5' : 'col-span-6'
+            "
+          >
+            {{ annotationStyleLabel(paletteStyle) }} color
+          </span>
+          @for (
+            option of annotationColorOptionsFor(paletteStyle);
+            track option.value
+          ) {
+            <button
+              class="grid size-8 cursor-pointer place-items-center border-0 bg-transparent p-0"
+              type="button"
+              [attr.aria-label]="
+                option.label +
+                ' ' +
+                annotationStyleLabel(paletteStyle).toLocaleLowerCase() +
+                ' color'
+              "
+              [attr.aria-pressed]="
+                annotationDecorationColors[paletteStyle] === option.value
+              "
+              (click)="chooseAnnotationColor(paletteStyle, option.value)"
+            >
+              <span
+                class="grid size-7 place-items-center border border-black/25 shadow-sm"
+                [class.ring-2]="
+                  annotationDecorationColors[paletteStyle] === option.value
+                "
+                [class.ring-[#185abd]]="
+                  annotationDecorationColors[paletteStyle] === option.value
+                "
+                [class.ring-offset-2]="
+                  annotationDecorationColors[paletteStyle] === option.value
+                "
+                [style.background-color]="option.hex"
+              ></span>
+            </button>
+          }
+          <label
+            class="relative grid size-8 cursor-pointer place-items-center"
+            title="Custom color"
+            [class.ring-2]="annotationColorIsCustom(paletteStyle)"
+            [class.ring-[#185abd]]="annotationColorIsCustom(paletteStyle)"
+            [class.ring-offset-2]="annotationColorIsCustom(paletteStyle)"
+          >
+            <span
+              class="block size-7 border border-black/25 shadow-sm"
+              style="
+                background: conic-gradient(
+                  #ef4444,
+                  #f59e0b,
+                  #22c55e,
+                  #06b6d4,
+                  #3b82f6,
+                  #a855f7,
+                  #ef4444
+                );
+              "
+              aria-hidden="true"
+            ></span>
+            <input
+              class="absolute inset-0 size-full cursor-pointer opacity-0"
+              type="color"
+              [attr.aria-label]="
+                'Custom ' +
+                annotationStyleLabel(paletteStyle).toLocaleLowerCase() +
+                ' color'
+              "
+              [value]="annotationColorPickerValue(paletteStyle)"
+              (input)="
+                onAnnotationColorInput(paletteStyle, $any($event.target).value)
+              "
+            />
+          </label>
+        </div>
+      }
+
+      @if (annotationNoteOpen) {
+        <label
+          class="grid gap-1 border-t border-[#c8cdd3] bg-white px-3 py-2"
+          for="annotation-note"
+        >
+          <span class="flex items-center justify-between gap-3">
+            <span class="text-xs font-semibold text-[#185abd]">Note</span>
+            <span class="text-[0.6875rem] text-slate-600">
+              Saved automatically
+            </span>
+          </span>
+          <textarea
+            id="annotation-note"
+            class="min-h-16 resize-y rounded-sm border border-[#aeb6c0] bg-white px-3 py-2 text-sm outline-none transition focus:border-[#185abd] focus:ring-1 focus:ring-[#185abd]"
+            name="annotationNote"
+            maxlength="16384"
+            placeholder="Write a note about the selected text…"
+            [(ngModel)]="annotationNote"
+            (ngModelChange)="onAnnotationNoteChange()"
+            (blur)="flushAnnotationAutosave()"
+          ></textarea>
+        </label>
+      }
+      @if (annotationError) {
+        <p class="m-0 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+          {{ annotationError }}
+        </p>
+      }
+    </section>
+  </ng-template>
 
   @if (shortcutsOpen) {
     <div

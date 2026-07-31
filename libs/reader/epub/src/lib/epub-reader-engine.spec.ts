@@ -107,27 +107,21 @@ describe('EpubReaderEngine annotations', () => {
       (document: Document, section?: Section) => void | Promise<void>
     >();
     let attachContent: ((contents: Contents) => void) | undefined;
-    const annotationElement = globalThis.document.createElementNS(
-      'http://www.w3.org/2000/svg',
-      'g',
-    );
-    const renderedMark = {
-      element: annotationElement,
-      render: vi.fn(),
-    };
-    const renderedAnnotation = {
-      mark: renderedMark,
-      on: vi.fn(),
-    };
-    const highlight = vi.fn((...args: unknown[]) => {
-      void args;
-      return renderedAnnotation;
+    const registeredHighlights = new Map<string, Highlight>();
+    class TestHighlight extends Set<AbstractRange> {
+      constructor(...ranges: AbstractRange[]) {
+        super(ranges);
+      }
+    }
+    Object.defineProperty(globalThis.window, 'CSS', {
+      configurable: true,
+      value: { highlights: registeredHighlights },
     });
-    const underline = vi.fn((...args: unknown[]) => {
-      void args;
-      return renderedAnnotation;
+    Object.defineProperty(globalThis.window, 'Highlight', {
+      configurable: true,
+      value: TestHighlight,
     });
-    const remove = vi.fn();
+    let annotationRange: Range | null = null;
     const locations = {
       total: 100,
       generate: vi.fn().mockResolvedValue([]),
@@ -148,7 +142,11 @@ describe('EpubReaderEngine annotations', () => {
         displayed: { page: 1, total: 10 },
       })),
       reportLocation: vi.fn().mockResolvedValue(undefined),
-      annotations: { highlight, underline, remove },
+      annotations: {
+        highlight: vi.fn(),
+        underline: vi.fn(),
+        remove: vi.fn(),
+      },
       getContents: vi.fn(() => []),
       hooks: {
         content: {
@@ -308,6 +306,12 @@ describe('EpubReaderEngine annotations', () => {
       window: globalThis.window,
       document: globalThis.document,
       cfiFromRange: vi.fn(() => 'epubcfi(/6/2!/4/2,/1:7,/1:25)'),
+      range: vi.fn(() => {
+        if (!annotationRange) {
+          throw new Error('Annotation range is not ready');
+        }
+        return annotationRange;
+      }),
     } as unknown as Contents;
     attachContent?.(renderedContents);
     globalThis.document.dispatchEvent(
@@ -423,7 +427,11 @@ describe('EpubReaderEngine annotations', () => {
     expect(legacySwipeNext.defaultPrevented).toBe(true);
 
     const selections: Array<PublicationSelection | null> = [];
+    const selectionActionRequests: PublicationSelection[] = [];
     engine.onSelection((selection) => selections.push(selection));
+    engine.onSelectionActionRequested((selection) =>
+      selectionActionRequests.push(selection),
+    );
 
     const paragraph = globalThis.document.createElement('p');
     paragraph.textContent = 'Before selected quotation after';
@@ -431,6 +439,23 @@ describe('EpubReaderEngine annotations', () => {
     const range = globalThis.document.createRange();
     range.setStart(paragraph.firstChild as Text, 7);
     range.setEnd(paragraph.firstChild as Text, 25);
+    annotationRange = range;
+    Object.defineProperty(range, 'getClientRects', {
+      configurable: true,
+      value: () => [
+        {
+          left: 5,
+          right: 105,
+          top: 5,
+          bottom: 25,
+          width: 100,
+          height: 20,
+          x: 5,
+          y: 5,
+          toJSON: () => undefined,
+        },
+      ],
+    });
     const browserSelection = globalThis.document.getSelection();
     browserSelection?.removeAllRanges();
     browserSelection?.addRange(range);
@@ -446,6 +471,7 @@ describe('EpubReaderEngine annotations', () => {
     expect(contextMenu.defaultPrevented).toBe(true);
 
     const captured = selections[selections.length - 1];
+    expect(selectionActionRequests).toEqual([captured]);
     expect(captured?.locator).toMatchObject({
       href: 'chapter.xhtml',
       locations: {
@@ -467,71 +493,84 @@ describe('EpubReaderEngine annotations', () => {
       createdAt: '2026-07-25T08:00:00.000Z',
       updatedAt: '2026-07-25T08:00:00.000Z',
     };
-    const activatedAnnotations: string[] = [];
-    engine.onAnnotationActivated((annotationId) =>
-      activatedAnnotations.push(annotationId),
+    const activatedAnnotationGroups: string[][] = [];
+    engine.onAnnotationGroupActivated((annotationIds) =>
+      activatedAnnotationGroups.push([...annotationIds]),
     );
-    await engine.setAnnotations([annotation]);
+    const layeredAnnotation: PublicationAnnotation = {
+      ...annotation,
+      note: 'Remember this passage.',
+      decorations: [
+        { style: 'highlight', color: '#123456' },
+        { style: 'underline', color: 'blue' },
+        { style: 'strikethrough', color: 'pink' },
+      ],
+    };
+    await engine.setAnnotations([layeredAnnotation]);
 
-    expect(highlight).toHaveBeenCalledWith(
-      'epubcfi(/6/2!/4/2,/1:7,/1:25)',
-      { annotationId: annotation.id },
-      expect.any(Function),
-      'omnia-annotation-green',
-      expect.objectContaining({ fill: '#4ade80' }),
+    expect(registeredHighlights).toHaveLength(3);
+    const annotationStyle = globalThis.document.head.querySelector(
+      'style[data-omnia-annotation-highlights="true"]',
     );
-    expect(renderedAnnotation.on).toHaveBeenCalledWith(
-      'attach',
-      expect.any(Function),
+    expect(annotationStyle?.textContent).toContain('background-color');
+    expect(annotationStyle?.textContent).toContain('#12345666');
+    expect(annotationStyle?.textContent).toContain(
+      'text-decoration-line: underline',
     );
-    expect(annotationElement.getAttribute('role')).toBe('button');
-    expect(annotationElement.getAttribute('tabindex')).toBe('0');
-    const activateHighlight = highlight.mock.calls[0]?.[2] as EventListener;
-    const activateEvent = new Event('click', { cancelable: true });
-    activateHighlight(activateEvent);
+    expect(annotationStyle?.textContent).toContain(
+      'text-decoration-line: line-through',
+    );
+    expect(annotationStyle?.textContent).not.toContain('stroke');
+    const noteMarker = globalThis.document.querySelector<HTMLButtonElement>(
+      `[data-omnia-annotation-note-id="${annotation.id}"]`,
+    );
+    expect(noteMarker?.getAttribute('aria-label')).toContain(
+      'Remember this passage.',
+    );
+    noteMarker?.click();
+    expect(activatedAnnotationGroups).toEqual([[annotation.id]]);
+    activatedAnnotationGroups.length = 0;
+    await engine.setAnnotations([{ ...layeredAnnotation, decorations: [] }]);
+    expect(registeredHighlights).toHaveLength(0);
+    expect(
+      globalThis.document.querySelector(
+        `[data-omnia-annotation-note-id="${annotation.id}"]`,
+      ),
+    ).not.toBeNull();
+    await engine.setAnnotations([layeredAnnotation]);
+
+    const secondAnnotation: PublicationAnnotation = {
+      ...annotation,
+      id: '6a6d7344-0508-4761-b1e0-bbad9bf25b9e',
+      decorations: [{ style: 'underline', color: 'yellow' }],
+    };
+    await engine.setAnnotations([secondAnnotation, layeredAnnotation]);
+    expect(registeredHighlights).toHaveLength(4);
+
+    browserSelection?.removeAllRanges();
+    const activateEvent = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 10,
+      clientY: 10,
+    });
+    paragraph.dispatchEvent(activateEvent);
     expect(activateEvent.defaultPrevented).toBe(true);
-    expect(activatedAnnotations).toEqual([annotation.id]);
-    annotationElement.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }),
-    );
-    expect(activatedAnnotations).toEqual([annotation.id, annotation.id]);
-
-    await engine.setAnnotations([
-      { ...annotation, style: 'underline', color: 'blue' },
+    expect(activatedAnnotationGroups).toEqual([
+      [secondAnnotation.id, layeredAnnotation.id],
     ]);
-    expect(underline).toHaveBeenLastCalledWith(
-      'epubcfi(/6/2!/4/2,/1:7,/1:25)',
-      { annotationId: annotation.id },
-      expect.any(Function),
-      'omnia-annotation-blue-underline',
-      expect.objectContaining({ stroke: '#2563eb' }),
+    paragraph.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 200,
+        clientY: 200,
+      }),
     );
+    expect(selections[selections.length - 1]).toBeNull();
 
-    const rectangle = globalThis.document.createElementNS(
-      'http://www.w3.org/2000/svg',
-      'rect',
-    );
-    rectangle.setAttribute('y', '10');
-    rectangle.setAttribute('height', '20');
-    const line = globalThis.document.createElementNS(
-      'http://www.w3.org/2000/svg',
-      'line',
-    );
-    line.setAttribute('y1', '29');
-    line.setAttribute('y2', '29');
-    annotationElement.replaceChildren(rectangle, line);
-    await engine.setAnnotations([
-      { ...annotation, style: 'strikethrough', color: 'pink' },
-    ]);
-    expect(underline).toHaveBeenLastCalledWith(
-      'epubcfi(/6/2!/4/2,/1:7,/1:25)',
-      { annotationId: annotation.id },
-      expect.any(Function),
-      'omnia-annotation-pink-strikethrough',
-      expect.objectContaining({ stroke: '#db2777' }),
-    );
-    expect(line.getAttribute('y1')).toBe('20');
-    expect(line.getAttribute('y2')).toBe('20');
+    await engine.setAnnotations([layeredAnnotation]);
+    expect(registeredHighlights).toHaveLength(3);
 
     (
       renderedContents.cfiFromRange as ReturnType<typeof vi.fn>
@@ -547,6 +586,7 @@ describe('EpubReaderEngine annotations', () => {
     paragraph.dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
     );
+    expect(selectionActionRequests).toHaveLength(2);
     expect(selections[selections.length - 1]?.locator).toMatchObject({
       href: 'chapter.xhtml',
       text: { highlight: 'selected quotation' },
@@ -578,6 +618,12 @@ describe('EpubReaderEngine annotations', () => {
     await vi.waitFor(
       () => {
         expect(selections[selections.length - 1]?.locator.text).toMatchObject({
+          highlight: 'WebKit selection monitor fallback',
+        });
+        expect(
+          selectionActionRequests[selectionActionRequests.length - 1]?.locator
+            .text,
+        ).toMatchObject({
           highlight: 'WebKit selection monitor fallback',
         });
       },

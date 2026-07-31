@@ -247,19 +247,75 @@ describe('PdfReaderEngine', () => {
       updatedAt: '2026-07-25T08:00:00.000Z',
     };
     const activatedAnnotations: string[] = [];
+    const activatedAnnotationGroups: (readonly string[])[] = [];
     engine.onAnnotationActivated((annotationId) =>
       activatedAnnotations.push(annotationId),
     );
-    await engine.setAnnotations([annotation]);
+    engine.onAnnotationGroupActivated?.((annotationIds) =>
+      activatedAnnotationGroups.push(annotationIds),
+    );
+    await engine.setAnnotations([
+      {
+        ...annotation,
+        note: 'Remember this PDF passage.',
+        decorations: [
+          { style: 'highlight', color: '#123456' },
+          { style: 'underline', color: 'blue' },
+          { style: 'strikethrough', color: 'pink' },
+        ],
+      },
+    ]);
 
-    const renderedHighlight = viewport.querySelector<HTMLElement>(
+    const renderedMarks = viewport.querySelectorAll<HTMLElement>(
       '[data-omnia-annotation-layer] > [data-omnia-annotation-id]',
     );
+    expect(renderedMarks).toHaveLength(3);
+    const renderedHighlight = renderedMarks[0];
     expect(renderedHighlight?.dataset['omniaAnnotationId']).toBe(annotation.id);
     expect(renderedHighlight?.getAttribute('role')).toBe('button');
     expect(renderedHighlight?.tabIndex).toBe(0);
+    expect(renderedHighlight?.style.pointerEvents).toBe('none');
+    expect(renderedHighlight?.style.background).toBe('rgba(18, 52, 86, 0.4)');
+    const noteMarker = viewport.querySelector<HTMLButtonElement>(
+      `[data-omnia-annotation-note-id="${annotation.id}"]`,
+    );
+    expect(noteMarker?.getAttribute('aria-label')).toContain(
+      'Remember this PDF passage.',
+    );
+    noteMarker?.click();
+    expect(activatedAnnotationGroups).toEqual([[annotation.id]]);
+    activatedAnnotations.length = 0;
+    activatedAnnotationGroups.length = 0;
     renderedHighlight?.click();
     expect(activatedAnnotations).toEqual([annotation.id]);
+    expect(activatedAnnotationGroups).toEqual([[annotation.id]]);
+
+    const overlappingAnnotation = {
+      ...annotation,
+      id: 'pdf-overlapping-underline',
+      style: 'underline' as const,
+      color: 'green' as const,
+      decorations: undefined,
+    };
+    await engine.setAnnotations([annotation, overlappingAnnotation]);
+    viewport
+      .querySelector<HTMLElement>(
+        `[data-omnia-annotation-id="${overlappingAnnotation.id}"]`,
+      )
+      ?.click();
+    expect(
+      activatedAnnotationGroups[activatedAnnotationGroups.length - 1],
+    ).toEqual([annotation.id, overlappingAnnotation.id]);
+    browserSelection?.removeAllRanges();
+    viewport.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 500,
+        clientY: 500,
+      }),
+    );
+    expect(selections[selections.length - 1]).toBeNull();
 
     await engine.setAnnotations([
       { ...annotation, style: 'underline', color: 'blue' },
@@ -282,6 +338,21 @@ describe('PdfReaderEngine', () => {
     expect(renderedStrikethrough?.getAttribute('aria-label')).toContain(
       'Edit strikethrough',
     );
+    await engine.setAnnotations([
+      {
+        ...annotation,
+        decorations: [],
+        note: 'A note without text formatting.',
+      },
+    ]);
+    expect(
+      viewport.querySelectorAll('[data-omnia-annotation-id]'),
+    ).toHaveLength(0);
+    expect(
+      viewport.querySelector(
+        `[data-omnia-annotation-note-id="${annotation.id}"]`,
+      ),
+    ).not.toBeNull();
     await engine.close();
     expect(viewport.style.position).toBe('relative');
     viewport.remove();
