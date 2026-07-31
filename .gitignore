@@ -58,3 +58,8 @@ __screenshots__/
 .nx/polygraph
 .nx/self-healing
 .nx/migrate-runs
+
+# Spec-Kit Extension system
+.specify/extensions/.cache/
+.specify/extensions/.backup/
+.specify/extensions/*/local-config.yml
