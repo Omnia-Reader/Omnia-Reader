@@ -4,6 +4,21 @@
 
 Always use the OpenAI developer documentation MCP server if you need to work with the OpenAI API, plugins, ChatGPT, Codex,… without me having to explicitly ask.
 
+## Spec-Driven Development
+
+Use GitHub Spec Kit for meaningful behavioral, architectural, persistence,
+synchronization, reader-engine, security, or native changes. Follow
+`docs/spec-driven-development.md` and the project constitution at
+`.specify/memory/constitution.md`. Keep feature artifacts under `specs/`; do not
+use `docs/universal-reader-plan.md` as a task tracker.
+
+Spec Kit owns intent, planning, and traceability. Route implementation through
+the applicable Omnia Reader skill (`$develop-omnia-reader`,
+`$change-reader-engine`, or `$change-offline-sync`), then use
+`$verify-omnia-reader` before completion and `$review-omnia-reader` for
+non-trivial risk. Preserve exact command evidence and state unavailable
+browser, provider, credentialed, native, emulator, or device gates explicitly.
+
 ## Project Structure & Module Organization
 
 This is an Nx workspace containing an Angular EPUB reader. Application code lives in `apps/omnia-reader/src`; routes and the application shell are under `app/`, while feature UI belongs in focused folders such as `app/components/viewer/` and `app/navigation/`. Keep unit tests beside their subjects as `*.spec.ts`. Static files that should be copied unchanged belong in `apps/omnia-reader/public/`, and global styles live in `src/styles.scss`. Playwright tests and configuration are in `apps/omnia-reader-e2e/`. Generated build, coverage, and Nx cache output must remain untracked.
