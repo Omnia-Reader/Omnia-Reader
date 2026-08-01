@@ -1,0 +1,22 @@
+<h2 mat-dialog-title>
+  Separate the {{ data.book.format.toUpperCase() }} version?
+</h2>
+
+<mat-dialog-content>
+  <p>
+    The {{ data.book.format.toUpperCase() }} file becomes its own library entry.
+    Its reading progress, bookmarks, highlights, and notes stay with that exact
+    format.
+  </p>
+  <p>
+    “{{ data.logicalTitle }}” keeps its other format. No publication file is
+    deleted.
+  </p>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button mat-button type="button" [mat-dialog-close]="false">Cancel</button>
+  <button mat-flat-button type="button" [mat-dialog-close]="true">
+    Separate format
+  </button>
+</mat-dialog-actions>

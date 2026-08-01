@@ -3,9 +3,15 @@ import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { ReaderEngineRegistry } from '@omnia-reader/reader/core';
 import {
   BookRecord,
+  BookSource,
   PublicationPasswordRequiredError,
   ReaderEngine,
 } from '@omnia-reader/reader/domain';
+
+export interface ValidatedPublicationCandidate {
+  book: BookRecord;
+  cover?: Blob;
+}
 
 const MAX_COVER_WIDTH = 640;
 const MAX_COVER_HEIGHT = 960;
@@ -48,6 +54,49 @@ export class PublicationEnrichmentService {
         },
         { markCoverUnavailable: true },
       );
+    }
+  }
+
+  async validateSource(
+    source: BookSource,
+    initial: BookRecord,
+  ): Promise<ValidatedPublicationCandidate> {
+    let engine: ReaderEngine | null = null;
+    try {
+      engine = await this.engines.create(initial.format);
+      const metadata = await engine.open(source);
+      let cover: Blob | undefined;
+      try {
+        const extractedCover =
+          metadata.cover ??
+          (initial.format === 'pdf' ? await renderPdfCover(engine) : undefined);
+        cover = extractedCover
+          ? await normalizeCover(extractedCover)
+          : undefined;
+      } catch {
+        // Cover extraction is optional after the publication itself validates.
+      }
+      return {
+        book: {
+          ...initial,
+          title: metadata.title || initial.title,
+          authors: metadata.authors,
+          language: metadata.language,
+          publisher: metadata.publisher,
+          identifier: metadata.identifier,
+          coverState: cover ? 'available' : 'unavailable',
+        },
+        ...(cover ? { cover } : {}),
+      };
+    } catch (error) {
+      if (error instanceof PublicationPasswordRequiredError) {
+        return {
+          book: { ...initial, coverState: 'unavailable' },
+        };
+      }
+      throw error;
+    } finally {
+      void engine?.close().catch(() => undefined);
     }
   }
 

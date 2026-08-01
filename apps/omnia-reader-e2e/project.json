@@ -7,13 +7,18 @@
   "// targets": "to see all targets run: nx show project omnia-reader-e2e --web",
   "targets": {
     "e2e": {
+      "executor": "nx:run-commands",
       "parallelism": true,
       "dependsOn": [
         {
           "projects": ["omnia-reader"],
           "target": "build"
         }
-      ]
+      ],
+      "options": {
+        "cwd": "apps/omnia-reader-e2e",
+        "command": "playwright test"
+      }
     },
     "performance": {
       "executor": "nx:run-commands",

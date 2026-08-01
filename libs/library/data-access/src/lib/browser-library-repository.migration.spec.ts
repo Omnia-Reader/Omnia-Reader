@@ -13,9 +13,35 @@ const BOOK = {
 };
 
 describe('BrowserLibraryRepository schema migration', () => {
-  it('adds the progress document cache without losing version 7 books', async () => {
-    const legacy = await openDatabase(7, (database) => {
+  it('migrates a real v8 singleton without rewriting variant state', async () => {
+    const databaseName = 'omnia-reader-v8-valid';
+    const legacy = await openDatabase(databaseName, 8, (database) => {
       database.createObjectStore('books', { keyPath: 'id' }).put(BOOK);
+      database.createObjectStore('binaries', { keyPath: 'bookId' }).put({
+        bookId: BOOK.id,
+        marker: 'binary-key-unchanged',
+      });
+      database.createObjectStore('covers', { keyPath: 'bookId' }).put({
+        bookId: BOOK.id,
+        mediaType: 'image/png',
+        bytes: new TextEncoder().encode('legacy cover').buffer,
+      });
+      database.createObjectStore('progress', { keyPath: 'bookId' }).put({
+        bookId: BOOK.id,
+        marker: 'progress-key-unchanged',
+      });
+      database
+        .createObjectStore('progressDocuments', {
+          keyPath: ['bookId', 'deviceId'],
+        })
+        .createIndex('bookId', 'bookId');
+      database.createObjectStore('preferences', { keyPath: 'format' });
+      database
+        .createObjectStore('bookmarks', { keyPath: 'id' })
+        .createIndex('bookId', 'bookId');
+      database
+        .createObjectStore('annotations', { keyPath: 'id' })
+        .createIndex('bookId', 'bookId');
       database.createObjectStore('quarantine', {
         keyPath: 'id',
         autoIncrement: true,
@@ -23,27 +49,213 @@ describe('BrowserLibraryRepository schema migration', () => {
     });
     legacy.close();
 
-    const repository = new BrowserLibraryRepository();
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      databaseName,
+    );
 
     await expect(repository.listBooks()).resolves.toEqual([BOOK]);
+    await expect(repository.listLogicalBooks()).resolves.toEqual([
+      expect.objectContaining({
+        schemaVersion: 1,
+        id: `logical:sha256:${'e'.repeat(64)}`,
+        title: BOOK.title,
+        variants: { pdf: BOOK.id },
+      }),
+    ]);
+    await expect(
+      repository.getLogicalBookFormatPreference(
+        `logical:sha256:${'e'.repeat(64)}`,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      repository.getLogicalBookCover(`logical:sha256:${'e'.repeat(64)}`),
+    ).resolves.toEqual(expect.any(Blob));
     await expect(repository.listQuarantinedRecords()).resolves.toEqual([]);
-    const migrated = await openDatabase();
-    expect(migrated.version).toBe(8);
+    const migrated = await openDatabase(databaseName);
+    expect(migrated.version).toBe(9);
     expect([...migrated.objectStoreNames]).toContain('quarantine');
     expect([...migrated.objectStoreNames]).toContain('progressDocuments');
+    expect([...migrated.objectStoreNames]).toEqual(
+      expect.arrayContaining([
+        'logicalBooks',
+        'logicalBookCovers',
+        'logicalBookPreferences',
+        'logicalBookReconciliations',
+      ]),
+    );
+    const logicalStore = migrated
+      .transaction('logicalBooks', 'readonly')
+      .objectStore('logicalBooks');
+    expect(logicalStore.index('epubVariantId').unique).toBe(true);
+    expect(logicalStore.index('pdfVariantId').unique).toBe(true);
+    await expect(
+      readRecord(migrated, 'binaries', BOOK.id),
+    ).resolves.toMatchObject({
+      marker: 'binary-key-unchanged',
+    });
+    await expect(
+      readRecord(migrated, 'progress', BOOK.id),
+    ).resolves.toMatchObject({
+      marker: 'progress-key-unchanged',
+    });
     migrated.close();
+
+    await expect(
+      new BrowserLibraryRepository(
+        undefined,
+        undefined,
+        databaseName,
+      ).listLogicalBooks(),
+    ).resolves.toHaveLength(1);
+  });
+
+  it('quarantines malformed v8 books without inventing membership', async () => {
+    const databaseName = 'omnia-reader-v8-malformed';
+    const legacy = await openDatabase(databaseName, 8, (database) => {
+      database.createObjectStore('books', { keyPath: 'id' }).put({
+        id: `sha256:${'f'.repeat(64)}`,
+        format: 'script',
+        title: 'Malformed',
+      });
+      for (const [name, keyPath] of [
+        ['binaries', 'bookId'],
+        ['covers', 'bookId'],
+        ['progress', 'bookId'],
+        ['preferences', 'format'],
+      ] as const) {
+        database.createObjectStore(name, { keyPath });
+      }
+      database
+        .createObjectStore('progressDocuments', {
+          keyPath: ['bookId', 'deviceId'],
+        })
+        .createIndex('bookId', 'bookId');
+      database
+        .createObjectStore('bookmarks', { keyPath: 'id' })
+        .createIndex('bookId', 'bookId');
+      database
+        .createObjectStore('annotations', { keyPath: 'id' })
+        .createIndex('bookId', 'bookId');
+      database.createObjectStore('quarantine', {
+        keyPath: 'id',
+        autoIncrement: true,
+      });
+    });
+    legacy.close();
+
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      databaseName,
+    );
+    await expect(repository.listLogicalBooks()).resolves.toEqual([]);
+    await expect(repository.listQuarantinedRecords()).resolves.toEqual([
+      expect.objectContaining({ storeName: 'books' }),
+    ]);
+  });
+
+  it('leaves v8 intact after an aborted upgrade and migrates on retry', async () => {
+    const databaseName = 'omnia-reader-v8-abort-retry';
+    const legacy = await openDatabase(databaseName, 8, (database) => {
+      createLegacyStores(database);
+    });
+    legacy.close();
+    const seeded = await openDatabase(databaseName);
+    const seedTransaction = seeded.transaction('books', 'readwrite');
+    seedTransaction.objectStore('books').put(BOOK);
+    await transactionComplete(seedTransaction);
+    seeded.close();
+
+    await expect(abortUpgrade(databaseName, 9)).rejects.toBeTruthy();
+    const unchanged = await openDatabase(databaseName);
+    expect(unchanged.version).toBe(8);
+    expect([...unchanged.objectStoreNames]).not.toContain('logicalBooks');
+    unchanged.close();
+
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      databaseName,
+    );
+    await expect(repository.listLogicalBooks()).resolves.toEqual([
+      expect.objectContaining({ variants: { pdf: BOOK.id } }),
+    ]);
   });
 });
 
+function createLegacyStores(database: IDBDatabase): void {
+  database.createObjectStore('books', { keyPath: 'id' });
+  database.createObjectStore('binaries', { keyPath: 'bookId' });
+  database.createObjectStore('covers', { keyPath: 'bookId' });
+  database.createObjectStore('progress', { keyPath: 'bookId' });
+  database
+    .createObjectStore('progressDocuments', {
+      keyPath: ['bookId', 'deviceId'],
+    })
+    .createIndex('bookId', 'bookId');
+  database.createObjectStore('preferences', { keyPath: 'format' });
+  database
+    .createObjectStore('bookmarks', { keyPath: 'id' })
+    .createIndex('bookId', 'bookId');
+  database
+    .createObjectStore('annotations', { keyPath: 'id' })
+    .createIndex('bookId', 'bookId');
+  database.createObjectStore('quarantine', {
+    keyPath: 'id',
+    autoIncrement: true,
+  });
+}
+
+function abortUpgrade(databaseName: string, version: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(databaseName, version);
+    request.addEventListener('upgradeneeded', () => {
+      request.result.createObjectStore('logicalBooks', { keyPath: 'id' });
+      request.transaction?.abort();
+    });
+    request.addEventListener('success', () => {
+      request.result.close();
+      resolve();
+    });
+    request.addEventListener('error', () => reject(request.error));
+  });
+}
+
+function transactionComplete(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.addEventListener('complete', () => resolve());
+    transaction.addEventListener('abort', () => reject(transaction.error));
+    transaction.addEventListener('error', () => reject(transaction.error));
+  });
+}
+
+function readRecord(
+  database: IDBDatabase,
+  storeName: string,
+  key: IDBValidKey,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const request = database
+      .transaction(storeName)
+      .objectStore(storeName)
+      .get(key);
+    request.addEventListener('success', () => resolve(request.result));
+    request.addEventListener('error', () => reject(request.error));
+  });
+}
+
 function openDatabase(
+  databaseName: string,
   version?: number,
   upgrade?: (database: IDBDatabase) => void,
 ): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request =
       version === undefined
-        ? indexedDB.open('omnia-reader')
-        : indexedDB.open('omnia-reader', version);
+        ? indexedDB.open(databaseName)
+        : indexedDB.open(databaseName, version);
     request.addEventListener('upgradeneeded', () => upgrade?.(request.result));
     request.addEventListener('success', () => resolve(request.result));
     request.addEventListener('error', () =>

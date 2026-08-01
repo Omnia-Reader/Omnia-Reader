@@ -55,6 +55,8 @@ describe('LibrarySyncCoordinator', () => {
       schemaPushed: 1,
       booksPulled: 1,
       booksPushed: 2,
+      logicalBooksPulled: 0,
+      logicalBooksPushed: 0,
       progressPulled: 3,
       progressPushed: 4,
       bookmarksPulled: 5,

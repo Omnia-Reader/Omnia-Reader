@@ -1,9 +1,12 @@
 import type { BookRecord, ReadingProgress } from '@omnia-reader/reader/domain';
 import {
   bookActivityTimestamp,
+  createLogicalLibraryCards,
   loadLibraryViewPreferences,
+  orderedHealthyVariantIds,
   saveLibraryViewPreferences,
   selectLibraryBooks,
+  selectLogicalLibraryCards,
   summarizeReadingProgress,
   type LibraryPreferenceStorage,
 } from './library-view';
@@ -176,6 +179,26 @@ describe('library view', () => {
     });
   });
 
+  it('reserves 100% for completion and clamps all other progress', () => {
+    expect(
+      summarizeReadingProgress(createProgress(0.999, 0.999)),
+    ).toMatchObject({
+      percent: 99,
+      label: '99% read',
+    });
+    expect(summarizeReadingProgress(createProgress(1, 1))).toMatchObject({
+      percent: 100,
+      label: 'Finished',
+    });
+    expect(summarizeReadingProgress(createProgress(-0.4, -0.4))).toMatchObject({
+      percent: 0,
+      label: '0% read',
+    });
+    expect(
+      summarizeReadingProgress(createProgress(Number.NaN, Number.NaN)),
+    ).toMatchObject({ percent: 0, label: '0% read' });
+  });
+
   it('persists validated view and sort preferences', () => {
     const values = new Map<string, string>();
     const storage: LibraryPreferenceStorage = {
@@ -230,6 +253,87 @@ describe('library view', () => {
         },
       ),
     ).not.toThrow();
+  });
+});
+
+describe('logical library view', () => {
+  const epubId = `sha256:${'a'.repeat(64)}`;
+  const pdfId = `sha256:${'b'.repeat(64)}`;
+  const logicalId = `logical:sha256:${'c'.repeat(64)}` as const;
+  const variants = [
+    createBook({ id: epubId, title: 'EPUB source', authors: ['Ada'] }),
+    {
+      ...createBook({ id: pdfId, title: 'PDF source', authors: ['Ada'] }),
+      format: 'pdf' as const,
+      fileName: 'companion.pdf',
+      mediaType: 'application/pdf',
+    },
+  ];
+  const logical = {
+    schemaVersion: 1 as const,
+    id: logicalId,
+    title: 'One Book',
+    authors: ['Ada'],
+    publisher: 'Omnia',
+    importedAt: '2026-07-20T08:00:00.000Z',
+    updatedAt: '2026-07-31T08:00:00.000Z',
+    coverState: 'available' as const,
+    variants: { epub: epubId, pdf: pdfId },
+  };
+
+  it('creates one searchable card with per-format progress and availability', () => {
+    const progress = {
+      ...createProgress(0.42, 0.42),
+      bookId: pdfId,
+      format: 'pdf' as const,
+    };
+    const cards = createLogicalLibraryCards(
+      [logical],
+      variants,
+      [progress],
+      new Map([
+        [epubId, { status: 'checking' as const }],
+        [pdfId, { status: 'unavailable' as const, cause: 'evicted' as const }],
+      ]),
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].progress.pdf?.label).toBe('42% read');
+    expect(cards[0].availability.epub).toEqual({ status: 'checking' });
+    expect(
+      selectLogicalLibraryCards(cards, 'companion.pdf', 'title'),
+    ).toHaveLength(1);
+    expect(selectLogicalLibraryCards(cards, 'pdf', 'title')).toHaveLength(1);
+  });
+
+  it('orders only verified healthy candidates by preference then EPUB/PDF', () => {
+    const base = createLogicalLibraryCards(
+      [logical],
+      variants,
+      [],
+      new Map([
+        [epubId, { status: 'healthy' as const }],
+        [pdfId, { status: 'healthy' as const }],
+      ]),
+      [
+        {
+          schemaVersion: 1,
+          logicalBookId: logicalId,
+          preferredFormat: 'pdf',
+          winningChangeId: 'change:test:1',
+          preferenceHeads: ['change:test:1'],
+          updatedAt: '2026-07-31T08:00:00.000Z',
+          deviceId: 'test',
+        },
+      ],
+    )[0];
+    expect(orderedHealthyVariantIds(base)).toEqual([pdfId, epubId]);
+
+    const checking = {
+      ...base,
+      availability: { epub: { status: 'checking' as const } },
+    };
+    expect(orderedHealthyVariantIds(checking)).toEqual([]);
   });
 });
 

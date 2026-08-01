@@ -2,6 +2,17 @@ import {
   BookRecord,
   BookSource,
   LibraryRepository,
+  AddLogicalBookVariantResult,
+  LogicalBookChange,
+  LogicalBookFormatPreference,
+  LogicalBookId,
+  LogicalBookRecord,
+  LogicalBookMutationResult,
+  LogicalLibrarySnapshot,
+  LogicalMutationIdentity,
+  logicalBookFromVariant,
+  MembershipReconciliation,
+  MembershipReconciliationDecision,
   NewSyncOperation,
   PublicationFormat,
   PublicationBookmark,
@@ -11,6 +22,7 @@ import {
   ReadingProgress,
   SyncOperation,
   SyncOperationJournal,
+  VariantAvailability,
 } from '@omnia-reader/reader/domain';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -808,6 +820,121 @@ class MemoryRepository implements LibraryRepository {
 
   async saveReaderPreferences(preferences: ReaderPreferences): Promise<void> {
     this.preferences.set(preferences.format, preferences);
+  }
+
+  async listLogicalBooks(): Promise<readonly LogicalBookRecord[]> {
+    return [...this.books.values()].map((book) => logicalBookFromVariant(book));
+  }
+
+  async getLogicalBook(id: LogicalBookId): Promise<LogicalBookRecord | null> {
+    return (
+      (await this.listLogicalBooks()).find((book) => book.id === id) ?? null
+    );
+  }
+
+  async findLogicalBookByVariant(
+    variantId: string,
+  ): Promise<LogicalBookRecord | null> {
+    return (
+      (await this.listLogicalBooks()).find((book) =>
+        Object.values(book.variants).includes(variantId),
+      ) ?? null
+    );
+  }
+
+  async getLogicalBookCover(): Promise<Blob | null> {
+    return null;
+  }
+
+  async getLogicalBookFormatPreference(): Promise<LogicalBookFormatPreference | null> {
+    return null;
+  }
+
+  async getLogicalLibrarySnapshot(): Promise<LogicalLibrarySnapshot> {
+    const logicalBooks = [...(await this.listLogicalBooks())];
+    return {
+      revision: JSON.stringify(logicalBooks),
+      logicalBooks,
+      preferences: [],
+      reconciliations: [],
+    };
+  }
+
+  addVariant(
+    _logicalBookId: LogicalBookId,
+    _variant: BookRecord,
+    _source: BookSource,
+    _identity: LogicalMutationIdentity,
+  ): Promise<AddLogicalBookVariantResult> {
+    return Promise.reject(new Error('Not used'));
+  }
+
+  associate(
+    _destination: LogicalBookId,
+    _source: LogicalBookId,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not used'));
+  }
+
+  detachVariant(
+    _logicalBookId: LogicalBookId,
+    _variantId: string,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not used'));
+  }
+
+  deleteVariant(
+    _logicalBookId: LogicalBookId,
+    _variantId: string | null,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not used'));
+  }
+
+  saveLogicalBookFormatPreference(
+    _logicalBookId: LogicalBookId,
+    _format: PublicationFormat,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookChange | null> {
+    return Promise.resolve(null);
+  }
+
+  reconcileMembership(
+    _conflictId: string,
+    _decision: MembershipReconciliationDecision,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not used'));
+  }
+
+  async listOpenMembershipReconciliations(): Promise<
+    readonly MembershipReconciliation[]
+  > {
+    return [];
+  }
+
+  async resolveVariantAvailability(
+    variantIds: readonly string[],
+  ): Promise<ReadonlyMap<string, VariantAvailability>> {
+    return new Map(variantIds.map((id) => [id, { status: 'checking' }]));
+  }
+
+  async openHealthyVariant(variantId: string) {
+    const source = await this.getBookSource(variantId);
+    return source
+      ? ({ availability: { status: 'healthy' }, source } as const)
+      : ({
+          availability: { status: 'unavailable', cause: 'missing' },
+        } as const);
+  }
+
+  async replaceVariantSource(
+    variantId: string,
+    source: BookSource,
+  ): Promise<void> {
+    this.sources.set(variantId, source);
   }
 }
 

@@ -81,6 +81,41 @@ export class PublicationImportService {
           operation: 'upsert',
           payload: createBookSyncManifest(book, new Date().toISOString()),
         });
+        if (!isDuplicate) {
+          const logicalBook = await this.repository.findLogicalBookByVariant(
+            book.id,
+          );
+          if (logicalBook) {
+            const changeId = `change:bootstrap:${crypto.randomUUID()}`;
+            await this.appendJournalEntry({
+              entity: 'logical-book-change',
+              entityId: changeId,
+              operation: 'upsert',
+              payload: {
+                schemaVersion: 1,
+                changeId,
+                kind: 'bootstrap',
+                parents: [],
+                resultingBooks: [logicalBook],
+                removedLogicalBookIds: [],
+                variantEffects: [
+                  {
+                    operation: 'upsert',
+                    variant: book,
+                    objectPath: `.omnia-reader/v1/books/${book.id.slice(
+                      'sha256:'.length,
+                    )}/publication.${book.format}`,
+                  },
+                ],
+                preferenceEffects: [],
+                resolvesConflictIds: [],
+                createdAt: book.importedAt,
+                deviceId: 'local-import',
+                appVersion: '0.0.0',
+              },
+            });
+          }
+        }
       } catch (error) {
         if (imported && !existingBookIds.has(imported.id)) {
           try {

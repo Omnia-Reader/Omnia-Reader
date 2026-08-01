@@ -33,6 +33,8 @@ import {
   BrowserSyncProviderSelection,
   LibrarySyncCoordinator,
   LibrarySyncManifestService,
+  LogicalBookStateRepository,
+  LogicalBookSyncService,
   LibrarySyncTransport,
   LIBRARY_SYNC_SERVICE,
   NotifyingSyncOperationJournal,
@@ -88,11 +90,14 @@ function createReaderEngineRegistry(): ReaderEngineRegistry {
 function createLibrarySyncService(
   remote: LibrarySyncTransport,
   journal: SyncOperationJournal,
-  repository: LibraryRepository & ProgressDocumentRepository,
+  repository: LibraryRepository &
+    ProgressDocumentRepository &
+    LogicalBookStateRepository,
   exclusions: BookSyncExclusions,
 ): SyncWorker {
   return new LibrarySyncCoordinator({
     schema: new LibrarySyncManifestService(remote),
+    logicalBooks: new LogicalBookSyncService(remote, journal, repository),
     books: new BookSyncService(remote, journal, repository, { exclusions }),
     progress: new ProgressSyncService(remote, journal, repository),
     bookmarks: new BookmarkSyncService(remote, journal, repository),

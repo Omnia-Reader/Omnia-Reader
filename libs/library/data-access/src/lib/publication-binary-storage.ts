@@ -13,10 +13,7 @@ interface StoredPublicationBinaryBase {
 
 export type IndexedDbPublicationBinary = StoredPublicationBinaryBase & {
   storage: 'indexeddb';
-} & (
-    | { bytes: ArrayBuffer; blob?: never }
-    | { blob: Blob; bytes?: never }
-  );
+} & ({ bytes: ArrayBuffer; blob?: never } | { blob: Blob; bytes?: never });
 
 export interface OpfsPublicationBinary extends StoredPublicationBinaryBase {
   storage: 'opfs';
@@ -245,11 +242,12 @@ export function parseStoredPublicationBinary(
       blob,
     };
   }
+  const arrayBuffer = asArrayBuffer(bytes);
   if (
     value['schemaVersion'] === 2 &&
     value['storage'] === 'indexeddb' &&
-    bytes instanceof ArrayBuffer &&
-    value['size'] === bytes.byteLength
+    arrayBuffer &&
+    value['size'] === arrayBuffer.byteLength
   ) {
     return {
       schemaVersion: 2,
@@ -257,8 +255,8 @@ export function parseStoredPublicationBinary(
       bookId,
       fileName,
       mediaType,
-      size: bytes.byteLength,
-      bytes,
+      size: arrayBuffer.byteLength,
+      bytes: arrayBuffer,
     };
   }
   return null;
@@ -297,4 +295,20 @@ function blobBytes(blob: Blob): Promise<ArrayBuffer> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asArrayBuffer(value: unknown): ArrayBuffer | null {
+  if (
+    value instanceof ArrayBuffer ||
+    Object.prototype.toString.call(value) === '[object ArrayBuffer]'
+  ) {
+    return value as ArrayBuffer;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return value.buffer.slice(
+      value.byteOffset,
+      value.byteOffset + value.byteLength,
+    ) as ArrayBuffer;
+  }
+  return null;
 }

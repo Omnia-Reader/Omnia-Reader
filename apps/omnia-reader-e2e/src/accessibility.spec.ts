@@ -47,7 +47,7 @@ test('library has no automated WCAG A or AA violations', async ({ page }) => {
     'Omnia EPUB Fixture',
   );
   await page
-    .getByRole('link', { name: 'Start reading Omnia EPUB Fixture' })
+    .getByRole('button', { name: 'Read EPUB version of Omnia EPUB Fixture' })
     .click();
   const progress = page.getByRole('slider', { name: 'Book progress' });
   await expect(progress).toBeVisible({ timeout: 20_000 });
@@ -57,15 +57,19 @@ test('library has no automated WCAG A or AA violations', async ({ page }) => {
   );
   await page.goBack();
   await expect(
-    page.getByRole('link', {
-      name: /Continue reading Omnia EPUB Fixture, [4-6]\d% read/,
+    page.getByRole('button', {
+      name: 'Read EPUB version of Omnia EPUB Fixture',
     }),
   ).toBeVisible();
   await expectAccessible(page);
 
-  await page.getByRole('button', { name: 'Remove Omnia EPUB Fixture' }).click();
+  await page
+    .getByRole('button', {
+      name: 'Remove EPUB version of Omnia EPUB Fixture',
+    })
+    .click();
   const removalDialog = page.getByRole('dialog', {
-    name: 'Remove “Omnia EPUB Fixture”?',
+    name: 'Remove the EPUB version of “Omnia EPUB Fixture”?',
   });
   await expect(removalDialog).toBeVisible();
   await expect(
@@ -102,7 +106,9 @@ test('PDF reader shell has no automated WCAG A or AA violations', async ({
     createPdfFixture(),
     'Omnia PDF Fixture',
   );
-  await page.getByText('Omnia PDF Fixture', { exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Read PDF version of Omnia PDF Fixture' })
+    .click();
   await expect(
     page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
   ).toBeVisible({ timeout: 20_000 });
@@ -154,7 +160,9 @@ test('PDF reader shell has no automated WCAG A or AA violations', async ({
     createEncryptedPdfFixture(),
     'Encrypted Omnia PDF',
   );
-  await page.getByText('Encrypted Omnia PDF', { exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Read PDF version of Encrypted Omnia PDF' })
+    .click();
   const passwordDialog = page.getByRole('dialog', { name: 'Protected PDF' });
   await expect(passwordDialog.getByLabel('Password')).toBeFocused();
   await expectAccessible(page);
@@ -170,7 +178,9 @@ test('EPUB reader shell has no automated WCAG A or AA violations', async ({
     await createEpubFixture(),
     'Omnia EPUB Fixture',
   );
-  await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Read EPUB version of Omnia EPUB Fixture' })
+    .click();
   await expect(
     page
       .getByTestId('publication-viewport')

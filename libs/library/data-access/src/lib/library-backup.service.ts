@@ -3,11 +3,19 @@ import {
   BookRecord,
   BookSource,
   isBookRecord,
+  isLogicalBookFormatPreference,
+  isLogicalBookRecord,
+  isMembershipReconciliation,
   isPublicationAnnotation,
   isPublicationBookmark,
   isReaderPreferences,
   isReadingProgress,
   LibraryRepository,
+  logicalBookFromVariant,
+  LogicalBookFormatPreference,
+  LogicalBookId,
+  LogicalBookRecord,
+  MembershipReconciliation,
   preferredAnnotation,
   preferredBookmark,
   ProgressDocumentRepository,
@@ -78,6 +86,29 @@ interface BackupBook {
 }
 
 interface LibraryBackupManifest {
+  schemaVersion: 4;
+  application: 'omnia-reader';
+  createdAt: string;
+  books: BackupBook[];
+  progress: ReadingProgress[];
+  progressDocuments: ReadingProgress[];
+  preferences: ReaderPreferences[];
+  bookmarks: PublicationBookmark[];
+  annotations: PublicationAnnotation[];
+  logicalBooks: LogicalBookRecord[];
+  logicalBookPreferences: LogicalBookFormatPreference[];
+  membershipReconciliations: MembershipReconciliation[];
+  logicalBookCovers: BackupLogicalBookCover[];
+}
+
+interface BackupLogicalBookCover {
+  logicalBookId: LogicalBookId;
+  path: string;
+  mediaType: string;
+  size: number;
+}
+
+interface VersionThreeLibraryBackupManifest {
   schemaVersion: 3;
   application: 'omnia-reader';
   createdAt: string;
@@ -116,12 +147,23 @@ interface LegacyLibraryBackupManifest {
 interface ValidatedBackup {
   manifest: LibraryBackupManifest;
   publications: Map<string, Blob>;
+  logicalBookCovers: Map<LogicalBookId, Blob>;
 }
 
 interface PreparedBackup {
   books: readonly BookRecord[];
   manifest: LibraryBackupManifest;
   fileName: string;
+  logicalBookCovers: ReadonlyMap<LogicalBookId, Blob>;
+}
+
+interface LogicalStateRestoreRepository {
+  replaceLogicalBookState(
+    logicalBooks: readonly LogicalBookRecord[],
+    preferences: readonly LogicalBookFormatPreference[],
+    reconciliations: readonly MembershipReconciliation[],
+    covers?: ReadonlyMap<LogicalBookId, Blob>,
+  ): Promise<void>;
 }
 
 class ArchiveBookSource implements BookSource {
@@ -210,7 +252,11 @@ export class LibraryBackupService {
   }
 
   private async prepareBackup(now: Date): Promise<PreparedBackup> {
-    const books = [...(await this.repository.listBooks())].sort((left, right) =>
+    const [listedBooks, logicalSnapshot] = await Promise.all([
+      this.repository.listBooks(),
+      this.repository.getLogicalLibrarySnapshot(),
+    ]);
+    const books = [...listedBooks].sort((left, right) =>
       left.id.localeCompare(right.id),
     );
     if (books.length > MAX_BOOKS) {
@@ -249,8 +295,22 @@ export class LibraryBackupService {
         this.repository.getReaderPreferences('pdf'),
       ])
     ).filter((value): value is ReaderPreferences => value !== null);
+    const logicalBooks = [...logicalSnapshot.logicalBooks].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    );
+    const logicalBookPreferences = [...logicalSnapshot.preferences].sort(
+      (left, right) => left.logicalBookId.localeCompare(right.logicalBookId),
+    );
+    const membershipReconciliations = [...logicalSnapshot.reconciliations].sort(
+      (left, right) => left.conflictId.localeCompare(right.conflictId),
+    );
+    const logicalBookCovers = new Map<LogicalBookId, Blob>();
+    for (const logicalBook of logicalBooks) {
+      const cover = await this.repository.getLogicalBookCover(logicalBook.id);
+      if (cover) logicalBookCovers.set(logicalBook.id, cover);
+    }
     const manifest: LibraryBackupManifest = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       application: 'omnia-reader',
       createdAt: now.toISOString(),
       books: books.map((record) => ({
@@ -265,11 +325,25 @@ export class LibraryBackupService {
       ),
       bookmarks: includedBookmarks,
       annotations: includedAnnotations,
+      logicalBooks,
+      logicalBookPreferences,
+      membershipReconciliations,
+      logicalBookCovers: [...logicalBookCovers]
+        .map(([logicalBookId, cover]) => ({
+          logicalBookId,
+          path: logicalCoverPath(logicalBookId),
+          mediaType: cover.type || 'application/octet-stream',
+          size: cover.size,
+        }))
+        .sort((left, right) =>
+          left.logicalBookId.localeCompare(right.logicalBookId),
+        ),
     };
     return {
       books,
       manifest,
       fileName: this.backupFileName(now),
+      logicalBookCovers,
     };
   }
 
@@ -290,6 +364,14 @@ export class LibraryBackupService {
       level: 6,
       signal: options.signal,
     });
+    for (const cover of prepared.manifest.logicalBookCovers) {
+      const blob = prepared.logicalBookCovers.get(cover.logicalBookId);
+      if (!blob) throw new Error('Cannot back up a missing logical-book cover');
+      await writer.add(cover.path, new zip.BlobReader(blob), {
+        level: 0,
+        signal: options.signal,
+      });
+    }
     const totalBytes = prepared.books.reduce(
       (total, book) => total + book.size,
       0,
@@ -372,6 +454,21 @@ export class LibraryBackupService {
           addedBookIds.push(item.record.id);
         }
       }
+
+      const logicalRepository = this.repository as LibraryRepository &
+        ProgressDocumentRepository &
+        Partial<LogicalStateRestoreRepository>;
+      if (!logicalRepository.replaceLogicalBookState) {
+        throw new Error(
+          'This library repository cannot restore logical-book backup state',
+        );
+      }
+      await logicalRepository.replaceLogicalBookState(
+        validated.manifest.logicalBooks,
+        validated.manifest.logicalBookPreferences,
+        validated.manifest.membershipReconciliations,
+        validated.logicalBookCovers,
+      );
 
       for (const progress of validated.manifest.progress) {
         const current = await this.repository.getProgress(progress.bookId);
@@ -496,7 +593,25 @@ export class LibraryBackupService {
         }
         publications.set(book.path, blob);
       }
-      return { manifest, publications };
+      const logicalBookCovers = new Map<LogicalBookId, Blob>();
+      for (const cover of manifest.logicalBookCovers) {
+        const entry = fileEntry(
+          byPath.get(cover.path),
+          `Backup entry "${cover.path}" is missing`,
+        );
+        const blob = await entry.getData(new BlobWriter(cover.mediaType), {
+          checkSignature: true,
+          checkAmbiguity: true,
+          checkOverlappingEntry: true,
+        });
+        if (blob.size !== cover.size) {
+          throw new Error(
+            `Backup logical-book cover "${cover.path}" has an invalid size`,
+          );
+        }
+        logicalBookCovers.set(cover.logicalBookId, blob);
+      }
+      return { manifest, publications, logicalBookCovers };
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Backup')) {
         throw error;
@@ -553,6 +668,7 @@ function validateArchiveEntries(
   const expectedPaths = new Set([
     MANIFEST_PATH,
     ...manifest.books.map((book) => book.path),
+    ...manifest.logicalBookCovers.map((cover) => cover.path),
   ]);
   if (
     entries.size !== expectedPaths.size ||
@@ -570,6 +686,12 @@ function validateArchiveEntries(
       entry.uncompressedSize !== book.record.size
     ) {
       throw new Error(`Backup entry "${book.path}" has an invalid size`);
+    }
+  }
+  for (const cover of manifest.logicalBookCovers) {
+    const entry = entries.get(cover.path);
+    if (!entry || entry.directory || entry.uncompressedSize !== cover.size) {
+      throw new Error(`Backup entry "${cover.path}" has an invalid size`);
     }
   }
 }
@@ -608,7 +730,7 @@ function parseManifest(text: string): LibraryBackupManifest {
     }
     const legacy = value as unknown as LegacyLibraryBackupManifest;
     manifest = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       application: legacy.application,
       createdAt: legacy.createdAt,
       books: legacy.books,
@@ -617,6 +739,7 @@ function parseManifest(text: string): LibraryBackupManifest {
       preferences: legacy.preferences,
       bookmarks: legacy.annotations,
       annotations: [],
+      ...singletonLogicalState(legacy.books),
     };
   } else if (value['schemaVersion'] === 2) {
     if (
@@ -631,7 +754,7 @@ function parseManifest(text: string): LibraryBackupManifest {
     }
     const versionTwo = value as unknown as VersionTwoLibraryBackupManifest;
     manifest = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       application: versionTwo.application,
       createdAt: versionTwo.createdAt,
       books: versionTwo.books,
@@ -640,6 +763,7 @@ function parseManifest(text: string): LibraryBackupManifest {
       preferences: versionTwo.preferences,
       bookmarks: versionTwo.bookmarks,
       annotations: versionTwo.annotations,
+      ...singletonLogicalState(versionTwo.books),
     };
   } else if (value['schemaVersion'] === 3) {
     if (
@@ -652,6 +776,38 @@ function parseManifest(text: string): LibraryBackupManifest {
       !Array.isArray(value['progressDocuments']) ||
       value['progressDocuments'].length > MAX_PROGRESS_DOCUMENTS ||
       !value['progressDocuments'].every(isReadingProgress)
+    ) {
+      throw new Error('Backup manifest uses an unsupported or invalid schema');
+    }
+    const versionThree = value as unknown as VersionThreeLibraryBackupManifest;
+    manifest = {
+      ...versionThree,
+      schemaVersion: 4,
+      ...singletonLogicalState(versionThree.books),
+    };
+  } else if (value['schemaVersion'] === 4) {
+    if (
+      !Array.isArray(value['bookmarks']) ||
+      value['bookmarks'].length > MAX_BOOKMARKS ||
+      !value['bookmarks'].every(isPublicationBookmark) ||
+      !Array.isArray(value['annotations']) ||
+      value['annotations'].length > MAX_ANNOTATIONS ||
+      !value['annotations'].every(isPublicationAnnotation) ||
+      !Array.isArray(value['progressDocuments']) ||
+      value['progressDocuments'].length > MAX_PROGRESS_DOCUMENTS ||
+      !value['progressDocuments'].every(isReadingProgress) ||
+      !Array.isArray(value['logicalBooks']) ||
+      value['logicalBooks'].length > MAX_BOOKS ||
+      !value['logicalBooks'].every(isLogicalBookRecord) ||
+      !Array.isArray(value['logicalBookPreferences']) ||
+      value['logicalBookPreferences'].length > MAX_BOOKS ||
+      !value['logicalBookPreferences'].every(isLogicalBookFormatPreference) ||
+      !Array.isArray(value['membershipReconciliations']) ||
+      value['membershipReconciliations'].length > MAX_BOOKS ||
+      !value['membershipReconciliations'].every(isMembershipReconciliation) ||
+      !Array.isArray(value['logicalBookCovers']) ||
+      value['logicalBookCovers'].length > MAX_BOOKS ||
+      !value['logicalBookCovers'].every(isBackupLogicalBookCover)
     ) {
       throw new Error('Backup manifest uses an unsupported or invalid schema');
     }
@@ -674,6 +830,58 @@ function parseManifest(text: string): LibraryBackupManifest {
     bookIds.add(book.record.id);
     bookFormats.set(book.record.id, book.record.format);
     paths.add(book.path);
+  }
+  const logicalBookIds = new Set<LogicalBookId>();
+  const ownedVariants = new Set<string>();
+  for (const logicalBook of manifest.logicalBooks) {
+    if (logicalBookIds.has(logicalBook.id)) {
+      throw new Error('Backup manifest contains duplicate logical books');
+    }
+    logicalBookIds.add(logicalBook.id);
+    for (const [format, variantId] of Object.entries(logicalBook.variants) as [
+      PublicationFormat,
+      string,
+    ][]) {
+      if (
+        !bookIds.has(variantId) ||
+        bookFormats.get(variantId) !== format ||
+        ownedVariants.has(variantId)
+      ) {
+        throw new Error('Backup logical membership is inconsistent');
+      }
+      ownedVariants.add(variantId);
+    }
+  }
+  if (ownedVariants.size !== bookIds.size) {
+    throw new Error('Every backup publication must have one logical owner');
+  }
+  if (
+    manifest.logicalBookPreferences.some(
+      (preference) =>
+        !logicalBookIds.has(preference.logicalBookId) ||
+        !manifest.logicalBooks.find(
+          (book) => book.id === preference.logicalBookId,
+        )?.variants[preference.preferredFormat],
+    ) ||
+    new Set(
+      manifest.logicalBookPreferences.map(
+        (preference) => preference.logicalBookId,
+      ),
+    ).size !== manifest.logicalBookPreferences.length ||
+    manifest.logicalBookCovers.some(
+      (cover) =>
+        !logicalBookIds.has(cover.logicalBookId) ||
+        cover.path !== logicalCoverPath(cover.logicalBookId),
+    ) ||
+    new Set(manifest.logicalBookCovers.map((cover) => cover.logicalBookId))
+      .size !== manifest.logicalBookCovers.length ||
+    new Set(
+      manifest.membershipReconciliations.map(
+        (reconciliation) => reconciliation.conflictId,
+      ),
+    ).size !== manifest.membershipReconciliations.length
+  ) {
+    throw new Error('Backup logical-book state is inconsistent');
   }
   if (
     manifest.progress.some(
@@ -739,6 +947,43 @@ function isBackupBook(value: unknown): value is BackupBook {
     value['path'].length <= 128 &&
     value['sha256'] === value['record'].id
   );
+}
+
+function isBackupLogicalBookCover(
+  value: unknown,
+): value is BackupLogicalBookCover {
+  return (
+    isRecord(value) &&
+    typeof value['logicalBookId'] === 'string' &&
+    /^logical:sha256:[a-f0-9]{64}$/.test(value['logicalBookId']) &&
+    typeof value['path'] === 'string' &&
+    value['path'] ===
+      logicalCoverPath(value['logicalBookId'] as LogicalBookId) &&
+    typeof value['mediaType'] === 'string' &&
+    value['mediaType'].length > 0 &&
+    value['mediaType'].length <= 255 &&
+    Number.isSafeInteger(value['size']) &&
+    (value['size'] as number) >= 0
+  );
+}
+
+function singletonLogicalState(
+  books: readonly BackupBook[],
+): Pick<
+  LibraryBackupManifest,
+  | 'logicalBooks'
+  | 'logicalBookPreferences'
+  | 'membershipReconciliations'
+  | 'logicalBookCovers'
+> {
+  return {
+    logicalBooks: books
+      .map((book) => logicalBookFromVariant(book.record))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    logicalBookPreferences: [],
+    membershipReconciliations: [],
+    logicalBookCovers: [],
+  };
 }
 
 function preferredProgress(
@@ -812,6 +1057,10 @@ function sameProgress(left: ReadingProgress, right: ReadingProgress): boolean {
 
 function publicationPath(book: BookRecord): string {
   return `books/${book.id.slice('sha256:'.length)}.${book.format}`;
+}
+
+function logicalCoverPath(logicalBookId: LogicalBookId): string {
+  return `logical-covers/${logicalBookId.slice('logical:sha256:'.length)}.cover`;
 }
 
 function dateStamp(value: Date): string {

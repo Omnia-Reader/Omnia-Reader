@@ -31,6 +31,8 @@ import {
   keyboardNavigationDirection,
   keyboardReaderCommand,
   isPublicationAnnotationColor,
+  LogicalBookRecord,
+  LogicalMutationIdentity,
   PdfReaderPreferences,
   PdfRotation,
   PageNavigation,
@@ -43,6 +45,7 @@ import {
   PublicationBookmark,
   PublicationLocator,
   PublicationMetadata,
+  PublicationFormat,
   PublicationPasswordChallenge,
   PublicationSelection,
   ReaderEngine,
@@ -64,6 +67,7 @@ import {
   touchNavigationDirection,
   wheelNavigationDirection,
   wheelZoomDirection,
+  VariantAvailability,
 } from '@omnia-reader/reader/domain';
 import { createBookSyncManifest } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
@@ -99,6 +103,24 @@ function decorationColor(
   );
 }
 
+function availabilityMessage(availability: VariantAvailability): string {
+  if (availability.status === 'checking') return 'still being checked';
+  if (availability.status === 'healthy') return 'ready';
+  return `${availability.status} (${availability.cause.replace(/-/g, ' ')})`;
+}
+
+function readerMutationIdentity(): LogicalMutationIdentity {
+  const now = new Date().toISOString();
+  const deviceId = getDeviceId();
+  return {
+    changeId: `change:${deviceId}:${crypto.randomUUID()}`,
+    parents: [],
+    createdAt: now,
+    deviceId,
+    appVersion: '0.0.0',
+  };
+}
+
 @Component({
   selector: 'omnia-reader-page',
   templateUrl: './reader-page.component.html',
@@ -129,6 +151,25 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     PUBLICATION_ANNOTATION_BLACK_COLOR_OPTION,
     ...PUBLICATION_ANNOTATION_COLOR_OPTIONS,
   ];
+  readonly multiFormatControlBaseClass =
+    'inline-flex min-h-3.5 w-full min-w-0 items-center justify-between gap-0.5 rounded border border-stone-200/60 bg-white px-0.5 py-0 text-[6px] leading-none';
+  readonly multiFormatControlProgressTrackClass =
+    'h-0.5 w-7 shrink-0 overflow-hidden rounded-full bg-emerald-200/90';
+  readonly multiFormatControlProgressFillClass =
+    'h-full min-w-px rounded-full bg-green-600 transition-[width] duration-150 ease-out';
+  readonly multiFormatControlProgressPercentClass =
+    'w-5 text-right text-[6px] leading-none tabular-nums text-stone-500';
+  readonly multiFormatProgressClusterClass =
+    'ml-auto inline-flex shrink-0 items-center gap-0.5';
+  readonly multiFormatControlLabelClass =
+    'sr-only';
+  readonly multiFormatControlActiveClass =
+    'bg-stone-800 text-white';
+  readonly multiFormatControlInactiveClass =
+    'text-stone-400 bg-transparent';
+  readonly multiFormatControlIconClass =
+    '!h-2 !w-2 !text-[8px] text-current';
+  readonly formatOrder: readonly PublicationFormat[] = ['epub', 'pdf'];
   readonly annotationFormatOptions = [
     { style: 'highlight', label: 'Highlight' },
     { style: 'underline', label: 'Underline' },
@@ -212,6 +253,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private readonly progressSliderThumbWidthPx = 10;
 
   book: BookRecord | null = null;
+  logicalBook: LogicalBookRecord | null = null;
   metadata: PublicationMetadata | null = null;
   tableOfContents: readonly TocEntry[] = [];
   tocItems: readonly FlattenedTocEntry[] = [];
@@ -335,6 +377,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private pinnedProgressMilestoneKey: string | null = null;
   private destroyed = false;
   private progressSliderGeometryRefreshId: number | null = null;
+  private formatProgressPercentByVariant: ReadonlyMap<string, number> = new Map();
 
   async ngAfterViewInit(): Promise<void> {
     const bookId = this.route.snapshot.paramMap.get('bookId');
@@ -348,22 +391,33 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     });
 
     try {
-      const [book, source, progress, bookmarks, annotations] =
+      const [book, progress, bookmarks, annotations, logicalBook] =
         await Promise.all([
           this.repository.getBook(bookId),
-          this.repository.getBookSource(bookId),
           this.repository.getProgress(bookId),
           this.repository.listBookmarks(bookId),
           this.repository.listAnnotations(bookId),
+          this.repository.findLogicalBookByVariant(bookId),
         ]);
-      if (!book || !source) {
+      if (!book) {
         throw new Error(
           'This publication is no longer available on this device',
         );
       }
+      const opened = await this.repository.openHealthyVariant(bookId);
+      if (!('source' in opened)) {
+        throw new Error(
+          `This ${book.format.toUpperCase()} source is ${availabilityMessage(
+            opened.availability,
+          )}`,
+        );
+      }
+      const source = opened.source;
 
       this.book = book;
+      this.logicalBook = logicalBook;
       this.progress = progress;
+      await this.refreshFormatProgressPercentByVariant(logicalBook);
       this.bookmarks = bookmarks;
       this.annotations = annotations;
       const preferences =
@@ -420,6 +474,28 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
           this.changeDetector.markForCheck();
         }) ?? null;
       this.metadata = await this.engine.open(source);
+      if (
+        this.route.snapshot.queryParamMap.get('explicitFormat') === '1' &&
+        logicalBook
+      ) {
+        const change = await this.repository.saveLogicalBookFormatPreference(
+          logicalBook.id,
+          book.format,
+          readerMutationIdentity(),
+        );
+        if (change) {
+          try {
+            await this.syncJournal.append({
+              entity: 'logical-book-change',
+              entityId: change.changeId,
+              operation: 'upsert',
+              payload: change,
+            });
+          } catch {
+            // The successful local preference remains pending while sync is unavailable.
+          }
+        }
+      }
       this.book = await this.repository.updateMetadata(
         book.id,
         { ...this.metadata, cover: undefined },
@@ -513,6 +589,55 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     } finally {
       this.loading = false;
       this.changeDetector.markForCheck();
+    }
+  }
+
+  siblingVariant(format: PublicationFormat): string | null {
+    return this.logicalBook?.variants[format] ?? null;
+  }
+
+  hasMultipleFormats(): boolean {
+    return !!this.logicalBook?.variants.epub && !!this.logicalBook.variants.pdf;
+  }
+
+  async switchReadingFormat(format: PublicationFormat): Promise<void> {
+    const variantId = this.siblingVariant(format);
+    if (!variantId || variantId === this.book?.id) return;
+    if (this.annotationEditorOpen) {
+      await this.autosaveAnnotationAndClose();
+    }
+    await this.queueProgressSave();
+    this.closeTransientReaderUi();
+    await this.router.navigate(['/reader', variantId], {
+      queryParams: { explicitFormat: 1 },
+    });
+  }
+
+  private async refreshFormatProgressPercentByVariant(
+    logicalBook: LogicalBookRecord | null,
+  ): Promise<void> {
+    if (!logicalBook) {
+      this.formatProgressPercentByVariant = new Map();
+      return;
+    }
+    const variantIds = new Set(
+      [logicalBook.variants.epub, logicalBook.variants.pdf].filter(
+        (variantId): variantId is string => !!variantId,
+      ),
+    );
+    if (variantIds.size === 0) {
+      this.formatProgressPercentByVariant = new Map();
+      return;
+    }
+    try {
+      const allProgress = (await this.repository.listProgress?.()) ?? [];
+      this.formatProgressPercentByVariant = new Map(
+        allProgress
+          .filter((entry) => variantIds.has(entry.bookId))
+          .map((entry) => [entry.bookId, readingProgressPercent(entry)]),
+      );
+    } catch {
+      this.formatProgressPercentByVariant = new Map();
     }
   }
 
@@ -688,6 +813,26 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   get displayedOverallProgressPercentText(): string {
     const percent = this.displayedProgressPercent;
     return percent === null ? '--' : `${Math.round(percent)}`;
+  }
+
+  formatControlProgressPercent(format: PublicationFormat): number | null {
+    const variantId = this.siblingVariant(format);
+    if (!variantId) {
+      return null;
+    }
+    const percent = this.formatProgressPercentByVariant.get(variantId);
+    if (percent === undefined || !Number.isFinite(percent)) {
+      return null;
+    }
+    return Math.max(0, Math.min(100, Math.round(percent)));
+  }
+
+  formatActionLabel(format: PublicationFormat): string {
+    return format.toUpperCase();
+  }
+
+  formatActionIcon(format: PublicationFormat): string {
+    return format === 'epub' ? 'menu_book' : 'picture_as_pdf';
   }
 
   get progressSliderTrackBackground(): string {
@@ -3020,6 +3165,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       appVersion: '0.0.0',
     };
     this.progress = readingProgress;
+    if (this.book?.id) {
+      this.formatProgressPercentByVariant = new Map(
+        this.formatProgressPercentByVariant,
+      ).set(this.book.id, readingProgressPercent(readingProgress));
+    }
     await this.repository.saveProgress(readingProgress);
     this.lastPersistedLocator = serializedLocator;
     try {
@@ -3390,6 +3540,15 @@ function clamp(value: number, minimum: number, maximum: number): number {
 
 function normalizeProgressPercent(value: number): number {
   return Number(clamp(value, 0, 100).toFixed(2));
+}
+
+function readingProgressPercent(progress: ReadingProgress): number {
+  const progression =
+    progress.locator.locations?.totalProgression ?? progress.furthestTotalProgression;
+  if (!Number.isFinite(progression)) {
+    return 0;
+  }
+  return normalizeProgressPercent(progression * 100);
 }
 
 function finiteAnnotationLocation(value: number | undefined): number | null {

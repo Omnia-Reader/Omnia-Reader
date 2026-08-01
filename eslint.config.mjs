@@ -5,7 +5,14 @@ export default [
   ...nx.configs['flat/typescript'],
   ...nx.configs['flat/javascript'],
   {
-    ignores: ['**/dist', '**/out-tsc'],
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/build',
+      '**/out-tsc',
+      '**/coverage',
+      '**/*.min.js',
+    ],
   },
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],

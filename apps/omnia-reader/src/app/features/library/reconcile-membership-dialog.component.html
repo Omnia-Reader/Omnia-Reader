@@ -1,0 +1,65 @@
+<h2 mat-dialog-title>Review conflicting book formats</h2>
+
+<mat-dialog-content class="!text-stone-900">
+  <p class="mt-0">
+    Synchronization found competing ways to group these formats. No reading
+    progress, bookmarks, highlights, or notes will be merged.
+  </p>
+
+  <h3 class="text-base font-semibold">Current grouping</h3>
+  <ul class="break-all">
+    @for (
+      membership of conflict.acceptedMembership;
+      track membership.variantId
+    ) {
+      <li>
+        {{ membership.format.toUpperCase() }} in
+        {{ membership.logicalBookId }}
+      </li>
+    }
+  </ul>
+
+  <h3 class="text-base font-semibold">Competing grouping</h3>
+  <ul class="break-all">
+    @for (
+      membership of conflict.rejectedMembership;
+      track membership.variantId
+    ) {
+      <li>
+        {{ membership.format.toUpperCase() }} in
+        {{ membership.logicalBookId }}
+      </li>
+    }
+  </ul>
+</mat-dialog-content>
+
+<mat-dialog-actions class="!flex !flex-col !items-stretch" align="end">
+  <button
+    mat-flat-button
+    type="button"
+    [mat-dialog-close]="{ kind: 'keep-accepted' }"
+  >
+    Keep current grouping
+  </button>
+  @for (logicalBookId of competingLogicalBookIds; track logicalBookId) {
+    <button
+      mat-stroked-button
+      type="button"
+      [mat-dialog-close]="acceptCompeting(logicalBookId)"
+    >
+      Use competing grouping {{ $index + 1 }}
+    </button>
+  }
+  @for (variantId of conflict.affectedVariantIds; track variantId) {
+    <button
+      mat-button
+      type="button"
+      [mat-dialog-close]="makeStandalone(variantId)"
+    >
+      Keep affected format {{ $index + 1 }} as a separate book
+    </button>
+  }
+  <button mat-button type="button" [mat-dialog-close]="null">
+    Decide later
+  </button>
+</mat-dialog-actions>

@@ -21,6 +21,8 @@ export interface LibrarySyncResult extends SyncWorkerResult {
   schemaPushed: number;
   booksPulled: number;
   booksPushed: number;
+  logicalBooksPulled: number;
+  logicalBooksPushed: number;
   progressPulled: number;
   progressPushed: number;
   bookmarksPulled: number;
@@ -31,6 +33,7 @@ export interface LibrarySyncResult extends SyncWorkerResult {
 
 export interface LibrarySyncWorkers {
   schema: SyncWorker;
+  logicalBooks?: SyncWorker;
   books: SyncWorker;
   progress: SyncWorker;
   bookmarks?: SyncWorker;
@@ -57,6 +60,10 @@ export class LibrarySyncCoordinator implements SyncWorker {
     throwIfSyncAborted(options.signal);
     const schema = await this.workers.schema.synchronize(options);
     throwIfSyncAborted(options.signal);
+    const logicalBooks = this.workers.logicalBooks
+      ? await this.workers.logicalBooks.synchronize(options)
+      : EMPTY_SYNC_RESULT;
+    throwIfSyncAborted(options.signal);
     const books = await this.workers.books.synchronize(options);
     throwIfSyncAborted(options.signal);
     const progress = await this.workers.progress.synchronize(options);
@@ -71,24 +78,28 @@ export class LibrarySyncCoordinator implements SyncWorker {
     return {
       pulled:
         schema.pulled +
+        logicalBooks.pulled +
         books.pulled +
         progress.pulled +
         bookmarks.pulled +
         annotations.pulled,
       pushed:
         schema.pushed +
+        logicalBooks.pushed +
         books.pushed +
         progress.pushed +
         bookmarks.pushed +
         annotations.pushed,
       conflicts:
         schema.conflicts +
+        logicalBooks.conflicts +
         books.conflicts +
         progress.conflicts +
         bookmarks.conflicts +
         annotations.conflicts,
       rejected:
         schema.rejected +
+        logicalBooks.rejected +
         books.rejected +
         progress.rejected +
         bookmarks.rejected +
@@ -97,6 +108,8 @@ export class LibrarySyncCoordinator implements SyncWorker {
       schemaPushed: schema.pushed,
       booksPulled: books.pulled,
       booksPushed: books.pushed,
+      logicalBooksPulled: logicalBooks.pulled,
+      logicalBooksPushed: logicalBooks.pushed,
       progressPulled: progress.pulled,
       progressPushed: progress.pushed,
       bookmarksPulled: bookmarks.pulled,

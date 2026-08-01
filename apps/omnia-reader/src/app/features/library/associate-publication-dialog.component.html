@@ -1,0 +1,65 @@
+<h2 mat-dialog-title>Associate an existing book</h2>
+<mat-dialog-content>
+  <p>
+    Choose the matching {{ data.format.toUpperCase() }} publication to combine
+    with “{{ data.destination.title }}”. The title, cover, and catalog details
+    from this destination remain unchanged. Nothing is combined automatically.
+  </p>
+  @if (data.candidates.length === 0) {
+    <p role="status">No compatible existing books are available.</p>
+  } @else {
+    <fieldset
+      class="m-0 grid gap-3 border-0 p-0"
+      [attr.aria-label]="'Compatible ' + data.format.toUpperCase() + ' books'"
+    >
+      <legend class="mb-2 font-semibold">
+        Compatible {{ data.format.toUpperCase() }} books
+      </legend>
+      @for (candidate of data.candidates; track candidate.id) {
+        <label
+          class="flex min-h-12 cursor-pointer items-start gap-3 rounded-lg border border-stone-300 p-3"
+        >
+          <input
+            type="radio"
+            name="association-candidate"
+            [value]="candidate.id"
+            (change)="select($event)"
+          />
+          <span>
+            <strong>{{ candidate.title }}</strong
+            ><br />
+            <span
+              >{{ candidate.authors.join(', ') || 'Unknown author' }} ·
+              {{ candidate.variants.epub ? 'EPUB' : 'PDF' }} · Added
+              <time [attr.datetime]="candidate.importedAt">{{
+                candidate.importedAt | date: 'mediumDate'
+              }}</time></span
+            >
+            <br />
+            <span class="break-all text-xs text-stone-600"
+              >Library ID {{ candidate.id }}</span
+            >
+          </span>
+        </label>
+      }
+    </fieldset>
+  }
+  @if (selectedCandidate; as candidate) {
+    <p role="status">
+      “{{ candidate.title }}” will be associated with “{{
+        data.destination.title
+      }}”. Confirm to combine these entries.
+    </p>
+  }
+</mat-dialog-content>
+<mat-dialog-actions align="end">
+  <button mat-button type="button" [mat-dialog-close]="null">Cancel</button>
+  <button
+    mat-flat-button
+    type="button"
+    [disabled]="!selectedId"
+    (click)="confirm()"
+  >
+    Associate books
+  </button>
+</mat-dialog-actions>

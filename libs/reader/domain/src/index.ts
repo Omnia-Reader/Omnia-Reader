@@ -1,4 +1,5 @@
 export * from './lib/publication';
+export * from './lib/logical-book';
 export * from './lib/publication-annotation';
 export * from './lib/publication-bookmark';
 export * from './lib/publication-format';

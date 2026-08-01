@@ -34,6 +34,7 @@ describe('PublicationImportService', () => {
   const repository = {
     listBooks: vi.fn().mockResolvedValue([]),
     importBook: vi.fn().mockResolvedValue(book),
+    findLogicalBookByVariant: vi.fn().mockResolvedValue(null),
     removeBook: vi.fn().mockResolvedValue(undefined),
   };
   const journal = {
@@ -52,6 +53,7 @@ describe('PublicationImportService', () => {
     vi.clearAllMocks();
     repository.listBooks.mockResolvedValue([]);
     repository.importBook.mockResolvedValue(book);
+    repository.findLogicalBookByVariant.mockResolvedValue(null);
     repository.removeBook.mockResolvedValue(undefined);
     journal.append.mockResolvedValue(undefined);
     enrichment.validateAndEnrich.mockResolvedValue(book);

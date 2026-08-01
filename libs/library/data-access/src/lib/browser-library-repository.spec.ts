@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto';
 import {
+  BookRecord,
   DEFAULT_EPUB_READER_PREFERENCES,
+  LogicalMutationIdentity,
   PublicationAnnotation,
   PublicationBookmark,
   ReadingProgress,
@@ -38,6 +40,778 @@ describe('BrowserLibraryRepository reader preferences', () => {
     ).resolves.toBeNull();
   });
 });
+
+describe('BrowserLibraryRepository logical singleton and availability', () => {
+  it('creates one deterministic singleton for standalone and synchronized variants', async () => {
+    const repository = new BrowserLibraryRepository();
+    const localBytes = new Blob(['%PDF-1.4 local singleton'], {
+      type: 'application/pdf',
+    });
+    const imported = await repository.importBook({
+      name: 'local.pdf',
+      mediaType: localBytes.type,
+      size: localBytes.size,
+      open: async () => localBytes,
+    });
+    const remoteBytes = new Blob(['remote epub singleton'], {
+      type: 'application/epub+zip',
+    });
+    const remoteId = await publicationFingerprint(remoteBytes);
+    await repository.storeSyncedBook(
+      {
+        id: remoteId,
+        format: 'epub',
+        fileName: 'remote.epub',
+        mediaType: remoteBytes.type,
+        size: remoteBytes.size,
+        title: 'Remote',
+        authors: [],
+        importedAt: '2026-07-31T08:00:00.000Z',
+      },
+      {
+        name: 'remote.epub',
+        mediaType: remoteBytes.type,
+        size: remoteBytes.size,
+        open: async () => remoteBytes,
+      },
+    );
+
+    await expect(repository.listLogicalBooks()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ variants: { pdf: imported.id } }),
+        expect.objectContaining({ variants: { epub: remoteId } }),
+      ]),
+    );
+  });
+
+  it('distinguishes lightweight checking from authoritative healthy status', async () => {
+    const repository = new BrowserLibraryRepository();
+    const bytes = new Blob(['%PDF-1.4 health'], { type: 'application/pdf' });
+    const book = await repository.importBook({
+      name: 'health.pdf',
+      mediaType: bytes.type,
+      size: bytes.size,
+      open: async () => bytes,
+    });
+
+    await expect(
+      repository.resolveVariantAvailability([book.id]),
+    ).resolves.toEqual(new Map([[book.id, { status: 'checking' }]]));
+    await expect(repository.openHealthyVariant(book.id)).resolves.toMatchObject(
+      {
+        availability: { status: 'healthy' },
+        source: { name: 'health.pdf' },
+      },
+    );
+  });
+
+  it.each([
+    ['opfs', null, 'evicted', '1'],
+    ['indexeddb', null, 'inaccessible', '2'],
+    ['indexeddb', new Blob(['short']), 'incomplete', '3'],
+  ] as const)(
+    'reports unavailable bytes with the required cause',
+    async (storage, opened, cause, digestDigit) => {
+      const bookId = `sha256:${digestDigit.repeat(64)}`;
+      const bytes = new Blob(['%PDF-1.4 availability fixture'], {
+        type: 'application/pdf',
+      });
+      const binaryStorage = controlledBinaryStorage(storage, opened);
+      const repository = new BrowserLibraryRepository(
+        binaryStorage,
+        async () => bookId,
+        `availability-${cause}`,
+      );
+      await repository.importBook({
+        name: 'availability.pdf',
+        mediaType: bytes.type,
+        size: bytes.size,
+        open: async () => bytes,
+      });
+
+      await expect(repository.openHealthyVariant(bookId)).resolves.toEqual({
+        availability: { status: 'unavailable', cause },
+      });
+    },
+  );
+
+  it('quarantines same-size digest mismatch before returning a source', async () => {
+    const bookId = `sha256:${'9'.repeat(64)}`;
+    const wrongId = `sha256:${'8'.repeat(64)}`;
+    const bytes = new Blob(['%PDF-1.4 same-size corrupt'], {
+      type: 'application/pdf',
+    });
+    const fingerprint = vi
+      .fn<(blob: Blob) => Promise<string>>()
+      .mockResolvedValueOnce(bookId)
+      .mockResolvedValue(wrongId);
+    const repository = new BrowserLibraryRepository(
+      controlledBinaryStorage('indexeddb', bytes),
+      fingerprint,
+      'availability-digest-mismatch',
+    );
+    await repository.importBook({
+      name: 'digest.pdf',
+      mediaType: bytes.type,
+      size: bytes.size,
+      open: async () => bytes,
+    });
+
+    await expect(repository.openHealthyVariant(bookId)).resolves.toEqual({
+      availability: { status: 'quarantined', cause: 'integrity-invalid' },
+    });
+    await expect(repository.getBookSource(bookId)).resolves.toBeNull();
+  });
+
+  it('quarantines a detected-format mismatch before returning a source', async () => {
+    const bookId = `sha256:${'6'.repeat(64)}`;
+    const declaredPdf = new Blob(['%PDF-x'], { type: 'application/pdf' });
+    const storedEpub = new Blob(
+      [new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0])],
+      {
+        type: 'application/epub+zip',
+      },
+    );
+    const repository = new BrowserLibraryRepository(
+      controlledBinaryStorage('indexeddb', storedEpub),
+      async () => bookId,
+      'availability-format-mismatch',
+    );
+    await repository.importBook({
+      name: 'declared.pdf',
+      mediaType: declaredPdf.type,
+      size: declaredPdf.size,
+      open: async () => declaredPdf,
+    });
+
+    await expect(repository.openHealthyVariant(bookId)).resolves.toEqual({
+      availability: { status: 'quarantined', cause: 'unsupported' },
+    });
+  });
+
+  it('quarantines a malformed active reference with the canonical cause', async () => {
+    const databaseName = 'availability-malformed-reference';
+    const bytes = new Blob(['%PDF-1.4 malformed reference'], {
+      type: 'application/pdf',
+    });
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      databaseName,
+    );
+    const book = await repository.importBook({
+      name: 'malformed.pdf',
+      mediaType: bytes.type,
+      size: bytes.size,
+      open: async () => bytes,
+    });
+    await putRawLibraryRecords(
+      [
+        {
+          storeName: 'binaries',
+          value: {
+            schemaVersion: 2,
+            storage: 'opfs',
+            bookId: book.id,
+            fileName: 'malformed.pdf',
+            mediaType: 'application/pdf',
+            size: bytes.size,
+            opfsFileName: '../unsafe.pdf',
+          },
+        },
+      ],
+      databaseName,
+    );
+
+    await expect(repository.openHealthyVariant(book.id)).resolves.toEqual({
+      availability: { status: 'quarantined', cause: 'malformed-reference' },
+    });
+  });
+
+  it('reports a missing active reference and excludes cover state from health', async () => {
+    const databaseName = 'availability-missing-cover-exclusion';
+    const bytes = new Blob(['%PDF-1.4 cover independent'], {
+      type: 'application/pdf',
+    });
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      databaseName,
+    );
+    const book = await repository.importBook({
+      name: 'cover-independent.pdf',
+      mediaType: bytes.type,
+      size: bytes.size,
+      open: async () => bytes,
+    });
+    const logical = await repository.findLogicalBookByVariant(book.id);
+    expect(logical).not.toBeNull();
+    await putRawLibraryRecords(
+      [
+        {
+          storeName: 'logicalBookCovers',
+          value: { logicalBookId: logical!.id, mediaType: '', bytes: 'bad' },
+        },
+      ],
+      databaseName,
+    );
+    await expect(
+      repository.getLogicalBookCover(logical!.id),
+    ).resolves.toBeNull();
+    await expect(repository.openHealthyVariant(book.id)).resolves.toMatchObject(
+      {
+        availability: { status: 'healthy' },
+      },
+    );
+
+    await deleteRawLibraryRecord('binaries', book.id, databaseName);
+    await expect(repository.openHealthyVariant(book.id)).resolves.toEqual({
+      availability: { status: 'unavailable', cause: 'missing' },
+    });
+  });
+
+  it('accepts exact replacement after historical quarantine', async () => {
+    const bytes = new Blob(['%PDF-1.4 replacement fixture'], {
+      type: 'application/pdf',
+    });
+    const bookId = await publicationFingerprint(bytes);
+    let active: Blob | null = bytes;
+    const storage = controlledBinaryStorage('indexeddb', () => active);
+    const fingerprint = vi
+      .fn<(blob: Blob) => Promise<string>>()
+      .mockResolvedValueOnce(bookId)
+      .mockResolvedValueOnce(`sha256:${'7'.repeat(64)}`)
+      .mockResolvedValue(bookId);
+    const repository = new BrowserLibraryRepository(
+      storage,
+      fingerprint,
+      'availability-replacement',
+    );
+    await repository.importBook({
+      name: 'replacement.pdf',
+      mediaType: bytes.type,
+      size: bytes.size,
+      open: async () => bytes,
+    });
+    await repository.openHealthyVariant(bookId);
+    active = bytes;
+    await repository.replaceVariantSource(bookId, {
+      name: 'replacement.pdf',
+      mediaType: bytes.type,
+      size: bytes.size,
+      open: async () => bytes,
+    });
+
+    await expect(repository.openHealthyVariant(bookId)).resolves.toMatchObject({
+      availability: { status: 'healthy' },
+    });
+  });
+});
+
+describe('BrowserLibraryRepository add logical-book variant', () => {
+  it('atomically adds an opposite format without creating another card', async () => {
+    const repository = new BrowserLibraryRepository();
+    const pdf = new Blob(['%PDF-1.4 destination'], { type: 'application/pdf' });
+    const destination = await repository.importBook(
+      source('destination.pdf', pdf),
+    );
+    const logical = await repository.findLogicalBookByVariant(destination.id);
+    const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2])], {
+      type: 'application/epub+zip',
+    });
+    const variant = bookRecord(
+      await publicationFingerprint(epub),
+      'epub',
+      epub,
+    );
+
+    await expect(
+      repository.addVariant(
+        logical!.id,
+        variant,
+        source('candidate.epub', epub),
+        mutation('add:1'),
+      ),
+    ).resolves.toMatchObject({
+      status: 'added',
+      mutation: { createdVariantIds: [variant.id] },
+    });
+    await expect(repository.listLogicalBooks()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          variants: { pdf: destination.id, epub: variant.id },
+        }),
+      ]),
+    );
+    await expect(
+      repository.openHealthyVariant(variant.id),
+    ).resolves.toMatchObject({
+      availability: { status: 'healthy' },
+    });
+  });
+
+  it('returns discriminated duplicate and same-format ownership results', async () => {
+    const repository = new BrowserLibraryRepository();
+    const firstPdf = new Blob(['%PDF-1.4 first'], { type: 'application/pdf' });
+    const secondPdf = new Blob(['%PDF-1.4 second'], {
+      type: 'application/pdf',
+    });
+    const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 4])], {
+      type: 'application/epub+zip',
+    });
+    const first = await repository.importBook(source('first.pdf', firstPdf));
+    const existingEpub = await repository.importBook(
+      source('existing.epub', epub),
+    );
+    const firstLogical = await repository.findLogicalBookByVariant(first.id);
+    const secondVariant = bookRecord(
+      await publicationFingerprint(secondPdf),
+      'pdf',
+      secondPdf,
+      'second.pdf',
+    );
+    const epubVariant = bookRecord(
+      existingEpub.id,
+      'epub',
+      epub,
+      'existing.epub',
+    );
+
+    await expect(
+      repository.addVariant(
+        firstLogical!.id,
+        bookRecord(first.id, 'pdf', firstPdf, 'first.pdf'),
+        source('first.pdf', firstPdf),
+        mutation('add:duplicate-here'),
+      ),
+    ).resolves.toEqual({
+      status: 'already-member',
+      logicalBookId: firstLogical!.id,
+    });
+    await expect(
+      repository.addVariant(
+        firstLogical!.id,
+        secondVariant,
+        source('second.pdf', secondPdf),
+        mutation('add:same-format'),
+      ),
+    ).resolves.toEqual({
+      status: 'same-format-conflict',
+      logicalBookId: firstLogical!.id,
+      existingVariantId: first.id,
+    });
+    await expect(
+      repository.addVariant(
+        firstLogical!.id,
+        epubVariant,
+        source('existing.epub', epub),
+        mutation('add:other-owner'),
+      ),
+    ).resolves.toMatchObject({ status: 'belongs-to-other-book' });
+  });
+
+  it('leaves staged bytes unreachable when the destination disappeared', async () => {
+    const removed: unknown[] = [];
+    const storage = controlledBinaryStorage('opfs', null);
+    storage.remove = vi.fn(async (stored) => {
+      removed.push(stored);
+    });
+    const repository = new BrowserLibraryRepository(storage);
+    const pdf = new Blob(['%PDF-1.4 destination gone'], {
+      type: 'application/pdf',
+    });
+    const destination = await repository.importBook(source('gone.pdf', pdf));
+    const logical = await repository.findLogicalBookByVariant(destination.id);
+    await deleteRawLibraryRecord('logicalBooks', logical!.id);
+    const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 9])], {
+      type: 'application/epub+zip',
+    });
+    const variant = bookRecord(
+      await publicationFingerprint(epub),
+      'epub',
+      epub,
+    );
+
+    await expect(
+      repository.addVariant(
+        logical!.id,
+        variant,
+        source('candidate.epub', epub),
+        mutation('add:gone'),
+      ),
+    ).rejects.toThrow('not found');
+    expect(removed).toHaveLength(0);
+  });
+
+  it('cleans staged bytes after a metadata transaction failure and permits retry', async () => {
+    const databaseName = 'add-variant-transaction-retry';
+    const storage = controlledBinaryStorage('opfs', null);
+    const repository = new BrowserLibraryRepository(
+      storage,
+      undefined,
+      databaseName,
+    );
+    const pdf = new Blob(['%PDF-1.4 transaction destination'], {
+      type: 'application/pdf',
+    });
+    const destination = await repository.importBook(
+      source('transaction.pdf', pdf),
+    );
+    const logical = await repository.findLogicalBookByVariant(destination.id);
+    const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 12])], {
+      type: 'application/epub+zip',
+    });
+    const variant = bookRecord(
+      await publicationFingerprint(epub),
+      'epub',
+      epub,
+    );
+    await putRawLibraryRecords(
+      [{ storeName: 'books', value: variant }],
+      databaseName,
+    );
+
+    await expect(
+      repository.addVariant(
+        logical!.id,
+        variant,
+        source('candidate.epub', epub),
+        mutation('add:transaction-retry'),
+      ),
+    ).rejects.toBeTruthy();
+    expect(storage.remove).toHaveBeenCalledTimes(1);
+    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject({
+      variants: { pdf: destination.id },
+    });
+
+    await deleteRawLibraryRecord('books', variant.id, databaseName);
+    await expect(
+      repository.addVariant(
+        logical!.id,
+        variant,
+        source('candidate.epub', epub),
+        mutation('add:transaction-retry'),
+      ),
+    ).resolves.toMatchObject({ status: 'added' });
+  });
+
+  it('leaves membership unchanged when staging fails for quota', async () => {
+    const databaseName = 'add-variant-quota-failure';
+    const storage = controlledBinaryStorage('opfs', null);
+    const repository = new BrowserLibraryRepository(
+      storage,
+      undefined,
+      databaseName,
+    );
+    const pdf = new Blob(['%PDF-1.4 quota destination'], {
+      type: 'application/pdf',
+    });
+    const destination = await repository.importBook(source('quota.pdf', pdf));
+    const logical = await repository.findLogicalBookByVariant(destination.id);
+    vi.mocked(storage.save).mockRejectedValueOnce(
+      new DOMException('Storage quota exceeded', 'QuotaExceededError'),
+    );
+    const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 13])], {
+      type: 'application/epub+zip',
+    });
+    const variant = bookRecord(
+      await publicationFingerprint(epub),
+      'epub',
+      epub,
+    );
+
+    await expect(
+      repository.addVariant(
+        logical!.id,
+        variant,
+        source('candidate.epub', epub),
+        mutation('add:quota'),
+      ),
+    ).rejects.toMatchObject({ name: 'QuotaExceededError' });
+    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject({
+      variants: { pdf: destination.id },
+    });
+    await expect(repository.getBook(variant.id)).resolves.toBeNull();
+  });
+});
+
+describe('BrowserLibraryRepository logical-book association', () => {
+  it('keeps destination presentation and preserves exact variant state', async () => {
+    const repository = new BrowserLibraryRepository();
+    const epubBytes = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 11])], {
+      type: 'application/epub+zip',
+    });
+    const pdfBytes = new Blob(['%PDF-1.4 association'], {
+      type: 'application/pdf',
+    });
+    const epub = await repository.importBook(
+      source('destination.epub', epubBytes),
+    );
+    const pdf = await repository.importBook(source('source.pdf', pdfBytes));
+    const destination = await repository.findLogicalBookByVariant(epub.id);
+    const sourceLogical = await repository.findLogicalBookByVariant(pdf.id);
+    await repository.saveProgress(progressDocument(pdf.id, 'association', 0.4));
+
+    await expect(
+      repository.associate(
+        destination!.id,
+        sourceLogical!.id,
+        mutation('associate:1'),
+      ),
+    ).resolves.toMatchObject({
+      updatedLogicalBookIds: [destination!.id],
+      deletedLogicalBookIds: [sourceLogical!.id],
+      resultingBooks: [
+        expect.objectContaining({
+          id: destination!.id,
+          title: destination!.title,
+          variants: { epub: epub.id, pdf: pdf.id },
+        }),
+      ],
+    });
+    await expect(
+      repository.getLogicalBook(sourceLogical!.id),
+    ).resolves.toBeNull();
+    await expect(repository.getProgress(pdf.id)).resolves.toMatchObject({
+      bookId: pdf.id,
+    });
+    await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
+    await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+  });
+
+  it('rejects same-format and self association without mutation', async () => {
+    const repository = new BrowserLibraryRepository();
+    const leftBytes = new Blob(['%PDF-1.4 left association'], {
+      type: 'application/pdf',
+    });
+    const rightBytes = new Blob(['%PDF-1.4 right association'], {
+      type: 'application/pdf',
+    });
+    const left = await repository.importBook(source('left.pdf', leftBytes));
+    const right = await repository.importBook(source('right.pdf', rightBytes));
+    const leftLogical = await repository.findLogicalBookByVariant(left.id);
+    const rightLogical = await repository.findLogicalBookByVariant(right.id);
+
+    await expect(
+      repository.associate(
+        leftLogical!.id,
+        rightLogical!.id,
+        mutation('associate:conflict'),
+      ),
+    ).rejects.toThrow('already contain a PDF');
+    await expect(
+      repository.associate(
+        leftLogical!.id,
+        leftLogical!.id,
+        mutation('associate:self'),
+      ),
+    ).rejects.toThrow('itself');
+    await expect(
+      repository.getLogicalBook(rightLogical!.id),
+    ).resolves.not.toBeNull();
+  });
+});
+
+describe('BrowserLibraryRepository logical-book management', () => {
+  it('detaches the selected format without changing either exact publication', async () => {
+    const repository = new BrowserLibraryRepository();
+    const epubBytes = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 21])], {
+      type: 'application/epub+zip',
+    });
+    const pdfBytes = new Blob(['%PDF-1.4 detach'], {
+      type: 'application/pdf',
+    });
+    const epub = await repository.importBook(source('anchor.epub', epubBytes));
+    const pdf = await repository.importBook(source('detached.pdf', pdfBytes));
+    const destination = await repository.findLogicalBookByVariant(epub.id);
+    const sourceLogical = await repository.findLogicalBookByVariant(pdf.id);
+    await repository.associate(
+      destination!.id,
+      sourceLogical!.id,
+      mutation('associate:detach'),
+    );
+    await repository.saveLogicalBookFormatPreference(
+      destination!.id,
+      'pdf',
+      mutation('preference:pdf'),
+    );
+
+    const result = await repository.detachVariant(
+      destination!.id,
+      pdf.id,
+      mutation('detach:pdf'),
+    );
+
+    expect(result.createdLogicalBookIds).toHaveLength(1);
+    await expect(repository.listLogicalBooks()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: destination!.id,
+          variants: { epub: epub.id },
+        }),
+        expect.objectContaining({ variants: { pdf: pdf.id } }),
+      ]),
+    );
+    await expect(
+      repository.getLogicalBookFormatPreference(destination!.id),
+    ).resolves.toMatchObject({ preferredFormat: 'epub' });
+    await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
+    await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+  });
+
+  it('deletes one format state and then removes the final logical book', async () => {
+    const repository = new BrowserLibraryRepository();
+    const epubBytes = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 22])], {
+      type: 'application/epub+zip',
+    });
+    const pdfBytes = new Blob(['%PDF-1.4 delete'], {
+      type: 'application/pdf',
+    });
+    const epub = await repository.importBook(source('keep.epub', epubBytes));
+    const pdf = await repository.importBook(source('delete.pdf', pdfBytes));
+    const logical = await repository.findLogicalBookByVariant(epub.id);
+    const pdfLogical = await repository.findLogicalBookByVariant(pdf.id);
+    await repository.associate(
+      logical!.id,
+      pdfLogical!.id,
+      mutation('associate:delete'),
+    );
+    await repository.saveProgress(progressDocument(pdf.id, 'delete', 0.7));
+
+    await repository.deleteVariant(logical!.id, pdf.id, mutation('delete:pdf'));
+
+    await expect(repository.getBook(pdf.id)).resolves.toBeNull();
+    await expect(repository.getProgress(pdf.id)).resolves.toBeNull();
+    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject(
+      {
+        variants: { epub: epub.id },
+      },
+    );
+
+    await repository.deleteVariant(logical!.id, null, mutation('delete:book'));
+    await expect(repository.getLogicalBook(logical!.id)).resolves.toBeNull();
+    await expect(repository.getBook(epub.id)).resolves.toBeNull();
+  });
+
+  it('persists and resolves a membership reconciliation atomically', async () => {
+    const repository = new BrowserLibraryRepository();
+    const epubBytes = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 23])], {
+      type: 'application/epub+zip',
+    });
+    const pdfBytes = new Blob(['%PDF-1.4 reconcile'], {
+      type: 'application/pdf',
+    });
+    const epub = await repository.importBook(source('review.epub', epubBytes));
+    const pdf = await repository.importBook(source('review.pdf', pdfBytes));
+    const epubLogical = await repository.findLogicalBookByVariant(epub.id);
+    const pdfLogical = await repository.findLogicalBookByVariant(pdf.id);
+    const reconciliation = {
+      schemaVersion: 1 as const,
+      conflictId: 'membership:review',
+      status: 'open' as const,
+      conflictingChangeIds: ['change:left', 'change:right'],
+      affectedVariantIds: [epub.id, pdf.id].sort(),
+      acceptedMembership: [
+        {
+          logicalBookId: epubLogical!.id,
+          format: 'epub' as const,
+          variantId: epub.id,
+        },
+        {
+          logicalBookId: epubLogical!.id,
+          format: 'pdf' as const,
+          variantId: pdf.id,
+        },
+      ],
+      rejectedMembership: [
+        {
+          logicalBookId: pdfLogical!.id,
+          format: 'epub' as const,
+          variantId: epub.id,
+        },
+        {
+          logicalBookId: pdfLogical!.id,
+          format: 'pdf' as const,
+          variantId: pdf.id,
+        },
+      ],
+      detectedAt: '2026-07-31T12:00:00.000Z',
+    };
+    await repository.replaceLogicalBookState(
+      [epubLogical!, pdfLogical!],
+      [],
+      [reconciliation],
+    );
+
+    await expect(
+      repository.listOpenMembershipReconciliations(),
+    ).resolves.toEqual([reconciliation]);
+    await repository.reconcileMembership(
+      reconciliation.conflictId,
+      { kind: 'accept-rejected', logicalBookId: pdfLogical!.id },
+      mutation('reconcile:accept'),
+    );
+
+    await expect(
+      repository.listOpenMembershipReconciliations(),
+    ).resolves.toEqual([]);
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toMatchObject(
+      {
+        reconciliations: [
+          expect.objectContaining({
+            conflictId: reconciliation.conflictId,
+            status: 'resolved',
+            resolvedByChangeId: 'reconcile:accept',
+          }),
+        ],
+      },
+    );
+  });
+});
+
+function controlledBinaryStorage(
+  storage: 'opfs' | 'indexeddb',
+  opened: Blob | null | (() => Blob | null),
+): PublicationBinaryStorage {
+  return {
+    save: vi.fn(async (request) => {
+      if (storage === 'opfs') {
+        return {
+          schemaVersion: 2 as const,
+          storage,
+          bookId: request.bookId,
+          fileName: request.fileName,
+          mediaType: request.mediaType,
+          size: request.blob.size,
+          opfsFileName: `${request.bookId.slice(7)}.${request.format}`,
+        };
+      }
+      return {
+        schemaVersion: 2 as const,
+        storage,
+        bookId: request.bookId,
+        fileName: request.fileName,
+        mediaType: request.mediaType,
+        size: request.blob.size,
+        bytes: await testBlobBytes(request.blob),
+      };
+    }),
+    open: vi.fn(async () => (typeof opened === 'function' ? opened() : opened)),
+    migrate: vi.fn(async (stored) => stored),
+    remove: vi.fn(async () => undefined),
+  };
+}
+
+function testBlobBytes(value: Blob): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () =>
+      resolve(reader.result as ArrayBuffer),
+    );
+    reader.addEventListener('error', () => reject(reader.error));
+    reader.readAsArrayBuffer(value);
+  });
+}
 
 describe('BrowserLibraryRepository publication covers', () => {
   it('stores derived artwork without marking an import as opened', async () => {
@@ -512,9 +1286,10 @@ function progressDocument(
 
 async function putRawLibraryRecords(
   records: readonly { storeName: string; value: unknown }[],
+  databaseName = 'omnia-reader',
 ): Promise<void> {
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('omnia-reader');
+    const request = indexedDB.open(databaseName);
     request.addEventListener('success', () => resolve(request.result));
     request.addEventListener('error', () =>
       reject(request.error ?? new Error('Unable to open the test library')),
@@ -539,8 +1314,65 @@ async function putRawLibraryRecords(
   database.close();
 }
 
+async function deleteRawLibraryRecord(
+  storeName: string,
+  key: IDBValidKey,
+  databaseName = 'omnia-reader',
+): Promise<void> {
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(databaseName);
+    request.addEventListener('success', () => resolve(request.result));
+    request.addEventListener('error', () => reject(request.error));
+  });
+  const transaction = database.transaction(storeName, 'readwrite');
+  transaction.objectStore(storeName).delete(key);
+  await new Promise<void>((resolve, reject) => {
+    transaction.addEventListener('complete', () => resolve());
+    transaction.addEventListener('abort', () => reject(transaction.error));
+    transaction.addEventListener('error', () => reject(transaction.error));
+  });
+  database.close();
+}
+
 function blob(content: string): Blob {
   return {
     arrayBuffer: async () => new TextEncoder().encode(content).buffer,
   } as Blob;
+}
+
+function source(name: string, bytes: Blob) {
+  return {
+    name,
+    mediaType: bytes.type,
+    size: bytes.size,
+    open: async () => bytes,
+  };
+}
+
+function bookRecord(
+  id: string,
+  format: 'epub' | 'pdf',
+  bytes: Blob,
+  fileName = `candidate.${format}`,
+): BookRecord {
+  return {
+    id,
+    format,
+    fileName,
+    mediaType: format === 'epub' ? 'application/epub+zip' : 'application/pdf',
+    size: bytes.size,
+    title: 'Candidate',
+    authors: [],
+    importedAt: '2026-07-31T08:00:00.000Z',
+  };
+}
+
+function mutation(changeId: string): LogicalMutationIdentity {
+  return {
+    changeId,
+    parents: [],
+    createdAt: '2026-07-31T08:00:00.000Z',
+    deviceId: 'test-device',
+    appVersion: '0.1.0',
+  };
 }

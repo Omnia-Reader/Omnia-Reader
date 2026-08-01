@@ -6,6 +6,7 @@ import { SyncConflictError } from './library-sync-transport';
 import type { SyncWorker, SyncWorkerResult } from './library-sync-coordinator';
 import {
   createLibrarySyncManifest,
+  isLegacyLibrarySyncManifest,
   isLibrarySyncManifest,
   SYNC_MANIFEST_PATH,
 } from './library-sync-manifest';
@@ -58,8 +59,30 @@ export class LibrarySyncManifestService implements SyncWorker {
     for (let attempt = 0; ; attempt += 1) {
       const current = await this.remote.read(SYNC_MANIFEST_PATH);
       if (current) {
-        assertCompatibleManifest(current);
-        return { pulled: 0, pushed: 0, conflicts, rejected: 0 };
+        const schema = parseManifest(current);
+        if (schema === 'current') {
+          return { pulled: 0, pushed: 0, conflicts, rejected: 0 };
+        }
+        try {
+          const upgraded = await this.remote.write({
+            path: SYNC_MANIFEST_PATH,
+            content: serializeManifest(),
+            expectedRevision: current.revision,
+            message: 'Upgrade Omnia Reader logical-book synchronization schema',
+          });
+          assertCompatibleManifest(upgraded);
+          return { pulled: 0, pushed: 1, conflicts, rejected: 0 };
+        } catch (error) {
+          if (
+            !(error instanceof SyncConflictError) ||
+            attempt >= this.maxConflictRetries
+          ) {
+            throw error;
+          }
+          conflicts += 1;
+          await this.wait(this.retryDelayMs * 2 ** attempt);
+          continue;
+        }
       }
 
       try {
@@ -85,6 +108,12 @@ export class LibrarySyncManifestService implements SyncWorker {
 }
 
 function assertCompatibleManifest(document: RemoteDocument): void {
+  if (parseManifest(document) !== 'current') {
+    throw new LibrarySyncManifestCompatibilityError();
+  }
+}
+
+function parseManifest(document: RemoteDocument): 'current' | 'legacy' {
   if (document.path !== SYNC_MANIFEST_PATH) {
     throw new LibrarySyncManifestCompatibilityError(
       'The sync provider returned the root schema from an unexpected path',
@@ -96,9 +125,9 @@ function assertCompatibleManifest(document: RemoteDocument): void {
   } catch {
     throw new LibrarySyncManifestCompatibilityError();
   }
-  if (!isLibrarySyncManifest(value)) {
-    throw new LibrarySyncManifestCompatibilityError();
-  }
+  if (isLibrarySyncManifest(value)) return 'current';
+  if (isLegacyLibrarySyncManifest(value)) return 'legacy';
+  throw new LibrarySyncManifestCompatibilityError();
 }
 
 function serializeManifest(): string {

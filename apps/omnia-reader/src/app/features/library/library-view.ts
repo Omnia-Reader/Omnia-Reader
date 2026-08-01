@@ -1,4 +1,11 @@
-import type { BookRecord, ReadingProgress } from '@omnia-reader/reader/domain';
+import type {
+  BookRecord,
+  LogicalBookFormatPreference,
+  LogicalBookRecord,
+  PublicationFormat,
+  ReadingProgress,
+  VariantAvailability,
+} from '@omnia-reader/reader/domain';
 
 export type LibraryViewMode = 'grid' | 'list';
 export type LibrarySortMode = 'recent' | 'title' | 'author' | 'added';
@@ -13,6 +20,127 @@ export interface LibraryBookProgressSummary {
   percent: number;
   label: string;
   actionLabel: string;
+}
+
+export interface LogicalLibraryCard {
+  id: string;
+  title: string;
+  authors: string[];
+  publisher?: string;
+  format: PublicationFormat;
+  fileName: string;
+  mediaType: string;
+  size: number;
+  importedAt: string;
+  lastOpenedAt?: string;
+  logicalBook: LogicalBookRecord;
+  variants: Partial<Record<PublicationFormat, BookRecord>>;
+  progress: Partial<Record<PublicationFormat, LibraryBookProgressSummary>>;
+  availability: Partial<Record<PublicationFormat, VariantAvailability>>;
+  preferredFormat?: PublicationFormat;
+}
+
+export function createLogicalLibraryCards(
+  logicalBooks: readonly LogicalBookRecord[],
+  variants: readonly BookRecord[],
+  progress: readonly ReadingProgress[],
+  availability: ReadonlyMap<string, VariantAvailability>,
+  preferences: readonly LogicalBookFormatPreference[] = [],
+): readonly LogicalLibraryCard[] {
+  const variantsById = new Map(
+    variants.map((variant) => [variant.id, variant]),
+  );
+  const progressById = new Map(progress.map((entry) => [entry.bookId, entry]));
+  const preferencesById = new Map(
+    preferences.map((preference) => [preference.logicalBookId, preference]),
+  );
+  return logicalBooks.map((logicalBook) => {
+    const cardVariants: LogicalLibraryCard['variants'] = {};
+    const cardProgress: LogicalLibraryCard['progress'] = {};
+    const cardAvailability: LogicalLibraryCard['availability'] = {};
+    for (const format of ['epub', 'pdf'] as const) {
+      const variantId = logicalBook.variants[format];
+      if (!variantId) continue;
+      const variant = variantsById.get(variantId);
+      if (variant) cardVariants[format] = variant;
+      const variantProgress = progressById.get(variantId);
+      if (variantProgress) {
+        cardProgress[format] = summarizeReadingProgress(variantProgress);
+      }
+      cardAvailability[format] =
+        availability.get(variantId) ?? ({ status: 'checking' } as const);
+    }
+    const availableVariants = Object.values(cardVariants).filter(
+      (variant): variant is BookRecord => !!variant,
+    );
+    const primary = cardVariants.epub ?? cardVariants.pdf;
+    return {
+      id: logicalBook.id,
+      title: logicalBook.title,
+      authors: logicalBook.authors,
+      publisher: logicalBook.publisher,
+      format: primary?.format ?? 'epub',
+      fileName: primary?.fileName ?? logicalBook.title,
+      mediaType: primary?.mediaType ?? 'application/epub+zip',
+      size: availableVariants.reduce(
+        (total, variant) => total + variant.size,
+        0,
+      ),
+      importedAt: logicalBook.importedAt,
+      lastOpenedAt: latestString(
+        availableVariants
+          .map((variant) => variant.lastOpenedAt)
+          .filter((value): value is string => !!value),
+      ),
+      logicalBook,
+      variants: cardVariants,
+      progress: cardProgress,
+      availability: cardAvailability,
+      preferredFormat: preferencesById.get(logicalBook.id)?.preferredFormat,
+    };
+  });
+}
+
+export function orderedHealthyVariantIds(card: LogicalLibraryCard): string[] {
+  const healthyFormats = (['epub', 'pdf'] as const).filter(
+    (format) => card.availability[format]?.status === 'healthy',
+  );
+  if (healthyFormats.length === 0) return [];
+  const ordered: PublicationFormat[] = [];
+  if (card.preferredFormat && healthyFormats.includes(card.preferredFormat)) {
+    ordered.push(card.preferredFormat);
+  }
+  if (healthyFormats.length === 1) ordered.push(healthyFormats[0]);
+  ordered.push('epub', 'pdf');
+  return [...new Set(ordered)]
+    .filter((format) => healthyFormats.includes(format))
+    .map((format) => card.logicalBook.variants[format])
+    .filter((id): id is string => !!id);
+}
+
+export function selectLogicalLibraryCards(
+  cards: readonly LogicalLibraryCard[],
+  query: string,
+  sortMode: LibrarySortMode,
+  readingStatus: LibraryReadingStatus = 'all',
+): readonly LogicalLibraryCard[] {
+  const needle = normalizeSearchText(query.trim());
+  return cards
+    .filter((card) => {
+      const summaries = Object.values(card.progress);
+      const matchesStatus =
+        readingStatus === 'all' ||
+        (readingStatus === 'unread'
+          ? summaries.length === 0
+          : readingStatus === 'finished'
+            ? summaries.some((summary) => summary?.percent === 100)
+            : summaries.some((summary) => !!summary && summary.percent < 100));
+      return (
+        matchesStatus &&
+        (!needle || searchableLogicalCardText(card).includes(needle))
+      );
+    })
+    .sort((left, right) => compareLogicalCards(left, right, sortMode));
 }
 
 export interface LibraryPreferenceStorage {
@@ -61,12 +189,14 @@ export function summarizeReadingProgress(
   const totalProgression =
     progress.locator.locations?.totalProgression ??
     progress.furthestTotalProgression;
-  const percent = Math.round(
-    Math.min(
-      1,
-      Math.max(0, Number.isFinite(totalProgression) ? totalProgression : 0),
-    ) * 100,
+  const normalizedProgress = Math.min(
+    1,
+    Math.max(0, Number.isFinite(totalProgression) ? totalProgression : 0),
   );
+  const percent =
+    normalizedProgress === 1
+      ? 100
+      : Math.min(99, Math.round(normalizedProgress * 100));
 
   return percent === 100
     ? {
@@ -217,6 +347,60 @@ function searchableBookText(book: BookRecord): string {
       book.format,
     ].join('\n'),
   );
+}
+
+function searchableLogicalCardText(card: LogicalLibraryCard): string {
+  return normalizeSearchText(
+    [
+      card.logicalBook.title,
+      ...card.logicalBook.authors,
+      card.logicalBook.publisher ?? '',
+      ...Object.values(card.variants).flatMap((variant) =>
+        variant ? [variant.fileName, variant.format] : [],
+      ),
+    ].join('\n'),
+  );
+}
+
+function compareLogicalCards(
+  left: LogicalLibraryCard,
+  right: LogicalLibraryCard,
+  sortMode: LibrarySortMode,
+): number {
+  const leftBook = logicalCardSortRecord(left);
+  const rightBook = logicalCardSortRecord(right);
+  return compareBooks(leftBook, rightBook, sortMode);
+}
+
+function logicalCardSortRecord(card: LogicalLibraryCard): BookRecord {
+  const variants = Object.values(card.variants).filter(
+    (variant): variant is BookRecord => !!variant,
+  );
+  const latestActivity = latestString(
+    variants
+      .map((variant) => variant.lastOpenedAt)
+      .filter((value): value is string => !!value),
+  );
+  const fallback = variants[0];
+  return {
+    id: card.logicalBook.id,
+    format: fallback?.format ?? 'epub',
+    fileName: fallback?.fileName ?? card.logicalBook.title,
+    mediaType: fallback?.mediaType ?? 'application/epub+zip',
+    size: fallback?.size ?? 1,
+    title: card.logicalBook.title,
+    authors: card.logicalBook.authors,
+    language: card.logicalBook.language,
+    publisher: card.logicalBook.publisher,
+    identifier: card.logicalBook.identifier,
+    importedAt: card.logicalBook.importedAt,
+    lastOpenedAt: latestActivity,
+  };
+}
+
+function latestString(values: readonly string[]): string | undefined {
+  const ordered = [...values].sort();
+  return ordered[ordered.length - 1];
 }
 
 function normalizeSearchText(value: string): string {

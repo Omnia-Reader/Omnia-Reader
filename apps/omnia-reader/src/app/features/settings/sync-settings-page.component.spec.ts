@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { provideRouter, Router } from '@angular/router';
+import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import {
   AUTO_SYNC_SCHEDULER,
   AutoSyncStatus,
@@ -68,9 +69,11 @@ describe('SyncSettingsPageComponent', () => {
   const deleteRemoteBackup = vi.fn();
   const dialogOpen = vi.fn();
   const pending = vi.fn();
+  const listOpenMembershipReconciliations = vi.fn();
   let autoSyncListener: ((status: AutoSyncStatus) => void) | null;
 
   beforeEach(async () => {
+    listOpenMembershipReconciliations.mockReset().mockResolvedValue([]);
     synchronize.mockReset().mockResolvedValue({
       pulled: 2,
       pushed: 1,
@@ -152,6 +155,10 @@ describe('SyncSettingsPageComponent', () => {
         {
           provide: SYNC_OPERATION_JOURNAL,
           useValue: { pending },
+        },
+        {
+          provide: LIBRARY_REPOSITORY,
+          useValue: { listOpenMembershipReconciliations },
         },
         { provide: SYNC_PROVIDER_SELECTION, useValue: selection },
         { provide: GITHUB_GATEWAY, useValue: git },

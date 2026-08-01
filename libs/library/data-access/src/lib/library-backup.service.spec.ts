@@ -2,6 +2,17 @@ import {
   BookRecord,
   BookSource,
   LibraryRepository,
+  LogicalBookFormatPreference,
+  LogicalBookChange,
+  LogicalBookId,
+  LogicalBookMutationResult,
+  LogicalBookRecord,
+  LogicalLibrarySnapshot,
+  LogicalMutationIdentity,
+  AddLogicalBookVariantResult,
+  logicalBookFromVariant,
+  MembershipReconciliation,
+  MembershipReconciliationDecision,
   PublicationFormat,
   PublicationAnnotation,
   PublicationBookmark,
@@ -9,6 +20,7 @@ import {
   ProgressDocumentRepository,
   ReaderPreferences,
   ReadingProgress,
+  VariantAvailability,
 } from '@omnia-reader/reader/domain';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FileEntry } from '@zip.js/zip.js';
@@ -170,6 +182,62 @@ describe('LibraryBackupService', () => {
     expect(await restored.getBookmark(BOOKMARK.id)).toEqual(BOOKMARK);
     expect(await restored.getAnnotation(ANNOTATION.id)).toEqual(ANNOTATION);
     expect(await restored.getReaderPreferences('pdf')).toEqual(PREFERENCES);
+  });
+
+  it('round-trips schema-4 logical membership, preference, and cover state', async () => {
+    const epubId = `sha256:${'b'.repeat(64)}`;
+    const logicalBookId = `logical:sha256:${'d'.repeat(64)}` as LogicalBookId;
+    const epubBlob = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 31])], {
+      type: 'application/epub+zip',
+    });
+    const epub: BookRecord = {
+      ...BOOK,
+      id: epubId,
+      format: 'epub',
+      fileName: 'portable.epub',
+      mediaType: 'application/epub+zip',
+      size: epubBlob.size,
+    };
+    const logicalBook: LogicalBookRecord = {
+      ...logicalBookFromVariant(BOOK),
+      id: logicalBookId,
+      variants: { epub: epub.id, pdf: BOOK.id },
+    };
+    const logicalPreference: LogicalBookFormatPreference = {
+      schemaVersion: 1,
+      logicalBookId,
+      preferredFormat: 'pdf',
+      winningChangeId: 'change:preference',
+      preferenceHeads: ['change:preference'],
+      updatedAt: '2026-07-25T10:00:00.000Z',
+      deviceId: 'test-device',
+    };
+    const cover = new Blob(['cover'], { type: 'image/png' });
+    const source = new MemoryLibraryRepository();
+    source.books.set(BOOK.id, BOOK);
+    source.books.set(epub.id, epub);
+    source.sources.set(BOOK.id, BOOK_BLOB);
+    source.sources.set(epub.id, epubBlob);
+    source.logicalBooks.set(logicalBook.id, logicalBook);
+    source.logicalPreferences.set(logicalBook.id, logicalPreference);
+    source.logicalCovers.set(logicalBook.id, cover);
+    const fingerprint = async (blob: Blob) =>
+      blob.type === 'application/epub+zip' ? epubId : BOOK_ID;
+
+    const archive = await new LibraryBackupService(
+      source,
+      fingerprint,
+    ).exportArchive(new Date('2026-07-25T12:30:00.000Z'));
+    const restored = new MemoryLibraryRepository();
+    await new LibraryBackupService(restored, fingerprint).importArchive(
+      archive.blob,
+    );
+
+    expect(await restored.listLogicalBooks()).toEqual([logicalBook]);
+    expect(
+      await restored.getLogicalBookFormatPreference(logicalBook.id),
+    ).toEqual(logicalPreference);
+    expect(await restored.getLogicalBookCover(logicalBook.id)).toEqual(cover);
   });
 
   it('streams a byte-compatible archive without creating a final backup Blob', async () => {
@@ -490,6 +558,13 @@ class MemoryLibraryRepository
   readonly bookmarks = new Map<string, PublicationBookmark>();
   readonly annotations = new Map<string, PublicationAnnotation>();
   readonly preferences = new Map<PublicationFormat, ReaderPreferences>();
+  readonly logicalBooks = new Map<LogicalBookId, LogicalBookRecord>();
+  readonly logicalPreferences = new Map<
+    LogicalBookId,
+    LogicalBookFormatPreference
+  >();
+  readonly reconciliations = new Map<string, MembershipReconciliation>();
+  readonly logicalCovers = new Map<LogicalBookId, Blob>();
 
   async listBooks(): Promise<readonly BookRecord[]> {
     return [...this.books.values()];
@@ -645,6 +720,153 @@ class MemoryLibraryRepository
 
   async saveReaderPreferences(preferences: ReaderPreferences): Promise<void> {
     this.preferences.set(preferences.format, preferences);
+  }
+
+  async listLogicalBooks(): Promise<readonly LogicalBookRecord[]> {
+    return this.logicalBooks.size > 0
+      ? [...this.logicalBooks.values()]
+      : [...this.books.values()].map((book) => logicalBookFromVariant(book));
+  }
+
+  async getLogicalBook(id: LogicalBookId): Promise<LogicalBookRecord | null> {
+    return (
+      (await this.listLogicalBooks()).find((book) => book.id === id) ?? null
+    );
+  }
+
+  async findLogicalBookByVariant(
+    variantId: string,
+  ): Promise<LogicalBookRecord | null> {
+    return (
+      (await this.listLogicalBooks()).find((book) =>
+        Object.values(book.variants).includes(variantId),
+      ) ?? null
+    );
+  }
+
+  async getLogicalBookCover(
+    logicalBookId: LogicalBookId,
+  ): Promise<Blob | null> {
+    return this.logicalCovers.get(logicalBookId) ?? null;
+  }
+
+  async getLogicalBookFormatPreference(
+    logicalBookId: LogicalBookId,
+  ): Promise<LogicalBookFormatPreference | null> {
+    return this.logicalPreferences.get(logicalBookId) ?? null;
+  }
+
+  async getLogicalLibrarySnapshot(): Promise<LogicalLibrarySnapshot> {
+    const logicalBooks = [...(await this.listLogicalBooks())];
+    return {
+      revision: JSON.stringify(logicalBooks),
+      logicalBooks,
+      preferences: [...this.logicalPreferences.values()],
+      reconciliations: [...this.reconciliations.values()],
+    };
+  }
+
+  async replaceLogicalBookState(
+    logicalBooks: readonly LogicalBookRecord[],
+    preferences: readonly LogicalBookFormatPreference[],
+    reconciliations: readonly MembershipReconciliation[],
+    covers?: ReadonlyMap<LogicalBookId, Blob>,
+  ): Promise<void> {
+    this.logicalBooks.clear();
+    this.logicalPreferences.clear();
+    this.reconciliations.clear();
+    logicalBooks.forEach((book) => this.logicalBooks.set(book.id, book));
+    preferences.forEach((preference) =>
+      this.logicalPreferences.set(preference.logicalBookId, preference),
+    );
+    reconciliations.forEach((reconciliation) =>
+      this.reconciliations.set(reconciliation.conflictId, reconciliation),
+    );
+    if (covers) {
+      this.logicalCovers.clear();
+      covers.forEach((cover, id) => this.logicalCovers.set(id, cover));
+    }
+  }
+
+  addVariant(
+    _logicalBookId: LogicalBookId,
+    _variant: BookRecord,
+    _source: BookSource,
+    _identity: LogicalMutationIdentity,
+  ): Promise<AddLogicalBookVariantResult> {
+    return Promise.reject(new Error('Not implemented for this test'));
+  }
+
+  associate(
+    _destinationId: LogicalBookId,
+    _sourceId: LogicalBookId,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not implemented for this test'));
+  }
+
+  detachVariant(
+    _logicalBookId: LogicalBookId,
+    _variantId: string,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not implemented for this test'));
+  }
+
+  deleteVariant(
+    _logicalBookId: LogicalBookId,
+    _variantId: string | null,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not implemented for this test'));
+  }
+
+  saveLogicalBookFormatPreference(
+    _logicalBookId: LogicalBookId,
+    _format: PublicationFormat,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookChange | null> {
+    return Promise.resolve(null);
+  }
+
+  reconcileMembership(
+    _conflictId: string,
+    _decision: MembershipReconciliationDecision,
+    _identity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult> {
+    return Promise.reject(new Error('Not implemented for this test'));
+  }
+
+  async listOpenMembershipReconciliations(): Promise<
+    readonly MembershipReconciliation[]
+  > {
+    return [];
+  }
+
+  async resolveVariantAvailability(
+    variantIds: readonly string[],
+  ): Promise<ReadonlyMap<string, VariantAvailability>> {
+    return new Map(variantIds.map((id) => [id, { status: 'checking' }]));
+  }
+
+  async openHealthyVariant(variantId: string) {
+    const source = await this.getBookSource(variantId);
+    return source
+      ? ({ availability: { status: 'healthy' }, source } as const)
+      : ({
+          availability: { status: 'unavailable', cause: 'missing' },
+        } as const);
+  }
+
+  async replaceVariantSource(
+    variantId: string,
+    source: BookSource,
+  ): Promise<void> {
+    const opened = await source.open();
+    this.sources.set(
+      variantId,
+      opened instanceof Blob ? opened : new Blob([opened]),
+    );
   }
 }
 

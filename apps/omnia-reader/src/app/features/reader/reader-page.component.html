@@ -78,6 +78,61 @@
           </span>
         }
       </div>
+      @if (hasMultipleFormats()) {
+        <div
+          class="hidden sm:flex sm:w-full sm:flex-col sm:gap-0.25"
+          role="group"
+          aria-label="Reading format"
+        >
+          @for (format of formatOrder; track format) {
+            @let progressPercent = formatControlProgressPercent(format);
+            <button
+              [class]="
+                multiFormatControlBaseClass + ' ' +
+                (book?.format === format
+                  ? multiFormatControlActiveClass
+                  : multiFormatControlInactiveClass)
+              "
+              type="button"
+              [attr.aria-pressed]="book?.format === format"
+              [attr.aria-label]="
+                formatActionLabel(format) +
+                (progressPercent === null || progressPercent === 0
+                  ? ''
+                  : ' · ' + progressPercent + '% read')
+              "
+              [disabled]="book?.format === format"
+              (click)="switchReadingFormat(format)"
+            >
+              <mat-icon [class]="multiFormatControlIconClass">
+                {{ formatActionIcon(format) }}
+              </mat-icon>
+              <span [class]="multiFormatControlLabelClass">
+                {{ formatActionLabel(format) }}
+              </span>
+              @if (progressPercent !== null && progressPercent > 0) {
+                <span [class]="multiFormatProgressClusterClass">
+                  <span
+                    [class]="multiFormatControlProgressTrackClass"
+                    aria-hidden="true"
+                  >
+                    <span
+                      [class]="multiFormatControlProgressFillClass"
+                      [style.min-width.px]="1"
+                      [style.width.%]="progressPercent"
+                      role="presentation"
+                      aria-hidden="true"
+                    ></span>
+                  </span>
+                  <span [class]="multiFormatControlProgressPercentClass">
+                    {{ progressPercent }}%
+                  </span>
+                </span>
+              }
+            </button>
+          }
+        </div>
+      }
       <button
         #actionsTrigger
         mat-icon-button
@@ -251,6 +306,57 @@
         </button>
       </div>
       <nav class="grid gap-1" aria-label="Mobile reader tools">
+        @if (hasMultipleFormats()) {
+        <div class="mb-0.5 flex w-full flex-col gap-0.25">
+            @for (format of formatOrder; track format) {
+              @let progressPercent = formatControlProgressPercent(format);
+              <button
+                [class]="
+                  multiFormatControlBaseClass + ' ' +
+                  (book?.format === format
+                    ? multiFormatControlActiveClass
+                    : multiFormatControlInactiveClass)
+                "
+                type="button"
+                [disabled]="book?.format === format"
+                [attr.aria-label]="
+                  formatActionLabel(format) +
+                  (progressPercent === null || progressPercent === 0
+                    ? ''
+                    : ' · ' + progressPercent + '% read')
+                "
+                [attr.aria-pressed]="book?.format === format"
+                (click)="switchReadingFormat(format)"
+              >
+                <mat-icon [class]="multiFormatControlIconClass">
+                  {{ formatActionIcon(format) }}
+                </mat-icon>
+                <span [class]="multiFormatControlLabelClass">
+                  {{ formatActionLabel(format) }}
+                </span>
+                @if (progressPercent !== null && progressPercent > 0) {
+                  <span [class]="multiFormatProgressClusterClass">
+                    <span
+                      [class]="multiFormatControlProgressTrackClass"
+                      aria-hidden="true"
+                    >
+                      <span
+                        [class]="multiFormatControlProgressFillClass"
+                        [style.min-width.px]="1"
+                        [style.width.%]="progressPercent"
+                        role="presentation"
+                        aria-hidden="true"
+                      ></span>
+                    </span>
+                    <span [class]="multiFormatControlProgressPercentClass">
+                      {{ progressPercent }}%
+                    </span>
+                  </span>
+                }
+              </button>
+            }
+          </div>
+        }
         <button
           mat-button
           class="w-full"
@@ -1490,7 +1596,7 @@
                     }
                   </button>
                   <button
-                    class="flex h-7 w-4 items-center justify-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb] hover:!bg-[#d6e8f5]"
+                    class="flex size-7 items-center justify-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb] hover:!bg-[#d6e8f5]"
                     type="button"
                     aria-haspopup="true"
                     matTooltip="Choose {{

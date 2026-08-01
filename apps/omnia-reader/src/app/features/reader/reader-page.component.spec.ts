@@ -8,6 +8,7 @@ import { ReaderEngineRegistry } from '@omnia-reader/reader/core';
 import {
   BookRecord,
   LibraryRepository,
+  logicalBookFromVariant,
   PublicationAnnotation,
   PublicationLocator,
   PublicationSelection,
@@ -209,22 +210,37 @@ describe('ReaderPageComponent annotations', () => {
       pageNavigation: () => null,
     } satisfies ReaderEngine;
     const saveAnnotation = vi.fn().mockResolvedValue(undefined);
+    const healthySource = {
+      name: BOOK.fileName,
+      mediaType: BOOK.mediaType,
+      size: BOOK.size,
+      open: async () => new Uint8Array([37, 80, 68, 70]).buffer,
+    };
+    const openHealthyVariant = vi.fn().mockResolvedValue({
+      availability: { status: 'healthy' as const },
+      source: healthySource,
+    });
+    const saveLogicalBookFormatPreference = vi.fn().mockResolvedValue(null);
     const repository = {
       getBook: vi.fn().mockResolvedValue(BOOK),
-      getBookSource: vi.fn().mockResolvedValue({
-        name: BOOK.fileName,
-        mediaType: BOOK.mediaType,
-        size: BOOK.size,
-        open: async () => new Uint8Array([37, 80, 68, 70]).buffer,
-      }),
+      getBookSource: vi.fn().mockResolvedValue(healthySource),
       getProgress: vi.fn().mockResolvedValue(null),
       listBookmarks: vi.fn().mockResolvedValue([]),
       listAnnotations: vi.fn().mockResolvedValue([]),
       getReaderPreferences: vi.fn().mockResolvedValue(null),
+      findLogicalBookByVariant: vi.fn().mockResolvedValue({
+        ...logicalBookFromVariant(BOOK),
+        variants: {
+          epub: `sha256:${'b'.repeat(64)}`,
+          pdf: BOOK.id,
+        },
+      }),
+      openHealthyVariant,
       updateMetadata: vi.fn().mockResolvedValue(BOOK),
       saveAnnotation,
       saveProgress: vi.fn().mockResolvedValue(undefined),
       saveReaderPreferences: vi.fn().mockResolvedValue(undefined),
+      saveLogicalBookFormatPreference,
     } as unknown as LibraryRepository;
     const journal = {
       append: vi.fn().mockImplementation(async (input) => ({
@@ -253,7 +269,12 @@ describe('ReaderPageComponent annotations', () => {
         {
           provide: ActivatedRoute,
           useValue: {
-            snapshot: { paramMap: { get: () => BOOK.id } },
+            snapshot: {
+              paramMap: { get: () => BOOK.id },
+              queryParamMap: {
+                get: (key: string) => (key === 'explicitFormat' ? '1' : null),
+              },
+            },
           },
         },
         { provide: LIBRARY_REPOSITORY, useValue: repository },
@@ -286,6 +307,16 @@ describe('ReaderPageComponent annotations', () => {
     await fixture.whenStable();
     await vi.waitFor(() => expect(callbacks.selection).toBeTypeOf('function'));
     fixture.detectChanges();
+
+    expect(openHealthyVariant).toHaveBeenCalledWith(BOOK.id);
+    expect(openHealthyVariant.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.open.mock.invocationCallOrder[0],
+    );
+    expect(saveLogicalBookFormatPreference).toHaveBeenCalledWith(
+      logicalBookFromVariant(BOOK).id,
+      'pdf',
+      expect.objectContaining({ changeId: expect.stringMatching(/^change:/) }),
+    );
 
     const annotationsTrigger = fixture.nativeElement.querySelector(
       '[aria-label="Toggle highlights and notes"]',

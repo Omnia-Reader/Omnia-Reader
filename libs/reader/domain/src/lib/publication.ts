@@ -2,6 +2,19 @@ import type { ReaderPreferences } from './reader-preferences';
 import type { PublicationAnnotation } from './publication-annotation';
 import type { PublicationBookmark } from './publication-bookmark';
 import type {
+  LogicalBookFormatPreference,
+  LogicalBookChange,
+  LogicalBookId,
+  LogicalBookMutationResult,
+  LogicalBookRecord,
+  LogicalLibrarySnapshot,
+  LogicalMutationIdentity,
+  AddLogicalBookVariantResult,
+  MembershipReconciliationDecision,
+  MembershipReconciliation,
+  VariantAvailability,
+} from './logical-book';
+import type {
   PublicationReadingDirection,
   ReaderCommand,
   ReaderNavigationDirection,
@@ -186,7 +199,13 @@ export interface ProgressDocumentRepository {
 
 export interface SyncOperation {
   id: string;
-  entity: 'book' | 'progress' | 'bookmark' | 'annotation' | 'preference';
+  entity:
+    | 'book'
+    | 'progress'
+    | 'bookmark'
+    | 'annotation'
+    | 'preference'
+    | 'logical-book-change';
   entityId: string;
   operation: 'upsert' | 'delete';
   revision: number;
@@ -243,6 +262,63 @@ export interface LibraryRepository {
     format: PublicationFormat,
   ): Promise<ReaderPreferences | null>;
   saveReaderPreferences(preferences: ReaderPreferences): Promise<void>;
+  listLogicalBooks(): Promise<readonly LogicalBookRecord[]>;
+  getLogicalBook(
+    logicalBookId: LogicalBookId,
+  ): Promise<LogicalBookRecord | null>;
+  findLogicalBookByVariant(
+    variantId: string,
+  ): Promise<LogicalBookRecord | null>;
+  getLogicalBookCover(logicalBookId: LogicalBookId): Promise<Blob | null>;
+  getLogicalBookFormatPreference(
+    logicalBookId: LogicalBookId,
+  ): Promise<LogicalBookFormatPreference | null>;
+  getLogicalLibrarySnapshot(): Promise<LogicalLibrarySnapshot>;
+  addVariant(
+    logicalBookId: LogicalBookId,
+    variant: BookRecord,
+    source: BookSource,
+    mutationIdentity: LogicalMutationIdentity,
+    cover?: Blob,
+  ): Promise<AddLogicalBookVariantResult>;
+  associate(
+    destinationLogicalBookId: LogicalBookId,
+    sourceLogicalBookId: LogicalBookId,
+    mutationIdentity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult>;
+  detachVariant(
+    logicalBookId: LogicalBookId,
+    variantId: string,
+    mutationIdentity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult>;
+  deleteVariant(
+    logicalBookId: LogicalBookId,
+    variantId: string | null,
+    mutationIdentity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult>;
+  saveLogicalBookFormatPreference(
+    logicalBookId: LogicalBookId,
+    preferredFormat: PublicationFormat,
+    mutationIdentity: LogicalMutationIdentity,
+  ): Promise<LogicalBookChange | null>;
+  listOpenMembershipReconciliations(): Promise<
+    readonly MembershipReconciliation[]
+  >;
+  reconcileMembership(
+    conflictId: string,
+    decision: MembershipReconciliationDecision,
+    mutationIdentity: LogicalMutationIdentity,
+  ): Promise<LogicalBookMutationResult>;
+  resolveVariantAvailability(
+    variantIds: readonly string[],
+  ): Promise<ReadonlyMap<string, VariantAvailability>>;
+  openHealthyVariant(
+    variantId: string,
+  ): Promise<
+    | { availability: { status: 'healthy' }; source: BookSource }
+    | { availability: Exclude<VariantAvailability, { status: 'healthy' }> }
+  >;
+  replaceVariantSource(variantId: string, source: BookSource): Promise<void>;
 }
 
 export interface SyncProvider {

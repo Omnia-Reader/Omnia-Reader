@@ -2,6 +2,7 @@
 
 # compiled output
 dist
+build
 tmp
 out-tsc
 
@@ -32,11 +33,19 @@ node_modules
 npm-debug.log
 yarn-error.log
 testem.log
+*.log
 /typings
+
+# local environment variants
+.env.*
+!.env.example
+!.env.*.example
 
 # System Files
 .DS_Store
 Thumbs.db
+*.tmp
+*.swp
 
 .nx/cache
 .nx/workspace-data

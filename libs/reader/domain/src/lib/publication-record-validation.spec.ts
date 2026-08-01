@@ -8,6 +8,7 @@ import {
   isReaderPreferences,
   isReadingProgress,
 } from './publication-record-validation';
+import { isLogicalBookRecord } from './logical-book';
 
 const BOOK_ID = `sha256:${'a'.repeat(64)}`;
 
@@ -97,5 +98,32 @@ describe('publication record validation', () => {
         flow: 'publication-decides-sometimes',
       }),
     ).toBe(false);
+  });
+
+  it('keeps logical identity distinct from exact publication identity', () => {
+    expect(
+      isBookRecord({
+        id: `logical:sha256:${'a'.repeat(64)}`,
+        format: 'epub',
+        fileName: 'fixture.epub',
+        mediaType: 'application/epub+zip',
+        size: 1,
+        title: 'Fixture',
+        authors: [],
+        importedAt: '2026-07-25T08:00:00.000Z',
+      }),
+    ).toBe(false);
+    expect(
+      isLogicalBookRecord({
+        schemaVersion: 1,
+        id: `logical:sha256:${'a'.repeat(64)}`,
+        title: 'Fixture',
+        authors: [],
+        importedAt: '2026-07-25T08:00:00.000Z',
+        updatedAt: '2026-07-25T08:00:00.000Z',
+        coverState: 'pending',
+        variants: { epub: BOOK_ID },
+      }),
+    ).toBe(true);
   });
 });

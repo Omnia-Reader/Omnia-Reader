@@ -59,6 +59,29 @@ describe('LibrarySyncManifestService', () => {
     expect(remote.writeRequests).toEqual([]);
   });
 
+  it('compare-and-swaps a compatible schema-1 root to schema 2', async () => {
+    const remote = new MemoryTransport();
+    remote.documents.set(
+      SYNC_MANIFEST_PATH,
+      document({
+        schemaVersion: 1,
+        application: 'omnia-reader',
+        publicationIdentity: 'sha256',
+        features: ['annotations', 'bookmarks', 'books', 'progress'],
+      }),
+    );
+
+    await expect(
+      new LibrarySyncManifestService(remote).synchronize(),
+    ).resolves.toMatchObject({
+      pushed: 1,
+    });
+    expect(remote.writeRequests[0]).toMatchObject({
+      expectedRevision: 'root-1',
+      message: 'Upgrade Omnia Reader logical-book synchronization schema',
+    });
+  });
+
   it('re-reads after an initialization conflict', async () => {
     const remote = new MemoryTransport();
     remote.conflictsRemaining = 1;
@@ -80,7 +103,7 @@ describe('LibrarySyncManifestService', () => {
     '{',
     JSON.stringify({
       ...createLibrarySyncManifest(),
-      schemaVersion: 2,
+      schemaVersion: 3,
     }),
     JSON.stringify({
       ...createLibrarySyncManifest(),
@@ -134,6 +157,13 @@ class MemoryTransport implements LibrarySyncTransport {
         SYNC_MANIFEST_PATH,
         document(createLibrarySyncManifest()),
       );
+      throw new SyncConflictError();
+    }
+    const current = this.documents.get(request.path);
+    if (
+      request.expectedRevision !== undefined &&
+      current?.revision !== request.expectedRevision
+    ) {
       throw new SyncConflictError();
     }
     const created: RemoteDocument = {

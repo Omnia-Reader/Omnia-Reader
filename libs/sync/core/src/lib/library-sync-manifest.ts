@@ -6,12 +6,13 @@ export const LIBRARY_SYNC_FEATURES = [
   'bookmarks',
   'books',
   'progress',
+  'logical-books',
 ] as const;
 
 export type LibrarySyncFeature = (typeof LIBRARY_SYNC_FEATURES)[number];
 
 export interface LibrarySyncManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   application: 'omnia-reader';
   publicationIdentity: 'sha256';
   features: readonly string[];
@@ -19,7 +20,7 @@ export interface LibrarySyncManifest {
 
 export function createLibrarySyncManifest(): LibrarySyncManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     application: 'omnia-reader',
     publicationIdentity: 'sha256',
     features: [...LIBRARY_SYNC_FEATURES],
@@ -31,7 +32,7 @@ export function isLibrarySyncManifest(
 ): value is LibrarySyncManifest {
   if (
     !isRecord(value) ||
-    value['schemaVersion'] !== 1 ||
+    value['schemaVersion'] !== 2 ||
     value['application'] !== 'omnia-reader' ||
     value['publicationIdentity'] !== 'sha256' ||
     !Array.isArray(value['features']) ||
@@ -45,6 +46,28 @@ export function isLibrarySyncManifest(
   return (
     features.size === value['features'].length &&
     LIBRARY_SYNC_FEATURES.every((feature) => features.has(feature))
+  );
+}
+
+export function isLegacyLibrarySyncManifest(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    value['schemaVersion'] !== 1 ||
+    value['application'] !== 'omnia-reader' ||
+    value['publicationIdentity'] !== 'sha256' ||
+    !Array.isArray(value['features']) ||
+    value['features'].length > 32 ||
+    !value['features'].every(isFeatureName)
+  ) {
+    return false;
+  }
+  const features = new Set(value['features']);
+  return (
+    features.size === value['features'].length &&
+    ['annotations', 'bookmarks', 'books', 'progress'].every((feature) =>
+      features.has(feature),
+    ) &&
+    !features.has('logical-books')
   );
 }
 

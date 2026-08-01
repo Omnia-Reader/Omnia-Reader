@@ -11,6 +11,8 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { Router, RouterLink } from '@angular/router';
+import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
+import { MembershipReconciliation } from '@omnia-reader/reader/domain';
 import {
   AUTO_SYNC_SCHEDULER,
   AutoSyncStatus,
@@ -45,6 +47,7 @@ import { DeleteRemoteBookDialogComponent } from './delete-remote-book-dialog.com
 })
 export class SyncSettingsPageComponent implements OnInit {
   private readonly journal = inject(SYNC_OPERATION_JOURNAL);
+  private readonly repository = inject(LIBRARY_REPOSITORY);
   private readonly gitGateway = inject(GITHUB_GATEWAY);
   private readonly megaGateway = inject(MEGA_GATEWAY);
   private readonly providerSelection = inject(SYNC_PROVIDER_SELECTION);
@@ -74,6 +77,7 @@ export class SyncSettingsPageComponent implements OnInit {
   repositoryInstallationSettingsUrl: string | null = null;
   folders: readonly MegaFolder[] = [];
   remoteBackups: readonly RemoteBookBackup[] = [];
+  openReconciliations: readonly MembershipReconciliation[] = [];
   errorMessage: string | null = null;
   statusMessage: string | null = null;
   transferProgress: ObjectTransferProgress | null = null;
@@ -500,7 +504,11 @@ export class SyncSettingsPageComponent implements OnInit {
     this.errorMessage = null;
     try {
       this.selectedProvider = this.providerSelection.current();
-      await Promise.all([this.refreshPendingCount(), this.refreshProvider()]);
+      await Promise.all([
+        this.refreshPendingCount(),
+        this.refreshProvider(),
+        this.refreshReconciliations(),
+      ]);
     } catch (error) {
       this.handleError(error);
     } finally {
@@ -550,6 +558,7 @@ export class SyncSettingsPageComponent implements OnInit {
 
   private async refreshAfterAutomaticSync(): Promise<void> {
     await this.refreshPendingCount().catch(() => undefined);
+    await this.refreshReconciliations().catch(() => undefined);
     if (this.hasConfiguredDestination()) {
       await this.refreshRemoteBackups().catch(() => undefined);
     }
@@ -558,6 +567,11 @@ export class SyncSettingsPageComponent implements OnInit {
 
   private async refreshRemoteBackups(): Promise<void> {
     this.remoteBackups = await this.remoteBookBackups.list();
+  }
+
+  private async refreshReconciliations(): Promise<void> {
+    this.openReconciliations =
+      await this.repository.listOpenMembershipReconciliations();
   }
 
   private hasConfiguredDestination(): boolean {
