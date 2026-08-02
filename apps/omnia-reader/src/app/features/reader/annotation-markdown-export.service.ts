@@ -7,6 +7,7 @@ import {
   PublicationAnnotationColor,
   publicationAnnotationColorLabel,
 } from '@omnia-reader/reader/domain';
+import { blobReadableStream, downloadBlob } from '../../browser-file-export';
 
 export const ANNOTATION_MARKDOWN_MEDIA_TYPE = 'text/markdown';
 
@@ -55,7 +56,10 @@ export class AnnotationMarkdownExportService {
     }
 
     if (destination) {
-      await blobReadableStream(blob).pipeTo(destination.writable);
+      await blobReadableStream(
+        blob,
+        'Unable to prepare the annotations export',
+      ).pipeTo(destination.writable);
     } else {
       downloadBlob(blob, fileName);
     }
@@ -171,48 +175,4 @@ function escapeHtml(value: string): string {
 
 function annotationColorLabel(color: PublicationAnnotationColor): string {
   return publicationAnnotationColorLabel(color);
-}
-
-function blobReadableStream(blob: Blob): ReadableStream<Uint8Array> {
-  if (typeof blob.stream === 'function') {
-    return blob.stream();
-  }
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      controller.enqueue(new Uint8Array(await blobArrayBuffer(blob)));
-      controller.close();
-    },
-  });
-}
-
-function blobArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === 'function') {
-    return blob.arrayBuffer();
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => {
-      if (reader.result instanceof ArrayBuffer) {
-        resolve(reader.result);
-      } else {
-        reject(new Error('Unable to prepare the annotations export'));
-      }
-    });
-    reader.addEventListener('error', () =>
-      reject(
-        reader.error ?? new Error('Unable to prepare the annotations export'),
-      ),
-    );
-    reader.readAsArrayBuffer(blob);
-  });
-}
-
-function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.rel = 'noopener';
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

@@ -60,11 +60,15 @@ describe('logical book change synchronization', () => {
   });
 
   it('rejects unsafe paths and device-local availability', () => {
+    const [variantEffect] = change.variantEffects ?? [];
+    if (!variantEffect) {
+      throw new Error('The fixture must contain one variant effect');
+    }
     expect(
       isSynchronizedLogicalBookChange({
         ...change,
         variantEffects: [
-          { ...change.variantEffects![0], objectPath: '../publication.epub' },
+          { ...variantEffect, objectPath: '../publication.epub' },
         ],
       }),
     ).toBe(false);

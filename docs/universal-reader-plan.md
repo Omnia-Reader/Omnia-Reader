@@ -318,8 +318,9 @@ implemented:
 - Automatic synchronization is journal-driven and provider-neutral. Book
   changes, provider selection, startup, application backgrounding, and restored
   connectivity trigger immediate attempts; progress, bookmark, and annotation
-  changes use a quiet interval. Git quiet-period commits retain a persisted
-  five-minute minimum. Automatic publication transfers expose byte progress,
+  changes use a one-second trailing quiet interval. A visible, online GitHub
+  client checks the lightweight repository revision every ten seconds; hidden,
+  offline, stopped, and non-Git clients do not poll. Automatic publication transfers expose byte progress,
   can be cancelled through the same abort-aware transport contract as manual
   sync, and retain durable local journal work for a later retry. Cancellation
   is reported separately from provider failures without blocking local reading.
@@ -991,8 +992,11 @@ Automatically push:
 - After a quiet reading interval.
 - On manual sync.
 
-Limit periodic automatic Git commits to at most one per five minutes per active
-book. Retry queued changes when connectivity returns.
+Coalesce rapid reading-state changes behind a one-second quiet interval. Check
+the lightweight GitHub repository revision every ten seconds while visible and
+online so another local device converges without requiring a public webhook.
+Retry queued changes when connectivity returns and always honor provider
+`Retry-After`.
 
 ### 6.5 MEGA provider
 

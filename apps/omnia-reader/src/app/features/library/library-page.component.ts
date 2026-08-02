@@ -61,7 +61,8 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     'grid min-w-0 min-h-7 flex-1 grid-cols-[auto_1fr] items-center justify-items-start gap-0.5 rounded-md border border-dashed border-stone-300 bg-stone-50/70 px-0.5 py-1 text-left text-[6px] leading-none text-stone-500';
   readonly formatRowClass =
     'flex min-h-8 w-full min-w-0 items-center gap-0.5 overflow-hidden';
-  readonly formatBadgeGlyphClass = '!h-3 !w-3 shrink-0 !text-[12px] text-stone-500';
+  readonly formatBadgeGlyphClass =
+    '!h-3 !w-3 shrink-0 !text-[12px] text-stone-500';
   readonly formatBadgeProgressTrackClass =
     'relative flex h-4 min-w-12 flex-1 items-center justify-center overflow-hidden rounded-full bg-emerald-200/90';
   readonly formatBadgeProgressFillClass =
@@ -287,10 +288,15 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     const displayLabel = format.toUpperCase();
     if (!card.variants[format]) return `Add ${displayLabel}`;
     const availability = card.availability[format];
-    if (!availability || availability.status !== 'healthy') {
-      return `${displayLabel} (unavailable)`;
+    if (!availability || availability.status === 'checking') {
+      return `${displayLabel} (Checking)`;
     }
-    return displayLabel;
+    if (availability.status === 'healthy') {
+      return `${displayLabel} (open)`;
+    }
+    const state =
+      availability.status === 'unavailable' ? 'Unavailable' : 'Quarantined';
+    return `${displayLabel} (${state}: ${availability.cause.replace(/-/g, ' ')})`;
   }
 
   formatBadgeGlyph(format: PublicationFormat): string {
@@ -309,7 +315,10 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     if (!Number.isFinite(percent)) {
       return null;
     }
-    return Math.max(0, Math.min(100, Math.round(percent)));
+    if (percent <= 0) {
+      return 0;
+    }
+    return Math.max(1, Math.min(100, Math.round(percent)));
   }
 
   private formatBadgeRawPercent(
@@ -463,10 +472,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   }
 
   isFormatActionDisabled(): boolean {
-    return (
-      this.exportingBookId !== null ||
-      this.removingBookId !== null
-    );
+    return this.exportingBookId !== null || this.removingBookId !== null;
   }
 
   private async reload(): Promise<void> {
@@ -534,8 +540,8 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
                       progress.locator.locations?.totalProgression ??
                         progress.furthestTotalProgression,
                     )
-                      ? progress.locator.locations?.totalProgression ??
-                        progress.furthestTotalProgression
+                      ? (progress.locator.locations?.totalProgression ??
+                          progress.furthestTotalProgression)
                       : 0,
                   ),
                 ),

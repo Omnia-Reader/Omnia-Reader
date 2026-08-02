@@ -12,7 +12,8 @@ export type AutoSyncReason =
   | 'reading-quiet'
   | 'background'
   | 'online'
-  | 'destination-selected';
+  | 'destination-selected'
+  | 'revision-check';
 
 export type AutoSyncStatusReason = AutoSyncReason | 'manual';
 
@@ -44,19 +45,18 @@ export interface AutoSyncEnvironment {
   clearTimer(handle: unknown): void;
   onOnline(callback: () => void): () => void;
   onOffline(callback: () => void): () => void;
+  onVisibilityChange(callback: () => void): () => void;
 }
 
 export interface AutoSyncSchedulerOptions {
   quietIntervalMs?: number;
-  periodicMinimumIntervalMs?: number;
+  revisionCheckIntervalMs?: number;
   environment?: AutoSyncEnvironment;
   rateLimitStore?: AutoSyncRateLimitStore;
   historyStore?: AutoSyncHistoryStore;
 }
 
 export interface AutoSyncRateLimitStore {
-  read(provider: SyncProviderKind): number | null;
-  write(provider: SyncProviderKind, timestamp: number): void;
   readRetryAfter(provider: SyncProviderKind): number | null;
   writeRetryAfter(provider: SyncProviderKind, timestamp: number | null): void;
 }
@@ -71,8 +71,8 @@ export interface AutoSyncHistoryStore {
   write(provider: SyncProviderKind, history: AutoSyncHistory | null): void;
 }
 
-const DEFAULT_QUIET_INTERVAL_MS = 30_000;
-const DEFAULT_PERIODIC_MINIMUM_INTERVAL_MS = 5 * 60_000;
+const DEFAULT_QUIET_INTERVAL_MS = 1_000;
+const DEFAULT_REVISION_CHECK_INTERVAL_MS = 10_000;
 const DEFAULT_PROVIDER_RETRY_AFTER_MS = 60_000;
 const PROVIDER_RATE_LIMIT_MESSAGE =
   'The synchronization provider is temporarily rate limiting requests. Local changes are safe and automatic synchronization will retry.';
@@ -85,7 +85,7 @@ const PROVIDER_RATE_LIMIT_MESSAGE =
  */
 export class AutoSyncScheduler {
   private readonly quietIntervalMs: number;
-  private readonly periodicMinimumIntervalMs: number;
+  private readonly revisionCheckIntervalMs: number;
   private readonly environment: AutoSyncEnvironment;
   private readonly rateLimitStore: AutoSyncRateLimitStore;
   private readonly historyStore: AutoSyncHistoryStore;
@@ -99,17 +99,16 @@ export class AutoSyncScheduler {
   private statusValue: AutoSyncStatus = { phase: 'idle' };
   private started = false;
   private timer: unknown;
+  private revisionCheckTimer: unknown;
   private scheduledReason: AutoSyncReason | null = null;
   private queuedReason: AutoSyncReason | null = null;
-  private readonly lastPeriodicSyncAt: Partial<
-    Record<SyncProviderKind, number>
-  > = {};
-  private readonly loadedRateLimits = new Set<SyncProviderKind>();
   private activeSync: Promise<SyncWorkerResult> | null = null;
   private activeSyncController: AbortController | null = null;
   private unsubscribeActivity: (() => void) | null = null;
   private unsubscribeOnline: (() => void) | null = null;
   private unsubscribeOffline: (() => void) | null = null;
+  private unsubscribeVisibility: (() => void) | null = null;
+  private unsubscribeSelection: (() => void) | null = null;
 
   constructor(
     private readonly worker: SyncWorker,
@@ -118,8 +117,17 @@ export class AutoSyncScheduler {
     options: AutoSyncSchedulerOptions = {},
   ) {
     this.quietIntervalMs = options.quietIntervalMs ?? DEFAULT_QUIET_INTERVAL_MS;
-    this.periodicMinimumIntervalMs =
-      options.periodicMinimumIntervalMs ?? DEFAULT_PERIODIC_MINIMUM_INTERVAL_MS;
+    this.revisionCheckIntervalMs =
+      options.revisionCheckIntervalMs ?? DEFAULT_REVISION_CHECK_INTERVAL_MS;
+    if (
+      !Number.isSafeInteger(this.revisionCheckIntervalMs) ||
+      this.revisionCheckIntervalMs < 5_000 ||
+      this.revisionCheckIntervalMs > 5 * 60_000
+    ) {
+      throw new TypeError(
+        'The remote synchronization check interval must be between 5 seconds and 5 minutes',
+      );
+    }
     this.environment = options.environment ?? browserEnvironment();
     this.rateLimitStore =
       options.rateLimitStore ?? browserAutoSyncRateLimitStore();
@@ -175,14 +183,31 @@ export class AutoSyncScheduler {
           ? queuedReason
           : 'online',
       );
+      this.scheduleRevisionCheck();
     });
-    this.unsubscribeOffline = this.environment.onOffline(() =>
-      this.handleOffline(),
-    );
+    this.unsubscribeOffline = this.environment.onOffline(() => {
+      this.clearRevisionCheckTimer();
+      this.handleOffline();
+    });
+    this.unsubscribeVisibility = this.environment.onVisibilityChange(() => {
+      if (this.environment.isBackground()) {
+        this.clearRevisionCheckTimer();
+        return;
+      }
+      if (this.selection.current() === 'git') {
+        this.requestImmediate('revision-check');
+      }
+      this.scheduleRevisionCheck();
+    });
+    this.unsubscribeSelection =
+      this.selection.subscribe?.(() => {
+        this.scheduleRevisionCheck();
+      }) ?? null;
 
     if (this.selection.current()) {
       this.requestImmediate('startup');
     }
+    this.scheduleRevisionCheck();
   }
 
   stop(): void {
@@ -192,6 +217,7 @@ export class AutoSyncScheduler {
 
     this.started = false;
     this.clearScheduledTimer();
+    this.clearRevisionCheckTimer();
     this.queuedReason = null;
     this.activeSyncController?.abort(
       new DOMException('Automatic synchronization stopped', 'AbortError'),
@@ -199,9 +225,13 @@ export class AutoSyncScheduler {
     this.unsubscribeActivity?.();
     this.unsubscribeOnline?.();
     this.unsubscribeOffline?.();
+    this.unsubscribeVisibility?.();
+    this.unsubscribeSelection?.();
     this.unsubscribeActivity = null;
     this.unsubscribeOnline = null;
     this.unsubscribeOffline = null;
+    this.unsubscribeVisibility = null;
+    this.unsubscribeSelection = null;
     this.updateStatus({
       phase: 'idle',
       reason: undefined,
@@ -309,19 +339,8 @@ export class AutoSyncScheduler {
       return;
     }
 
-    const now = this.environment.now();
-    const lastPeriodicSyncAt =
-      provider === 'git' ? this.readLastPeriodicSyncAt(provider) : null;
-    const nextPeriodicAt =
-      lastPeriodicSyncAt === null
-        ? now
-        : lastPeriodicSyncAt + this.periodicMinimumIntervalMs;
     const providerRetryDelay = this.readProviderRetryDelay(provider);
-    const delay = Math.max(
-      this.quietIntervalMs,
-      nextPeriodicAt - now,
-      providerRetryDelay,
-    );
+    const delay = Math.max(this.quietIntervalMs, providerRetryDelay);
     this.schedule(
       'reading-quiet',
       delay,
@@ -413,14 +432,6 @@ export class AutoSyncScheduler {
       }
       const completedAt = this.environment.now();
       this.clearProviderRetryAfter(provider);
-      if (reason === 'reading-quiet' && provider === 'git') {
-        this.lastPeriodicSyncAt[provider] = completedAt;
-        try {
-          this.rateLimitStore.write(provider, completedAt);
-        } catch {
-          // Persistence cannot turn a successful provider sync into a failure.
-        }
-      }
       this.recordSuccess(provider, result, completedAt, reason);
     } catch (error) {
       if (!this.started) {
@@ -505,28 +516,46 @@ export class AutoSyncScheduler {
     });
   }
 
+  private scheduleRevisionCheck(): void {
+    this.clearRevisionCheckTimer();
+    if (!this.revisionPollingEnabled()) {
+      return;
+    }
+    this.revisionCheckTimer = this.environment.setTimer(() => {
+      this.revisionCheckTimer = undefined;
+      if (
+        this.revisionPollingEnabled() &&
+        this.timer === undefined &&
+        !this.activeSync
+      ) {
+        this.requestImmediate('revision-check');
+      }
+      this.scheduleRevisionCheck();
+    }, this.revisionCheckIntervalMs);
+  }
+
+  private revisionPollingEnabled(): boolean {
+    return (
+      this.started &&
+      this.selection.current() === 'git' &&
+      this.environment.isOnline() &&
+      !this.environment.isBackground()
+    );
+  }
+
+  private clearRevisionCheckTimer(): void {
+    if (this.revisionCheckTimer !== undefined) {
+      this.environment.clearTimer(this.revisionCheckTimer);
+      this.revisionCheckTimer = undefined;
+    }
+  }
+
   private clearScheduledTimer(): void {
     if (this.timer !== undefined) {
       this.environment.clearTimer(this.timer);
       this.timer = undefined;
     }
     this.scheduledReason = null;
-  }
-
-  private readLastPeriodicSyncAt(provider: SyncProviderKind): number | null {
-    if (!this.loadedRateLimits.has(provider)) {
-      this.loadedRateLimits.add(provider);
-      let stored: number | null = null;
-      try {
-        stored = this.rateLimitStore.read(provider);
-      } catch {
-        // Missing storage support simply falls back to the in-memory limit.
-      }
-      if (stored !== null) {
-        this.lastPeriodicSyncAt[provider] = stored;
-      }
-    }
-    return this.lastPeriodicSyncAt[provider] ?? null;
   }
 
   private readProviderRetryDelay(provider: SyncProviderKind): number {
@@ -658,37 +687,15 @@ function browserEnvironment(): AutoSyncEnvironment {
     clearTimer: (handle) => globalThis.clearTimeout(handle as number),
     onOnline: (callback) => listen(eventTarget, 'online', callback),
     onOffline: (callback) => listen(eventTarget, 'offline', callback),
+    onVisibilityChange: (callback) =>
+      listen(globalThis.document ?? eventTarget, 'visibilitychange', callback),
   };
 }
 
 function browserAutoSyncRateLimitStore(): AutoSyncRateLimitStore {
-  const periodicKey = (provider: SyncProviderKind) =>
-    `omnia-reader.auto-sync.v1.last-periodic.${provider}`;
   const retryAfterKey = (provider: SyncProviderKind) =>
     `omnia-reader.auto-sync.v1.retry-after.${provider}`;
   return {
-    read: (provider) => {
-      try {
-        const value = globalThis.localStorage?.getItem(periodicKey(provider));
-        if (!value) {
-          return null;
-        }
-        const timestamp = Number(value);
-        return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
-      } catch {
-        return null;
-      }
-    },
-    write: (provider, timestamp) => {
-      try {
-        globalThis.localStorage?.setItem(
-          periodicKey(provider),
-          String(timestamp),
-        );
-      } catch {
-        // Rate-limit persistence is an optimization, never a sync prerequisite.
-      }
-    },
     readRetryAfter: (provider) => {
       try {
         const value = globalThis.localStorage?.getItem(retryAfterKey(provider));

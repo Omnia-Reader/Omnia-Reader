@@ -2,6 +2,7 @@ import { inject, Injectable } from '@angular/core';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { BookRecord } from '@omnia-reader/reader/domain';
+import { blobReadableStream, downloadBlob } from '../../browser-file-export';
 
 export type PublicationExportResult = 'saved' | 'cancelled';
 
@@ -37,54 +38,13 @@ export class PublicationExportService {
     }
 
     if (destination) {
-      await blobReadableStream(blob).pipeTo(destination.writable);
+      await blobReadableStream(
+        blob,
+        'Unable to read the stored publication',
+      ).pipeTo(destination.writable);
     } else {
       downloadBlob(blob, book.fileName);
     }
     return 'saved';
   }
-}
-
-function blobReadableStream(blob: Blob): ReadableStream<Uint8Array> {
-  if (typeof blob.stream === 'function') {
-    return blob.stream();
-  }
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      controller.enqueue(new Uint8Array(await blobArrayBuffer(blob)));
-      controller.close();
-    },
-  });
-}
-
-function blobArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === 'function') {
-    return blob.arrayBuffer();
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => {
-      if (reader.result instanceof ArrayBuffer) {
-        resolve(reader.result);
-      } else {
-        reject(new Error('Unable to read the stored publication'));
-      }
-    });
-    reader.addEventListener('error', () =>
-      reject(
-        reader.error ?? new Error('Unable to read the stored publication'),
-      ),
-    );
-    reader.readAsArrayBuffer(blob);
-  });
-}
-
-function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.rel = 'noopener';
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

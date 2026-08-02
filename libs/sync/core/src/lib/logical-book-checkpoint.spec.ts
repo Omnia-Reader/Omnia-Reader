@@ -26,24 +26,28 @@ describe('logical-book checkpoints', () => {
       updatedAt: '2026-07-31T12:00:00.000Z',
       deviceId: 'device:test',
     };
+    const pdfVariantId = books[0].variants.pdf;
+    if (!pdfVariantId) {
+      throw new Error('The fixture must contain a PDF variant');
+    }
     const reconciliation: MembershipReconciliation = {
       schemaVersion: 1,
       conflictId: 'conflict:test',
       status: 'resolved',
       conflictingChangeIds: ['change:a', 'change:b'],
-      affectedVariantIds: [books[0].variants.pdf!],
+      affectedVariantIds: [pdfVariantId],
       acceptedMembership: [
         {
           logicalBookId,
           format: 'pdf',
-          variantId: books[0].variants.pdf!,
+          variantId: pdfVariantId,
         },
       ],
       rejectedMembership: [
         {
           logicalBookId,
           format: 'pdf',
-          variantId: books[0].variants.pdf!,
+          variantId: pdfVariantId,
         },
       ],
       resolvedByChangeId: 'change:resolution',

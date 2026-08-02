@@ -77,6 +77,7 @@ export class BookSyncService {
   private readonly wait: (milliseconds: number) => Promise<void>;
   private readonly exclusions: BookSyncExclusions;
   private activeSync: Promise<BookSyncResult> | null = null;
+  private legacyCleanupPending = false;
 
   constructor(
     private readonly remote: LibrarySyncTransport,
@@ -107,6 +108,15 @@ export class BookSyncService {
       this.remote.list(BOOKS_ROOT),
       this.journal.pending(),
     ]);
+    return this.pullFromSnapshot(deletions, books, pending, options);
+  }
+
+  private async pullFromSnapshot(
+    deletions: readonly RemoteDocument[],
+    books: readonly RemoteDocument[],
+    pending: readonly SyncOperation[],
+    options: SyncWorkerOptions,
+  ): Promise<BookSyncResult> {
     const documents = [...deletions, ...books];
     const localIntents = coalesceBookOperations(pending).changes;
     let pulled = 0;
@@ -185,10 +195,21 @@ export class BookSyncService {
 
   async push(options: SyncWorkerOptions = {}): Promise<BookSyncResult> {
     throwIfSyncAborted(options.signal);
-    const pending = await this.journal.pending();
+    const [pending, remoteDocuments] = await Promise.all([
+      this.journal.pending(),
+      this.remote.list(BOOKS_ROOT),
+    ]);
+    return this.pushFromSnapshot(pending, remoteDocuments, options);
+  }
+
+  private async pushFromSnapshot(
+    pending: readonly SyncOperation[],
+    remoteDocuments: readonly RemoteDocument[],
+    options: SyncWorkerOptions,
+  ): Promise<BookSyncResult> {
     const changes = coalesceBookOperations(pending);
-    const remoteDocuments = await this.remote.list(BOOKS_ROOT);
     const excludedRemoteBooks = new Map<string, BookSyncManifest>();
+    const activeRemoteBookPaths = new Set<string>();
     for (const document of remoteDocuments) {
       if (!document.path.endsWith('/book.json')) {
         continue;
@@ -197,10 +218,12 @@ export class BookSyncService {
       if (
         record &&
         isBookSyncManifest(record) &&
-        document.path === bookManifestPath(record) &&
-        this.exclusions.isExcluded(record.bookId)
+        document.path === bookManifestPath(record)
       ) {
-        excludedRemoteBooks.set(record.bookId, record);
+        activeRemoteBookPaths.add(document.path);
+        if (this.exclusions.isExcluded(record.bookId)) {
+          excludedRemoteBooks.set(record.bookId, record);
+        }
       }
     }
     const discardedOperationIds: string[] = [];
@@ -253,7 +276,8 @@ export class BookSyncService {
       throwIfSyncAborted(options.signal);
       if (
         !this.exclusions.isExcluded(book.id) &&
-        !changes.changes.has(book.id)
+        !changes.changes.has(book.id) &&
+        !activeRemoteBookPaths.has(bookManifestPath(book))
       ) {
         const manifest = createBookSyncManifest(book);
         changes.changes.set(book.id, {
@@ -287,14 +311,30 @@ export class BookSyncService {
   private async runSynchronization(
     options: SyncWorkerOptions,
   ): Promise<BookSyncResult> {
-    const pulled = await this.pull(options);
     throwIfSyncAborted(options.signal);
-    const pushed = await this.push(options);
-    await this.cleanupLegacyRemoteLayout();
+    const [deletions, books, pending] = await Promise.all([
+      this.remote.list(BOOK_DELETIONS_ROOT),
+      this.remote.list(BOOKS_ROOT),
+      this.journal.pending(),
+    ]);
+    const pulled = await this.pullFromSnapshot(
+      deletions,
+      books,
+      pending,
+      options,
+    );
+    throwIfSyncAborted(options.signal);
+    const pushed = await this.pushFromSnapshot(pending, books, options);
+    this.legacyCleanupPending ||= pulled.pulled > 0 || pushed.pushed > 0;
+    if (this.legacyCleanupPending) {
+      await this.cleanupLegacyRemoteLayout(options.signal);
+      this.legacyCleanupPending = false;
+    }
     await updateBookSyncCatalog(this.remote, {
       maxConflictRetries: this.maxConflictRetries,
       retryDelayMs: this.retryDelayMs,
       wait: this.wait,
+      ...(pushed.pushed === 0 ? { remoteDocuments: books } : {}),
     });
     return {
       pulled: pulled.pulled,
@@ -636,15 +676,18 @@ export class BookSyncService {
     return deleted.some(Boolean);
   }
 
-  private async cleanupLegacyRemoteLayout(): Promise<void> {
+  private async cleanupLegacyRemoteLayout(signal?: AbortSignal): Promise<void> {
     for (const document of await this.remote.list(LEGACY_BOOKS_ROOT)) {
+      throwIfSyncAborted(signal);
       if (!document.path.endsWith('/book.json')) {
         continue;
       }
       const directory = document.path.slice(0, -'/book.json'.length);
       for (const format of ['epub', 'pdf'] as const) {
+        throwIfSyncAborted(signal);
         await this.discardDeletedObject(`${directory}/publication.${format}`);
       }
+      throwIfSyncAborted(signal);
       await this.deleteRemoteDocument({
         path: document.path,
         expectedRevision: document.revision,

@@ -663,6 +663,38 @@ describe('SyncSettingsPageComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Last synchronized');
   });
 
+  it('hides repository creation after a GitHub repository is selected', async () => {
+    selected = 'git';
+    const repository = {
+      id: 7,
+      fullName: 'reader/private-library',
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    };
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository,
+    });
+    vi.mocked(git.repositories).mockResolvedValue([repository]);
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const page = fixture.nativeElement as HTMLElement;
+    expect(
+      page.querySelector('[data-testid="create-github-repository"]'),
+    ).toBeNull();
+    expect(page.textContent).toContain('Manage repository access');
+    expect(page.textContent).toContain('Refresh repositories');
+  });
+
   it('offers installation recovery when no repositories are accessible', async () => {
     selected = 'git';
     vi.mocked(git.session).mockResolvedValue({
@@ -682,8 +714,12 @@ describe('SyncSettingsPageComponent', () => {
     const warning = (
       fixture.nativeElement as HTMLElement
     ).querySelector<HTMLElement>('[data-testid="github-no-repositories"]');
+    const creation = (
+      fixture.nativeElement as HTMLElement
+    ).querySelector<HTMLElement>('[data-testid="create-github-repository"]');
 
     expect(warning?.textContent).toContain('No repositories are available');
+    expect(creation?.textContent).toContain('Create a sync repository');
     expect(warning?.querySelector<HTMLAnchorElement>('a')?.href).toBe(
       installationUrl,
     );

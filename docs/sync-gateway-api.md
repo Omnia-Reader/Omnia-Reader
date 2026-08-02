@@ -243,6 +243,21 @@ sync data.
 MEGA does not implement this optional revision capability and retains its existing
 complete synchronization behavior.
 
+### Low-latency local-first synchronization
+
+Reading-state writes use a one-second trailing quiet interval, so rapid progress,
+bookmark, and annotation changes coalesce into one attempt. Book changes,
+backgrounding, reconnect, and destination changes remain immediate. GitHub
+`Retry-After` always overrides the shorter schedule.
+
+While the application is visible, online, and GitHub-selected, a ten-second
+revision check discovers changes made by another device. The timer stops while
+hidden, offline, on another provider, or after scheduler teardown. An unchanged
+checkpoint costs only the revision request and performs no document or Git LFS
+work. This polling path requires no public endpoint, webhook secret, or GitHub
+App event subscription and therefore works in the supported local, desktop, and
+mobile topology.
+
 ### Shared session store and key rotation
 
 For localhost or a single gateway process, persist the encrypted session

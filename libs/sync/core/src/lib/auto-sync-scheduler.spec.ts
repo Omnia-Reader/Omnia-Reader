@@ -16,6 +16,10 @@ import {
   NotifyingSyncOperationJournal,
   SyncActivityNotifier,
 } from './sync-activity';
+import {
+  SyncProviderKind,
+  SyncProviderSelection,
+} from './sync-provider-selection';
 
 const EMPTY_RESULT = {
   pulled: 0,
@@ -43,7 +47,7 @@ describe('AutoSyncScheduler', () => {
     });
   });
 
-  it('debounces progress and limits periodic synchronization to once per five minutes', async () => {
+  it('synchronizes clustered progress one second after activity becomes quiet', async () => {
     const environment = new FakeEnvironment();
     const activity = new SyncActivityNotifier();
     const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
@@ -53,9 +57,9 @@ describe('AutoSyncScheduler', () => {
     await flushPromises();
 
     activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(29_000);
+    environment.advance(500);
     activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(29_999);
+    environment.advance(999);
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(1);
 
@@ -63,14 +67,7 @@ describe('AutoSyncScheduler', () => {
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(2);
 
-    activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(299_999);
-    await flushPromises();
-    expect(synchronize).toHaveBeenCalledTimes(2);
-
-    environment.advance(1);
-    await flushPromises();
-    expect(synchronize).toHaveBeenCalledTimes(3);
+    expect(scheduler.status().reason).toBe('reading-quiet');
   });
 
   it('schedules annotations through the same quiet, rate-limited path', async () => {
@@ -83,7 +80,7 @@ describe('AutoSyncScheduler', () => {
     await flushPromises();
 
     activity.notify({ kind: 'annotation', entityId: 'annotation-1' });
-    environment.advance(29_999);
+    environment.advance(999);
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(1);
 
@@ -133,46 +130,83 @@ describe('AutoSyncScheduler', () => {
     expect(scheduler.status().reason).toBe('background');
   });
 
-  it('persists the Git quiet-sync rate limit across scheduler restarts', async () => {
-    const rateLimitStore = new MemoryRateLimitStore();
-    const firstEnvironment = new FakeEnvironment();
-    const firstActivity = new SyncActivityNotifier();
-    const firstSync = vi.fn().mockResolvedValue(EMPTY_RESULT);
-    const firstScheduler = createScheduler(
-      firstEnvironment,
-      firstActivity,
-      firstSync,
-      rateLimitStore,
+  it('checks a visible GitHub destination every ten seconds and suspends in background', async () => {
+    const environment = new FakeEnvironment();
+    const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(
+      environment,
+      new SyncActivityNotifier(),
+      synchronize,
     );
-    firstScheduler.start();
-    firstEnvironment.advance(0);
+    scheduler.start();
+    environment.advance(0);
     await flushPromises();
-    firstActivity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    firstEnvironment.advance(30_000);
-    await flushPromises();
-    firstScheduler.stop();
 
-    const secondEnvironment = new FakeEnvironment(30_000);
-    const secondActivity = new SyncActivityNotifier();
-    const secondSync = vi.fn().mockResolvedValue(EMPTY_RESULT);
-    const secondScheduler = createScheduler(
-      secondEnvironment,
-      secondActivity,
-      secondSync,
-      rateLimitStore,
+    environment.advance(9_999);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    environment.advance(1);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
+
+    environment.goBackground();
+    environment.advance(60_000);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
+
+    environment.goForeground();
+    environment.advance(0);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(3);
+  });
+
+  it('clears revision polling on stop', async () => {
+    const environment = new FakeEnvironment();
+    const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(
+      environment,
+      new SyncActivityNotifier(),
+      synchronize,
     );
-    secondScheduler.start();
-    secondEnvironment.advance(0);
+    scheduler.start();
+    environment.advance(0);
     await flushPromises();
-    secondActivity.notify({ kind: 'progress', entityId: 'sha256:book' });
+    scheduler.stop();
 
-    secondEnvironment.advance(299_999);
+    environment.advance(60_000);
     await flushPromises();
-    expect(secondSync).toHaveBeenCalledTimes(1);
 
-    secondEnvironment.advance(1);
+    expect(synchronize).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts revision polling only after Git becomes the selected provider', async () => {
+    const environment = new FakeEnvironment();
+    const selection = new FakeProviderSelection('mega');
+    const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(
+      environment,
+      new SyncActivityNotifier(),
+      synchronize,
+      undefined,
+      undefined,
+      selection,
+    );
+    scheduler.start();
+    environment.advance(0);
     await flushPromises();
-    expect(secondSync).toHaveBeenCalledTimes(2);
+
+    environment.advance(60_000);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(1);
+
+    selection.select('git');
+    environment.advance(9_999);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(1);
+
+    environment.advance(1);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
   });
 
   it('restores the last successful result across scheduler restarts', async () => {
@@ -541,23 +575,47 @@ function createScheduler(
   synchronize: SyncWorker['synchronize'],
   rateLimitStore: AutoSyncRateLimitStore = new MemoryRateLimitStore(),
   historyStore: AutoSyncHistoryStore = new MemoryHistoryStore(),
+  selection: SyncProviderSelection = new FakeProviderSelection('git'),
 ): AutoSyncScheduler {
-  return new AutoSyncScheduler(
-    { synchronize },
-    {
-      current: () => 'git',
-      select: vi.fn(),
-      clear: vi.fn(),
-    },
-    activity,
-    {
-      environment,
-      quietIntervalMs: 30_000,
-      periodicMinimumIntervalMs: 300_000,
-      rateLimitStore,
-      historyStore,
-    },
-  );
+  return new AutoSyncScheduler({ synchronize }, selection, activity, {
+    environment,
+    quietIntervalMs: 1_000,
+    revisionCheckIntervalMs: 10_000,
+    rateLimitStore,
+    historyStore,
+  });
+}
+
+class FakeProviderSelection implements SyncProviderSelection {
+  private readonly listeners = new Set<
+    (provider: SyncProviderKind | null) => void
+  >();
+
+  constructor(private provider: SyncProviderKind | null) {}
+
+  current(): SyncProviderKind | null {
+    return this.provider;
+  }
+
+  select(provider: SyncProviderKind): void {
+    this.provider = provider;
+    this.notify();
+  }
+
+  clear(): void {
+    this.provider = null;
+    this.notify();
+  }
+
+  subscribe(listener: (provider: SyncProviderKind | null) => void): () => void {
+    this.listeners.add(listener);
+    listener(this.provider);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(): void {
+    this.listeners.forEach((listener) => listener(this.provider));
+  }
 }
 
 function syncOperation(): SyncOperation & NewSyncOperation {
@@ -589,6 +647,7 @@ class FakeEnvironment implements AutoSyncEnvironment {
   >();
   private readonly onlineListeners = new Set<() => void>();
   private readonly offlineListeners = new Set<() => void>();
+  private readonly visibilityListeners = new Set<() => void>();
 
   constructor(initialTime = 0) {
     this.currentTime = initialTime;
@@ -629,6 +688,11 @@ class FakeEnvironment implements AutoSyncEnvironment {
     return () => this.offlineListeners.delete(callback);
   }
 
+  onVisibilityChange(callback: () => void): () => void {
+    this.visibilityListeners.add(callback);
+    return () => this.visibilityListeners.delete(callback);
+  }
+
   advance(milliseconds: number): void {
     const target = this.currentTime + milliseconds;
     while (true) {
@@ -653,19 +717,20 @@ class FakeEnvironment implements AutoSyncEnvironment {
     this.online = true;
     this.onlineListeners.forEach((listener) => listener());
   }
+
+  goBackground(): void {
+    this.background = true;
+    this.visibilityListeners.forEach((listener) => listener());
+  }
+
+  goForeground(): void {
+    this.background = false;
+    this.visibilityListeners.forEach((listener) => listener());
+  }
 }
 
 class MemoryRateLimitStore implements AutoSyncRateLimitStore {
-  private readonly timestamps = new Map<string, number>();
   private readonly retryAfter = new Map<string, number>();
-
-  read(provider: 'git' | 'mega'): number | null {
-    return this.timestamps.get(provider) ?? null;
-  }
-
-  write(provider: 'git' | 'mega', timestamp: number): void {
-    this.timestamps.set(provider, timestamp);
-  }
 
   readRetryAfter(provider: 'git' | 'mega'): number | null {
     return this.retryAfter.get(provider) ?? null;

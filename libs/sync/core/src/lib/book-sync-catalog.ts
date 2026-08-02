@@ -7,6 +7,7 @@ import {
 import { SYNC_ROOT } from './library-sync-manifest';
 import {
   LibrarySyncTransport,
+  RemoteDocument,
   SyncConflictError,
 } from './library-sync-transport';
 
@@ -16,6 +17,7 @@ export interface BookSyncCatalogOptions {
   maxConflictRetries?: number;
   retryDelayMs?: number;
   wait?: (milliseconds: number) => Promise<void>;
+  remoteDocuments?: readonly RemoteDocument[];
 }
 
 const DEFAULT_MAX_CONFLICT_RETRIES = 3;
@@ -25,7 +27,9 @@ export async function updateBookSyncCatalog(
   remote: LibrarySyncTransport,
   options: BookSyncCatalogOptions = {},
 ): Promise<void> {
-  const manifests = await activeRemoteManifests(remote);
+  const manifests = activeRemoteManifests(
+    options.remoteDocuments ?? (await remote.list(BOOKS_ROOT)),
+  );
   const content = serializeBookSyncCatalog(manifests);
   const maxConflictRetries =
     options.maxConflictRetries ?? DEFAULT_MAX_CONFLICT_RETRIES;
@@ -94,11 +98,11 @@ export function serializeBookSyncCatalog(
   return lines.join('\n');
 }
 
-async function activeRemoteManifests(
-  remote: LibrarySyncTransport,
-): Promise<readonly BookSyncManifest[]> {
+function activeRemoteManifests(
+  remoteDocuments: readonly RemoteDocument[],
+): readonly BookSyncManifest[] {
   const byBookId = new Map<string, BookSyncManifest>();
-  for (const document of await remote.list(BOOKS_ROOT)) {
+  for (const document of remoteDocuments) {
     if (!document.path.endsWith('/book.json')) {
       continue;
     }

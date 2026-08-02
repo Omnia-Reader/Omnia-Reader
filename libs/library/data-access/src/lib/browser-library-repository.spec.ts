@@ -98,7 +98,8 @@ describe('BrowserLibraryRepository logical singleton and availability', () => {
     const publication = source('retained.pdf', bytes);
     const imported = await repository.importBook(publication);
     const logical = await repository.findLogicalBookByVariant(imported.id);
-    await deleteRawLibraryRecord('logicalBooks', logical!.id, databaseName);
+    assertPresent(logical);
+    await deleteRawLibraryRecord('logicalBooks', logical.id, databaseName);
 
     await expect(repository.listBooks()).resolves.toEqual([imported]);
     await expect(
@@ -275,18 +276,18 @@ describe('BrowserLibraryRepository logical singleton and availability', () => {
       open: async () => bytes,
     });
     const logical = await repository.findLogicalBookByVariant(book.id);
-    expect(logical).not.toBeNull();
+    assertPresent(logical);
     await putRawLibraryRecords(
       [
         {
           storeName: 'logicalBookCovers',
-          value: { logicalBookId: logical!.id, mediaType: '', bytes: 'bad' },
+          value: { logicalBookId: logical.id, mediaType: '', bytes: 'bad' },
         },
       ],
       databaseName,
     );
     await expect(
-      repository.getLogicalBookCover(logical!.id),
+      repository.getLogicalBookCover(logical.id),
     ).resolves.toBeNull();
     await expect(repository.openHealthyVariant(book.id)).resolves.toMatchObject(
       {
@@ -346,6 +347,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
       source('destination.pdf', pdf),
     );
     const logical = await repository.findLogicalBookByVariant(destination.id);
+    assertPresent(logical);
     const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2])], {
       type: 'application/epub+zip',
     });
@@ -357,7 +359,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
 
     await expect(
       repository.addVariant(
-        logical!.id,
+        logical.id,
         variant,
         source('candidate.epub', epub),
         mutation('add:1'),
@@ -394,6 +396,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
       source('existing.epub', epub),
     );
     const firstLogical = await repository.findLogicalBookByVariant(first.id);
+    assertPresent(firstLogical);
     const secondVariant = bookRecord(
       await publicationFingerprint(secondPdf),
       'pdf',
@@ -409,30 +412,30 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
 
     await expect(
       repository.addVariant(
-        firstLogical!.id,
+        firstLogical.id,
         bookRecord(first.id, 'pdf', firstPdf, 'first.pdf'),
         source('first.pdf', firstPdf),
         mutation('add:duplicate-here'),
       ),
     ).resolves.toEqual({
       status: 'already-member',
-      logicalBookId: firstLogical!.id,
+      logicalBookId: firstLogical.id,
     });
     await expect(
       repository.addVariant(
-        firstLogical!.id,
+        firstLogical.id,
         secondVariant,
         source('second.pdf', secondPdf),
         mutation('add:same-format'),
       ),
     ).resolves.toEqual({
       status: 'same-format-conflict',
-      logicalBookId: firstLogical!.id,
+      logicalBookId: firstLogical.id,
       existingVariantId: first.id,
     });
     await expect(
       repository.addVariant(
-        firstLogical!.id,
+        firstLogical.id,
         epubVariant,
         source('existing.epub', epub),
         mutation('add:other-owner'),
@@ -452,7 +455,8 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
     });
     const destination = await repository.importBook(source('gone.pdf', pdf));
     const logical = await repository.findLogicalBookByVariant(destination.id);
-    await deleteRawLibraryRecord('logicalBooks', logical!.id);
+    assertPresent(logical);
+    await deleteRawLibraryRecord('logicalBooks', logical.id);
     const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 9])], {
       type: 'application/epub+zip',
     });
@@ -464,7 +468,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
 
     await expect(
       repository.addVariant(
-        logical!.id,
+        logical.id,
         variant,
         source('candidate.epub', epub),
         mutation('add:gone'),
@@ -488,6 +492,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
       source('transaction.pdf', pdf),
     );
     const logical = await repository.findLogicalBookByVariant(destination.id);
+    assertPresent(logical);
     const epub = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 12])], {
       type: 'application/epub+zip',
     });
@@ -503,23 +508,21 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
 
     await expect(
       repository.addVariant(
-        logical!.id,
+        logical.id,
         variant,
         source('candidate.epub', epub),
         mutation('add:transaction-retry'),
       ),
     ).rejects.toBeTruthy();
     expect(storage.remove).toHaveBeenCalledTimes(1);
-    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject(
-      {
-        variants: { pdf: destination.id },
-      },
-    );
+    await expect(repository.getLogicalBook(logical.id)).resolves.toMatchObject({
+      variants: { pdf: destination.id },
+    });
 
     await deleteRawLibraryRecord('books', variant.id, databaseName);
     await expect(
       repository.addVariant(
-        logical!.id,
+        logical.id,
         variant,
         source('candidate.epub', epub),
         mutation('add:transaction-retry'),
@@ -540,6 +543,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
     });
     const destination = await repository.importBook(source('quota.pdf', pdf));
     const logical = await repository.findLogicalBookByVariant(destination.id);
+    assertPresent(logical);
     vi.mocked(storage.save).mockRejectedValueOnce(
       new DOMException('Storage quota exceeded', 'QuotaExceededError'),
     );
@@ -554,17 +558,15 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
 
     await expect(
       repository.addVariant(
-        logical!.id,
+        logical.id,
         variant,
         source('candidate.epub', epub),
         mutation('add:quota'),
       ),
     ).rejects.toMatchObject({ name: 'QuotaExceededError' });
-    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject(
-      {
-        variants: { pdf: destination.id },
-      },
-    );
+    await expect(repository.getLogicalBook(logical.id)).resolves.toMatchObject({
+      variants: { pdf: destination.id },
+    });
     await expect(repository.getBook(variant.id)).resolves.toBeNull();
   });
 });
@@ -584,27 +586,29 @@ describe('BrowserLibraryRepository logical-book association', () => {
     const pdf = await repository.importBook(source('source.pdf', pdfBytes));
     const destination = await repository.findLogicalBookByVariant(epub.id);
     const sourceLogical = await repository.findLogicalBookByVariant(pdf.id);
+    assertPresent(destination);
+    assertPresent(sourceLogical);
     await repository.saveProgress(progressDocument(pdf.id, 'association', 0.4));
 
     await expect(
       repository.associate(
-        destination!.id,
-        sourceLogical!.id,
+        destination.id,
+        sourceLogical.id,
         mutation('associate:1'),
       ),
     ).resolves.toMatchObject({
-      updatedLogicalBookIds: [destination!.id],
-      deletedLogicalBookIds: [sourceLogical!.id],
+      updatedLogicalBookIds: [destination.id],
+      deletedLogicalBookIds: [sourceLogical.id],
       resultingBooks: [
         expect.objectContaining({
-          id: destination!.id,
-          title: destination!.title,
+          id: destination.id,
+          title: destination.title,
           variants: { epub: epub.id, pdf: pdf.id },
         }),
       ],
     });
     await expect(
-      repository.getLogicalBook(sourceLogical!.id),
+      repository.getLogicalBook(sourceLogical.id),
     ).resolves.toBeNull();
     await expect(repository.getProgress(pdf.id)).resolves.toMatchObject({
       bookId: pdf.id,
@@ -625,23 +629,25 @@ describe('BrowserLibraryRepository logical-book association', () => {
     const right = await repository.importBook(source('right.pdf', rightBytes));
     const leftLogical = await repository.findLogicalBookByVariant(left.id);
     const rightLogical = await repository.findLogicalBookByVariant(right.id);
+    assertPresent(leftLogical);
+    assertPresent(rightLogical);
 
     await expect(
       repository.associate(
-        leftLogical!.id,
-        rightLogical!.id,
+        leftLogical.id,
+        rightLogical.id,
         mutation('associate:conflict'),
       ),
     ).rejects.toThrow('already contain a PDF');
     await expect(
       repository.associate(
-        leftLogical!.id,
-        leftLogical!.id,
+        leftLogical.id,
+        leftLogical.id,
         mutation('associate:self'),
       ),
     ).rejects.toThrow('itself');
     await expect(
-      repository.getLogicalBook(rightLogical!.id),
+      repository.getLogicalBook(rightLogical.id),
     ).resolves.not.toBeNull();
   });
 });
@@ -659,19 +665,21 @@ describe('BrowserLibraryRepository logical-book management', () => {
     const pdf = await repository.importBook(source('detached.pdf', pdfBytes));
     const destination = await repository.findLogicalBookByVariant(epub.id);
     const sourceLogical = await repository.findLogicalBookByVariant(pdf.id);
+    assertPresent(destination);
+    assertPresent(sourceLogical);
     await repository.associate(
-      destination!.id,
-      sourceLogical!.id,
+      destination.id,
+      sourceLogical.id,
       mutation('associate:detach'),
     );
     await repository.saveLogicalBookFormatPreference(
-      destination!.id,
+      destination.id,
       'pdf',
       mutation('preference:pdf'),
     );
 
     const result = await repository.detachVariant(
-      destination!.id,
+      destination.id,
       pdf.id,
       mutation('detach:pdf'),
     );
@@ -680,14 +688,14 @@ describe('BrowserLibraryRepository logical-book management', () => {
     await expect(repository.listLogicalBooks()).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: destination!.id,
+          id: destination.id,
           variants: { epub: epub.id },
         }),
         expect.objectContaining({ variants: { pdf: pdf.id } }),
       ]),
     );
     await expect(
-      repository.getLogicalBookFormatPreference(destination!.id),
+      repository.getLogicalBookFormatPreference(destination.id),
     ).resolves.toMatchObject({ preferredFormat: 'epub' });
     await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
     await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
@@ -705,25 +713,25 @@ describe('BrowserLibraryRepository logical-book management', () => {
     const pdf = await repository.importBook(source('delete.pdf', pdfBytes));
     const logical = await repository.findLogicalBookByVariant(epub.id);
     const pdfLogical = await repository.findLogicalBookByVariant(pdf.id);
+    assertPresent(logical);
+    assertPresent(pdfLogical);
     await repository.associate(
-      logical!.id,
-      pdfLogical!.id,
+      logical.id,
+      pdfLogical.id,
       mutation('associate:delete'),
     );
     await repository.saveProgress(progressDocument(pdf.id, 'delete', 0.7));
 
-    await repository.deleteVariant(logical!.id, pdf.id, mutation('delete:pdf'));
+    await repository.deleteVariant(logical.id, pdf.id, mutation('delete:pdf'));
 
     await expect(repository.getBook(pdf.id)).resolves.toBeNull();
     await expect(repository.getProgress(pdf.id)).resolves.toBeNull();
-    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject(
-      {
-        variants: { epub: epub.id },
-      },
-    );
+    await expect(repository.getLogicalBook(logical.id)).resolves.toMatchObject({
+      variants: { epub: epub.id },
+    });
 
-    await repository.deleteVariant(logical!.id, null, mutation('delete:book'));
-    await expect(repository.getLogicalBook(logical!.id)).resolves.toBeNull();
+    await repository.deleteVariant(logical.id, null, mutation('delete:book'));
+    await expect(repository.getLogicalBook(logical.id)).resolves.toBeNull();
     await expect(repository.getBook(epub.id)).resolves.toBeNull();
   });
 
@@ -739,6 +747,8 @@ describe('BrowserLibraryRepository logical-book management', () => {
     const pdf = await repository.importBook(source('review.pdf', pdfBytes));
     const epubLogical = await repository.findLogicalBookByVariant(epub.id);
     const pdfLogical = await repository.findLogicalBookByVariant(pdf.id);
+    assertPresent(epubLogical);
+    assertPresent(pdfLogical);
     const reconciliation = {
       schemaVersion: 1 as const,
       conflictId: 'membership:review',
@@ -747,24 +757,24 @@ describe('BrowserLibraryRepository logical-book management', () => {
       affectedVariantIds: [epub.id, pdf.id].sort(),
       acceptedMembership: [
         {
-          logicalBookId: epubLogical!.id,
+          logicalBookId: epubLogical.id,
           format: 'epub' as const,
           variantId: epub.id,
         },
         {
-          logicalBookId: epubLogical!.id,
+          logicalBookId: epubLogical.id,
           format: 'pdf' as const,
           variantId: pdf.id,
         },
       ],
       rejectedMembership: [
         {
-          logicalBookId: pdfLogical!.id,
+          logicalBookId: pdfLogical.id,
           format: 'epub' as const,
           variantId: epub.id,
         },
         {
-          logicalBookId: pdfLogical!.id,
+          logicalBookId: pdfLogical.id,
           format: 'pdf' as const,
           variantId: pdf.id,
         },
@@ -772,7 +782,7 @@ describe('BrowserLibraryRepository logical-book management', () => {
       detectedAt: '2026-07-31T12:00:00.000Z',
     };
     await repository.replaceLogicalBookState(
-      [epubLogical!, pdfLogical!],
+      [epubLogical, pdfLogical],
       [],
       [reconciliation],
     );
@@ -782,7 +792,7 @@ describe('BrowserLibraryRepository logical-book management', () => {
     ).resolves.toEqual([reconciliation]);
     await repository.reconcileMembership(
       reconciliation.conflictId,
-      { kind: 'accept-rejected', logicalBookId: pdfLogical!.id },
+      { kind: 'accept-rejected', logicalBookId: pdfLogical.id },
       mutation('reconcile:accept'),
     );
 
@@ -1092,7 +1102,8 @@ describe('BrowserLibraryRepository binary recovery', () => {
 
     const imported = await repository.importBook(source);
     const logical = await repository.findLogicalBookByVariant(imported.id);
-    await deleteRawLibraryRecord('logicalBooks', logical!.id);
+    assertPresent(logical);
+    await deleteRawLibraryRecord('logicalBooks', logical.id);
     persisted = null;
     const repaired = await repository.importBook(source);
 
@@ -1414,4 +1425,12 @@ function mutation(changeId: string): LogicalMutationIdentity {
     deviceId: 'test-device',
     appVersion: '0.1.0',
   };
+}
+
+function assertPresent<T>(
+  value: T | null | undefined,
+): asserts value is NonNullable<T> {
+  if (value === null || value === undefined) {
+    throw new Error('Expected the test fixture value to be present');
+  }
 }

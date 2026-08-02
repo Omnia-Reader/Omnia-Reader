@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   createEncryptedPdfFixture,
   createEpubFixture,
@@ -46,9 +46,7 @@ test('library has no automated WCAG A or AA violations', async ({ page }) => {
     await createEpubFixture(),
     'Omnia EPUB Fixture',
   );
-  await page
-    .getByRole('button', { name: 'Read EPUB version of Omnia EPUB Fixture' })
-    .click();
+  await libraryFormatButton(page, 'Omnia EPUB Fixture', 'epub').click();
   const progress = page.getByRole('slider', { name: 'Book progress' });
   await expect(progress).toBeVisible({ timeout: 20_000 });
   await progress.fill('50');
@@ -57,15 +55,13 @@ test('library has no automated WCAG A or AA violations', async ({ page }) => {
   );
   await page.goBack();
   await expect(
-    page.getByRole('button', {
-      name: 'Read EPUB version of Omnia EPUB Fixture',
-    }),
+    libraryFormatButton(page, 'Omnia EPUB Fixture', 'epub'),
   ).toBeVisible();
   await expectAccessible(page);
 
   await page
     .getByRole('button', {
-      name: 'Remove EPUB version of Omnia EPUB Fixture',
+      name: 'Remove EPUB for Omnia EPUB Fixture',
     })
     .click();
   const removalDialog = page.getByRole('dialog', {
@@ -106,9 +102,7 @@ test('PDF reader shell has no automated WCAG A or AA violations', async ({
     createPdfFixture(),
     'Omnia PDF Fixture',
   );
-  await page
-    .getByRole('button', { name: 'Read PDF version of Omnia PDF Fixture' })
-    .click();
+  await libraryFormatButton(page, 'Omnia PDF Fixture', 'pdf').click();
   await expect(
     page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
   ).toBeVisible({ timeout: 20_000 });
@@ -160,9 +154,7 @@ test('PDF reader shell has no automated WCAG A or AA violations', async ({
     createEncryptedPdfFixture(),
     'Encrypted Omnia PDF',
   );
-  await page
-    .getByRole('button', { name: 'Read PDF version of Encrypted Omnia PDF' })
-    .click();
+  await libraryFormatButton(page, 'Encrypted Omnia PDF', 'pdf').click();
   const passwordDialog = page.getByRole('dialog', { name: 'Protected PDF' });
   await expect(passwordDialog.getByLabel('Password')).toBeFocused();
   await expectAccessible(page);
@@ -178,9 +170,7 @@ test('EPUB reader shell has no automated WCAG A or AA violations', async ({
     await createEpubFixture(),
     'Omnia EPUB Fixture',
   );
-  await page
-    .getByRole('button', { name: 'Read EPUB version of Omnia EPUB Fixture' })
-    .click();
+  await libraryFormatButton(page, 'Omnia EPUB Fixture', 'epub').click();
   await expect(
     page
       .getByTestId('publication-viewport')
@@ -216,6 +206,17 @@ async function expectAccessible(
 
   const results = await builder.analyze();
   expect(formatViolations(results.violations)).toEqual([]);
+}
+
+function libraryFormatButton(
+  page: Page,
+  title: string,
+  format: 'epub' | 'pdf',
+): Locator {
+  const card = page.getByTestId('library-book').filter({ hasText: title });
+  return card.getByRole('button', {
+    name: new RegExp(`^${format.toUpperCase()}\\b`),
+  });
 }
 
 function formatViolations(

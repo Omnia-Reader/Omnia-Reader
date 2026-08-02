@@ -50,7 +50,7 @@
       Loading your library…
     </p>
   } @else if (logicalBooks.length === 0) {
-  <section
+    <section
       class="mx-auto my-18 max-w-xl rounded-3xl border border-dashed border-stone-400 bg-white p-12 text-center"
     >
       <mat-icon class="!h-16 !w-16 !text-[64px]">auto_stories</mat-icon>
@@ -197,7 +197,9 @@
         <mat-icon class="!h-14 !w-14 !text-[56px] text-stone-500">
           search_off
         </mat-icon>
-        <h2 id="no-library-results" class="mt-4 text-2xl font-semibold">No books found</h2>
+        <h2 id="no-library-results" class="mt-4 text-2xl font-semibold">
+          No books found
+        </h2>
         <p class="text-stone-600">
           Try another title, author, publisher, file name, format, or reading
           status.
@@ -242,51 +244,49 @@
                     ? 'block w-full cursor-pointer focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-violet-600'
                     : 'block h-32 w-20 shrink-0 cursor-pointer focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-violet-600 sm:h-40 sm:w-28'
                 "
-                [attr.aria-label]="'Open ' + book.title + ' in its preferred format'"
+                [attr.aria-label]="
+                  'Open ' + book.title + ' in its preferred format'
+                "
                 (click)="openPreferredFormat(book)"
               >
-              @if (bookCoverUrl(book.id); as coverUrl) {
-                <img
-                  [class]="
-                    viewMode === 'grid'
-                      ? 'aspect-2/3 w-full bg-stone-200 object-cover'
-                      : 'h-32 w-20 shrink-0 bg-stone-200 object-cover sm:h-40 sm:w-28'
-                  "
-                  [src]="coverUrl"
-                  [alt]="'Cover of ' + book.title"
-                />
-              } @else {
-                <div
-                  [class]="
-                    viewMode === 'grid'
-                      ? 'grid aspect-2/3 w-full place-content-center gap-2.5 bg-linear-to-br from-slate-700 to-slate-950 text-center text-white data-[format=epub]:from-violet-600 data-[format=epub]:to-indigo-900'
-                      : 'grid h-32 w-20 shrink-0 place-content-center gap-1 bg-linear-to-br from-slate-700 to-slate-950 text-center text-white data-[format=epub]:from-violet-600 data-[format=epub]:to-indigo-900 sm:h-40 sm:w-28'
-                  "
-                  [attr.data-format]="book.format"
-                  role="img"
-                  [attr.aria-label]="'No cover available for ' + book.title"
-                >
-                  <mat-icon
+                @if (bookCoverUrl(book.id); as coverUrl) {
+                  <img
                     [class]="
                       viewMode === 'grid'
-                        ? 'mx-auto !h-14 !w-14 !text-[56px]'
-                        : 'mx-auto !h-9 !w-9 !text-4xl'
+                        ? 'aspect-2/3 w-full bg-stone-200 object-cover'
+                        : 'h-32 w-20 shrink-0 bg-stone-200 object-cover sm:h-40 sm:w-28'
                     "
+                    [src]="coverUrl"
+                    [alt]="'Cover of ' + book.title"
+                  />
+                } @else {
+                  <div
+                    [class]="
+                      viewMode === 'grid'
+                        ? 'grid aspect-2/3 w-full place-content-center gap-2.5 bg-linear-to-br from-slate-700 to-slate-950 text-center text-white data-[format=epub]:from-violet-600 data-[format=epub]:to-indigo-900'
+                        : 'grid h-32 w-20 shrink-0 place-content-center gap-1 bg-linear-to-br from-slate-700 to-slate-950 text-center text-white data-[format=epub]:from-violet-600 data-[format=epub]:to-indigo-900 sm:h-40 sm:w-28'
+                    "
+                    [attr.data-format]="book.format"
+                    role="img"
+                    [attr.aria-label]="'No cover available for ' + book.title"
                   >
-                    menu_book
-                  </mat-icon>
-                </div>
-              }
+                    <mat-icon
+                      [class]="
+                        viewMode === 'grid'
+                          ? 'mx-auto !h-14 !w-14 !text-[56px]'
+                          : 'mx-auto !h-9 !w-9 !text-4xl'
+                      "
+                    >
+                      menu_book
+                    </mat-icon>
+                  </div>
+                }
               </button>
 
-              <div
-                [class]="
-                  viewMode === 'grid'
-                    ? 'p-2'
-                    : 'min-w-0 flex-1 p-2'
-                "
-              >
-                <h2 class="mt-0 mb-0 min-w-0 h-6 line-clamp-2 text-xs leading-none font-semibold">
+              <div [class]="viewMode === 'grid' ? 'p-2' : 'min-w-0 flex-1 p-2'">
+                <h2
+                  class="mt-0 mb-0 min-w-0 h-6 line-clamp-2 text-xs leading-none font-semibold"
+                >
                   {{ book.title }}
                 </h2>
                 <div
@@ -296,140 +296,164 @@
                 >
                   @for (format of formatOrder; track format) {
                     @let variant = book.variants[format];
-                    @let progressPercent = formatBadgePercentValue(book, format);
+                    @let progressPercent =
+                      formatBadgePercentValue(book, format);
                     @if (variant) {
-                    <div [class]="formatRowClass">
-                      <button
-                        matIconButton
-                        [class]="formatActionButtonClass"
-                        [attr.data-preferred]=
-                          "isPreferredFormat(book, format) ? 'true' : null"
-                        [class.ring-1]="isPreferredFormat(book, format)"
-                        [class.ring-inset]="isPreferredFormat(book, format)"
-                        [class.ring-violet-700]="isPreferredFormat(book, format)"
-                        type="button"
-                        [id]="'format-eye-' + book.id + '-' + format"
-                        [disabled]="formatBadgeDisabled(book, format)"
-                        [attr.aria-label]="formatBadgeLabel(book, format)"
-                        (click)="
-                          $event.stopPropagation(); activateFormatBadge(book, format)
-                        "
-                      >
-                        <mat-icon>visibility</mat-icon>
-                      </button>
-                      <div
-                        [class]="formatBadgeButtonClass"
-                        [id]="formatBadgeId(book, format)"
-                        [attr.data-format-badge]="format"
-                        [class.opacity-60]="formatBadgeDisabled(book, format)"
-                        [attr.aria-label]="
-                          formatBadgeLabel(book, format) +
-                          (progressPercent === null || progressPercent === 0
-                            ? ''
-                            : ' · ' + progressPercent + '% read')
-                        "
-                      >
-                        <mat-icon
-                          [class]="formatBadgeGlyphClass"
-                          aria-hidden="true"
+                      <div [class]="formatRowClass">
+                        <button
+                          [class]="formatActionButtonClass"
+                          [attr.data-preferred]="
+                            isPreferredFormat(book, format) ? 'true' : null
+                          "
+                          [class.ring-1]="isPreferredFormat(book, format)"
+                          [class.ring-inset]="isPreferredFormat(book, format)"
+                          [class.ring-violet-700]="
+                            isPreferredFormat(book, format)
+                          "
+                          type="button"
+                          [id]="'format-eye-' + book.id + '-' + format"
+                          [attr.aria-disabled]="
+                            formatBadgeDisabled(book, format) ? 'true' : null
+                          "
+                          [attr.aria-label]="formatBadgeLabel(book, format)"
+                          (click)="
+                            $event.stopPropagation();
+                            activateFormatBadge(book, format)
+                          "
                         >
-                          {{ formatBadgeGlyph(format) }}
-                        </mat-icon>
-                        <span [class]="formatBadgeLabelClass">
-                          {{ format.toUpperCase() }}
-                        </span>
-                        @if (progressPercent !== null && progressPercent > 0) {
-                          <span [class]="formatBadgeProgressClusterClass">
-                            <span
-                              [class]="formatBadgeProgressTrackClass"
-                              aria-hidden="true"
-                            >
+                          <mat-icon>visibility</mat-icon>
+                        </button>
+                        <div
+                          [class]="formatBadgeButtonClass"
+                          [id]="formatBadgeId(book, format)"
+                          [attr.data-format-badge]="format"
+                          [class.opacity-60]="formatBadgeDisabled(book, format)"
+                          [attr.aria-label]="
+                            formatBadgeLabel(book, format) +
+                            (progressPercent === null || progressPercent === 0
+                              ? ''
+                              : ' · ' + progressPercent + '% read')
+                          "
+                        >
+                          <mat-icon
+                            [class]="formatBadgeGlyphClass"
+                            aria-hidden="true"
+                          >
+                            {{ formatBadgeGlyph(format) }}
+                          </mat-icon>
+                          <span [class]="formatBadgeLabelClass">
+                            {{ format.toUpperCase() }}
+                          </span>
+                          @if (
+                            progressPercent !== null && progressPercent > 0
+                          ) {
+                            <span [class]="formatBadgeProgressClusterClass">
                               <span
-                                [class]="formatBadgeProgressFillClass"
-                                [style.min-width.px]="1"
-                                [style.width.%]="progressPercent"
-                                role="presentation"
+                                [class]="formatBadgeProgressTrackClass"
                                 aria-hidden="true"
-                              ></span>
-                              <span
-                                [class]="formatBadgeProgressPercentClass"
-                                [class.text-white]="progressPercent >= 55"
-                                [class.text-emerald-950]="progressPercent < 55"
                               >
-                                {{ progressPercent }}%
+                                <span
+                                  [class]="formatBadgeProgressFillClass"
+                                  [style.min-width.px]="1"
+                                  [style.width.%]="progressPercent"
+                                  role="presentation"
+                                  aria-hidden="true"
+                                ></span>
+                                <span
+                                  [class]="formatBadgeProgressPercentClass"
+                                  [class.text-white]="progressPercent >= 55"
+                                  [class.text-emerald-950]="
+                                    progressPercent < 55
+                                  "
+                                >
+                                  {{ progressPercent }}%
+                                </span>
                               </span>
                             </span>
-                          </span>
-                        }
-                      </div>
-                      <span [class]="formatActionContainerClass">
-                        <button
-                          matIconButton
-                          [class]="formatActionButtonClass"
-                          type="button"
-                          [disabled]="
-                            isFormatActionDisabled() || formatBadgeDisabled(book, format)
-                          "
-                          [attr.aria-label]="
-                            formatActionAriaLabel(format, 'export', book.title)
-                          "
-                          (click)="$event.stopPropagation(); exportBook(variant)"
-                        >
-                          <mat-icon>download</mat-icon>
-                        </button>
-                        <button
-                          matIconButton
-                          [class]="formatActionButtonClass"
-                          type="button"
-                          [disabled]="isFormatActionDisabled()"
-                          [attr.aria-label]="
-                            formatActionAriaLabel(format, 'remove', book.title)
-                          "
-                          (click)="
-                            $event.stopPropagation(); requestBookRemoval(variant)
-                          "
-                        >
-                          <mat-icon>delete</mat-icon>
-                        </button>
-                      </span>
-                    </div>
-                  } @else {
-                    <div [class]="formatRowClass">
-                      <button
-                        matIconButton
-                        [class]="formatActionButtonClass"
-                        type="button"
-                        [disabled]="isAddingLogicalBook()"
-                        [attr.aria-label]=
-                          "formatActionAriaLabel(format, 'add', book.title)"
-                        (click)="$event.stopPropagation(); addFormat(book, format)"
-                      >
-                        <mat-icon>upload</mat-icon>
-                      </button>
-                      <div
-                        [class]="formatBadgeMissingClass"
-                        [class.opacity-60]="isAddingLogicalBook()"
-                        [id]="formatBadgeId(book, format)"
-                        [attr.data-format-badge]="format"
-                        [attr.aria-label]="
-                          formatActionAriaLabel(format, 'add', book.title)
-                        "
-                      >
-                        <mat-icon
-                          [class]="formatBadgeGlyphClass"
-                          aria-hidden="true"
-                        >
-                          {{ formatBadgeGlyph(format) }}
-                        </mat-icon>
-                        <span [class]="formatBadgeLabelClass">
-                          {{ format.toUpperCase() }}
+                          }
+                        </div>
+                        <span [class]="formatActionContainerClass">
+                          <button
+                            matIconButton
+                            [class]="formatActionButtonClass"
+                            type="button"
+                            [disabled]="
+                              isFormatActionDisabled() ||
+                              formatBadgeDisabled(book, format)
+                            "
+                            [attr.aria-label]="
+                              formatActionAriaLabel(
+                                format,
+                                'export',
+                                book.title
+                              )
+                            "
+                            (click)="
+                              $event.stopPropagation(); exportBook(variant)
+                            "
+                          >
+                            <mat-icon>download</mat-icon>
+                          </button>
+                          <button
+                            matIconButton
+                            [class]="formatActionButtonClass"
+                            type="button"
+                            [disabled]="isFormatActionDisabled()"
+                            [attr.aria-label]="
+                              formatActionAriaLabel(
+                                format,
+                                'remove',
+                                book.title
+                              )
+                            "
+                            (click)="
+                              $event.stopPropagation();
+                              requestBookRemoval(variant)
+                            "
+                          >
+                            <mat-icon>delete</mat-icon>
+                          </button>
                         </span>
                       </div>
-                    </div>
-                  }
+                    } @else {
+                      <div [class]="formatRowClass">
+                        <button
+                          matIconButton
+                          [class]="formatActionButtonClass"
+                          type="button"
+                          [disabled]="isAddingLogicalBook()"
+                          [attr.aria-label]="
+                            formatActionAriaLabel(format, 'add', book.title)
+                          "
+                          (click)="
+                            $event.stopPropagation(); addFormat(book, format)
+                          "
+                        >
+                          <mat-icon>upload</mat-icon>
+                        </button>
+                        <div
+                          [class]="formatBadgeMissingClass"
+                          [class.opacity-60]="isAddingLogicalBook()"
+                          [id]="formatBadgeId(book, format)"
+                          [attr.data-format-badge]="format"
+                          [attr.aria-label]="
+                            formatActionAriaLabel(format, 'add', book.title)
+                          "
+                        >
+                          <mat-icon
+                            [class]="formatBadgeGlyphClass"
+                            aria-hidden="true"
+                          >
+                            {{ formatBadgeGlyph(format) }}
+                          </mat-icon>
+                          <span [class]="formatBadgeLabelClass">
+                            {{ format.toUpperCase() }}
+                          </span>
+                        </div>
+                      </div>
+                    }
                   }
                 </div>
-
               </div>
             </div>
           </article>

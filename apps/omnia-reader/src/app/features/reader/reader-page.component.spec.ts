@@ -19,7 +19,10 @@ import {
 } from '@omnia-reader/reader/domain';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { BackNavigationService } from '../../back-navigation.service';
-import { ReaderPageComponent } from './reader-page.component';
+import {
+  hasBookSyncMetadataChanged,
+  ReaderPageComponent,
+} from './reader-page.component';
 
 const BOOK: BookRecord = {
   id: `sha256:${'a'.repeat(64)}`,
@@ -33,6 +36,22 @@ const BOOK: BookRecord = {
 };
 
 describe('ReaderPageComponent annotations', () => {
+  it('treats opened activity as local but detects synchronized metadata changes', () => {
+    expect(
+      hasBookSyncMetadataChanged(BOOK, {
+        ...BOOK,
+        lastOpenedAt: '2026-08-02T12:00:00.000Z',
+      }),
+    ).toBe(false);
+    expect(
+      hasBookSyncMetadataChanged(BOOK, {
+        ...BOOK,
+        title: 'Updated publication title',
+        lastOpenedAt: '2026-08-02T12:00:00.000Z',
+      }),
+    ).toBe(true);
+  });
+
   it('persists a selected highlight with its note and journals it for sync', async () => {
     const deviceStorage = new Map<string, string>();
     vi.stubGlobal('localStorage', {
@@ -316,6 +335,9 @@ describe('ReaderPageComponent annotations', () => {
       logicalBookFromVariant(BOOK).id,
       'pdf',
       expect.objectContaining({ changeId: expect.stringMatching(/^change:/) }),
+    );
+    expect(journal.append).not.toHaveBeenCalledWith(
+      expect.objectContaining({ entity: 'book' }),
     );
 
     const annotationsTrigger = fixture.nativeElement.querySelector(

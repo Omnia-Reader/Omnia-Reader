@@ -292,6 +292,7 @@ export class SyncSettingsPageComponent implements OnInit {
 
     await this.runBusy(async () => {
       this.gitSession = await this.gitGateway.selectRepository(repositoryId);
+      this.providerSelection.select('git');
       if (destinationChanged) {
         this.autoSync.clearHistory('git');
       }
@@ -316,6 +317,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.repositories = await this.gitGateway.repositories();
       this.repositoryInstallationSettingsUrl = result.installationSettingsUrl;
       if (result.selected) {
+        this.providerSelection.select('git');
         this.autoSync.clearHistory('git');
         await this.refreshRemoteBackups();
         this.statusMessage =

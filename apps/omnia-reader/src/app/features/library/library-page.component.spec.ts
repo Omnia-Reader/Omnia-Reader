@@ -92,7 +92,7 @@ describe('LibraryPageComponent', () => {
     repository.getLogicalBookCover.mockResolvedValue(null);
     repository.getLogicalBookFormatPreference.mockResolvedValue(null);
     repository.resolveVariantAvailability.mockResolvedValue(
-      new Map([[book.id, { status: 'checking' }]]),
+      new Map([[book.id, { status: 'healthy' }]]),
     );
     repository.openHealthyVariant.mockResolvedValue({
       availability: { status: 'healthy' },
@@ -256,9 +256,6 @@ describe('LibraryPageComponent', () => {
       expect(fixture.componentInstance.loading).toBe(false);
     });
 
-    const removeButton = document.querySelector(
-      'button[data-format-badge="epub"]',
-    ) as HTMLButtonElement;
     (
       document.querySelector(
         'button[aria-label="Remove EPUB for Owned book"]',
@@ -302,11 +299,6 @@ describe('LibraryPageComponent', () => {
       expect(fixture.componentInstance.loading).toBe(false);
     });
 
-    const removeButton = document.querySelector(
-      'button[data-format-badge="epub"]',
-    ) as HTMLButtonElement;
-    removeButton?.parentElement?.dispatchEvent(new MouseEvent('mouseenter'));
-    fixture.detectChanges();
     (
       document.querySelector(
         'button[aria-label="Remove EPUB for Owned book"]',
@@ -371,9 +363,9 @@ describe('LibraryPageComponent', () => {
 
     const badges = Array.from(
       fixture.nativeElement.querySelectorAll('[data-format-badge]'),
-    ) as HTMLButtonElement[];
+    ) as HTMLElement[];
     expect(badges).toHaveLength(2);
-    expect(badges[0].getAttribute('aria-label')).toBe('EPUB');
+    expect(badges[0].getAttribute('aria-label')).toBe('EPUB (open) · 42% read');
     expect(badges[1].getAttribute('aria-label')).toContain('PDF');
     const formatRow = badges[0].parentElement;
     expect(formatRow?.className).toContain('flex');
@@ -388,7 +380,6 @@ describe('LibraryPageComponent', () => {
     expect(removeButton).toBeTruthy();
     expect(exportButton.className).not.toContain('opacity-0');
     expect(removeButton.className).not.toContain('opacity-0');
-    expect(badges[0].getAttribute('aria-label')).toBe('EPUB');
     expect(fixture.nativeElement.textContent).not.toContain('Read EPUB');
     expect(fixture.nativeElement.textContent).not.toContain('Read PDF');
     expect(fixture.nativeElement.textContent).not.toContain('Add local');
@@ -439,7 +430,7 @@ describe('LibraryPageComponent', () => {
     fixture.detectChanges();
     await vi.waitFor(() => {
       fixture.detectChanges();
-    expect(fixture.componentInstance.loading).toBe(false);
+      expect(fixture.componentInstance.loading).toBe(false);
     });
 
     const missingPdfBadge = fixture.nativeElement.querySelector(
@@ -508,11 +499,9 @@ describe('LibraryPageComponent', () => {
     expect(pdfBadge).toBeTruthy();
     expect(pdfBadge.getAttribute('aria-label')).toContain('Unavailable');
     expect(epubBadge.textContent).toContain('75%');
-    expect(epubBadge.parentElement?.querySelector('.bg-emerald-200')).toBeTruthy();
+    expect(epubBadge.querySelector('[role="presentation"]')).toBeTruthy();
     expect(pdfBadge.textContent).not.toContain('1%');
-    expect(
-      pdfBadge.parentElement?.querySelector('.bg-emerald-200'),
-    ).toBeNull();
+    expect(pdfBadge.querySelector('[role="presentation"]')).toBeNull();
   });
 
   it('shows at least 1% for very low positive reading progress', async () => {
@@ -625,10 +614,10 @@ describe('LibraryPageComponent', () => {
       expect(fixture.componentInstance.loading).toBe(false);
     });
 
-    const missingBadge = fixture.nativeElement.querySelector(
-      '[data-format-badge="pdf"]',
+    const addButton = fixture.nativeElement.querySelector(
+      'button[aria-label="Add PDF for Owned book"]',
     ) as HTMLButtonElement;
-    expect(missingBadge).toBeTruthy();
+    expect(addButton).toBeTruthy();
 
     platform.pickPublications.mockResolvedValueOnce([
       {
@@ -641,7 +630,7 @@ describe('LibraryPageComponent', () => {
       status: 'cancelled',
     });
 
-    missingBadge.click();
+    addButton.click();
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(platform.pickPublications).toHaveBeenCalled();
@@ -677,7 +666,7 @@ describe('LibraryPageComponent', () => {
     });
 
     const badge = fixture.nativeElement.querySelector(
-      '[data-format-badge="epub"]',
+      'button[id$="-epub"]',
     ) as HTMLButtonElement;
     expect(badge.disabled).toBe(false);
     expect(badge.getAttribute('aria-disabled')).toBe('true');
@@ -705,10 +694,7 @@ describe('LibraryPageComponent', () => {
       { status: 'unavailable', cause: 'inaccessible' },
       'Unavailable: inaccessible',
     ],
-    [
-      { status: 'unavailable', cause: 'incomplete' },
-      'Unavailable: incomplete',
-    ],
+    [{ status: 'unavailable', cause: 'incomplete' }, 'Unavailable: incomplete'],
     [
       { status: 'quarantined', cause: 'integrity-invalid' },
       'Quarantined: integrity invalid',
@@ -735,7 +721,7 @@ describe('LibraryPageComponent', () => {
       });
 
       const badge = fixture.nativeElement.querySelector(
-        '[data-format-badge="epub"]',
+        'button[id$="-epub"]',
       ) as HTMLButtonElement;
       expect(badge.getAttribute('aria-label')).toContain(expectedDescription);
       expect(badge.getAttribute('aria-disabled')).toBe(
@@ -773,7 +759,7 @@ describe('LibraryPageComponent', () => {
 
     expect(repository.openHealthyVariant).toHaveBeenCalledWith(book.id);
     const badge = fixture.nativeElement.querySelector(
-      '[data-format-badge="epub"]',
+      'button[id$="-epub"]',
     ) as HTMLButtonElement;
     expect(badge.getAttribute('aria-disabled')).toBeNull();
     expect(badge.getAttribute('aria-label')).toContain('(open)');
@@ -850,6 +836,9 @@ describe('LibraryPageComponent', () => {
     repository.listProgress.mockRejectedValue(
       new Error('progress unavailable'),
     );
+    repository.resolveVariantAvailability.mockResolvedValue(
+      new Map([[book.id, { status: 'checking' }]]),
+    );
     const fixture = TestBed.createComponent(LibraryPageComponent);
 
     fixture.detectChanges();
@@ -859,7 +848,7 @@ describe('LibraryPageComponent', () => {
     });
 
     const badge = fixture.nativeElement.querySelector(
-      'button[data-format-badge="epub"]',
+      'button[id$="-epub"]',
     ) as HTMLButtonElement;
     expect(badge.getAttribute('aria-label')).toContain('Checking');
     expect(badge.getAttribute('aria-disabled')).toBe('true');
@@ -892,7 +881,7 @@ describe('LibraryPageComponent', () => {
       expect(fixture.componentInstance.loading).toBe(false);
     });
     const badge = fixture.nativeElement.querySelector(
-      '[data-format-badge="epub"]',
+      'button[id$="-epub"]',
     ) as HTMLButtonElement;
     badge.focus();
 
@@ -921,7 +910,7 @@ describe('LibraryPageComponent', () => {
     await pendingReload;
     fixture.detectChanges();
     const refreshedBadge = fixture.nativeElement.querySelector(
-      '[data-format-badge="epub"]',
+      'button[id$="-epub"]',
     ) as HTMLButtonElement;
     expect(refreshedBadge.getAttribute('aria-label')).toContain('(open)');
     expect(document.activeElement).toBe(refreshedBadge);

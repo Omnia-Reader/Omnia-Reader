@@ -161,14 +161,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     'w-5 text-right text-[6px] leading-none tabular-nums text-stone-500';
   readonly multiFormatProgressClusterClass =
     'ml-auto inline-flex shrink-0 items-center gap-0.5';
-  readonly multiFormatControlLabelClass =
-    'sr-only';
-  readonly multiFormatControlActiveClass =
-    'bg-stone-800 text-white';
-  readonly multiFormatControlInactiveClass =
-    'text-stone-400 bg-transparent';
-  readonly multiFormatControlIconClass =
-    '!h-2 !w-2 !text-[8px] text-current';
+  readonly multiFormatControlLabelClass = 'sr-only';
+  readonly multiFormatControlActiveClass = 'bg-stone-800 text-white';
+  readonly multiFormatControlInactiveClass = 'text-stone-400 bg-transparent';
+  readonly multiFormatControlIconClass = '!h-2 !w-2 !text-[8px] text-current';
   readonly formatOrder: readonly PublicationFormat[] = ['epub', 'pdf'];
   readonly annotationFormatOptions = [
     { style: 'highlight', label: 'Highlight' },
@@ -377,7 +373,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private pinnedProgressMilestoneKey: string | null = null;
   private destroyed = false;
   private progressSliderGeometryRefreshId: number | null = null;
-  private formatProgressPercentByVariant: ReadonlyMap<string, number> = new Map();
+  private formatProgressPercentByVariant: ReadonlyMap<string, number> =
+    new Map();
 
   async ngAfterViewInit(): Promise<void> {
     const bookId = this.route.snapshot.paramMap.get('bookId');
@@ -503,15 +500,20 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
           markOpened: true,
         },
       );
-      try {
-        await this.syncJournal.append({
-          entity: 'book',
-          entityId: this.book.id,
-          operation: 'upsert',
-          payload: createBookSyncManifest(this.book),
-        });
-      } catch {
-        // Local metadata and reading remain available while sync is offline.
+      if (hasBookSyncMetadataChanged(book, this.book)) {
+        try {
+          await this.syncJournal.append({
+            entity: 'book',
+            entityId: this.book.id,
+            operation: 'upsert',
+            payload: createBookSyncManifest(
+              this.book,
+              this.book.lastOpenedAt ?? new Date().toISOString(),
+            ),
+          });
+        } catch {
+          // Local metadata and reading remain available while sync is offline.
+        }
       }
       await this.engine.applyPreferences(preferences);
       await this.engine.mount(this.viewport.nativeElement);
@@ -3544,7 +3546,8 @@ function normalizeProgressPercent(value: number): number {
 
 function readingProgressPercent(progress: ReadingProgress): number {
   const progression =
-    progress.locator.locations?.totalProgression ?? progress.furthestTotalProgression;
+    progress.locator.locations?.totalProgression ??
+    progress.furthestTotalProgression;
   if (!Number.isFinite(progression)) {
     return 0;
   }
@@ -3599,4 +3602,15 @@ function timestampAfter(value: string): string {
   return new Date(
     Math.max(Date.now(), Number.isFinite(previous) ? previous + 1 : 0),
   ).toISOString();
+}
+
+export function hasBookSyncMetadataChanged(
+  before: BookRecord,
+  after: BookRecord,
+): boolean {
+  const comparisonTimestamp = before.importedAt;
+  return (
+    JSON.stringify(createBookSyncManifest(before, comparisonTimestamp)) !==
+    JSON.stringify(createBookSyncManifest(after, comparisonTimestamp))
+  );
 }

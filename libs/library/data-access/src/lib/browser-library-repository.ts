@@ -94,6 +94,11 @@ interface StoredEntry {
 
 type RuntimeValidator<T> = (value: unknown) => value is T;
 
+function isNeverValid(value: unknown): value is never {
+  void value;
+  return false;
+}
+
 interface StoredCoverBytes {
   bookId: string;
   mediaType: string;
@@ -2009,7 +2014,7 @@ export class BrowserLibraryRepository
     await this.quarantineInvalidRecord(
       BINARIES_STORE,
       bookId,
-      (_candidate): _candidate is never => false,
+      isNeverValid,
       reason,
     );
   }

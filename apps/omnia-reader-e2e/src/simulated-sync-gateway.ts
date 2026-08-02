@@ -36,6 +36,7 @@ interface SimulatedSyncGatewayOptions {
   holdFirstObjectUpload?: boolean;
   expectedPublication?: Buffer;
   selectedGitRepository?: boolean;
+  existingGitRepository?: boolean;
 }
 
 /**
@@ -63,15 +64,7 @@ export class SimulatedSyncGateway {
   private readonly heldObjectUploadReleased = new Promise<void>((resolve) => {
     this.releaseHeldObjectUpload = resolve;
   });
-  private readonly gitRepositories: SimulatedGitRepository[] = [
-    {
-      id: 1,
-      fullName: 'omnia-reader/e2e-library',
-      private: true,
-      defaultBranch: 'main',
-      canPush: true,
-    },
-  ];
+  private readonly gitRepositories: SimulatedGitRepository[];
   private selectedGitRepository: SimulatedGitRepository | null;
   private readonly requests: string[] = [];
 
@@ -93,6 +86,18 @@ export class SimulatedSyncGateway {
     this.expectedPublication = options.expectedPublication
       ? Buffer.from(options.expectedPublication)
       : undefined;
+    this.gitRepositories =
+      options.existingGitRepository === false
+        ? []
+        : [
+            {
+              id: 1,
+              fullName: 'omnia-reader/e2e-library',
+              private: true,
+              defaultBranch: 'main',
+              canPush: true,
+            },
+          ];
     this.selectedGitRepository =
       options.selectedGitRepository === false
         ? null
@@ -141,7 +146,9 @@ export class SimulatedSyncGateway {
       this.provider === 'git' ? '/api/sync/github' : '/api/sync/mega';
     const path = url.pathname.slice(basePath.length);
     const method = request.method();
-    this.requests.push(`${method} ${path}`);
+    this.requests.push(
+      `${method} ${path}${path === '/files' ? url.search : ''}`,
+    );
 
     if (path === '/session' && method === 'GET') {
       await this.fulfillJson(route, this.session());

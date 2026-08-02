@@ -9,10 +9,8 @@ import {
   LogicalBookRecord,
   LogicalBookMutationResult,
   LogicalLibrarySnapshot,
-  LogicalMutationIdentity,
   logicalBookFromVariant,
   MembershipReconciliation,
-  MembershipReconciliationDecision,
   NewSyncOperation,
   PublicationFormat,
   PublicationBookmark,
@@ -26,7 +24,9 @@ import {
 } from '@omnia-reader/reader/domain';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  BOOKS_ROOT,
   BookSyncManifest,
+  LEGACY_BOOKS_ROOT,
   bookDeletionPath,
   bookManifestPath,
   createBookSyncDeletionTombstone,
@@ -113,6 +113,63 @@ describe('BookSyncService', () => {
     expect(remote.events).toEqual([]);
   });
 
+  it('reuses one remote snapshot and skips current publication verification', async () => {
+    const remote = new MemoryTransport();
+    remote.seed(createBookSyncManifest(fixture.book), fixture.blob);
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      new MemoryRepository(fixture.book, fixture.source),
+    );
+
+    await expect(service.synchronize()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    await expect(service.synchronize()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+
+    expect(
+      remote.requests.filter((request) => request === `list:${BOOKS_ROOT}`),
+    ).toHaveLength(2);
+    expect(
+      remote.requests.filter(
+        (request) => request === `list:${LEGACY_BOOKS_ROOT}`,
+      ),
+    ).toHaveLength(0);
+    expect(
+      remote.requests.filter(
+        (request) => request === `read:${bookManifestPath(fixture.book)}`,
+      ),
+    ).toHaveLength(0);
+    expect(
+      remote.requests.filter(
+        (request) => request === `head:${fixture.manifest.objectPath}`,
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('requires the exact canonical manifest path before skipping publication work', async () => {
+    const remote = new MemoryTransport();
+    const misplaced = {
+      ...fixture.manifest,
+      fileName: 'different-name.epub',
+    };
+    remote.seed(misplaced, fixture.blob);
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      new MemoryRepository(fixture.book, fixture.source),
+    );
+
+    await expect(service.synchronize()).resolves.toMatchObject({ pushed: 1 });
+
+    expect(remote.documents.has(bookManifestPath(fixture.book))).toBe(true);
+    expect(remote.documents.has(bookManifestPath(misplaced))).toBe(true);
+  });
+
   it('removes the obsolete hash-addressed layout after publishing named files', async () => {
     const remote = new MemoryTransport();
     const legacyManifest = legacyBookManifestPath(fixture.book.id);
@@ -143,6 +200,28 @@ describe('BookSyncService', () => {
     expect(remote.objects.has(legacyObject)).toBe(false);
     expect(remote.documents.has(bookManifestPath(fixture.book))).toBe(true);
     expect(remote.objects.has(fixture.manifest.objectPath)).toBe(true);
+  });
+
+  it('retries legacy cleanup after a failed check and stops after success', async () => {
+    const remote = new MemoryTransport();
+    remote.failNextLegacyList = true;
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      new MemoryRepository(fixture.book, fixture.source),
+    );
+
+    await expect(service.synchronize()).rejects.toThrow(
+      'Legacy layout unavailable',
+    );
+    await expect(service.synchronize()).resolves.toMatchObject({ pushed: 0 });
+    await expect(service.synchronize()).resolves.toMatchObject({ pushed: 0 });
+
+    expect(
+      remote.requests.filter(
+        (request) => request === `list:${LEGACY_BOOKS_ROOT}`,
+      ),
+    ).toHaveLength(2);
   });
 
   it('restores a missing local book only after hash verification', async () => {
@@ -538,19 +617,27 @@ class MemoryTransport implements LibrarySyncTransport {
   readonly objects = new Map<string, RemoteObject>();
   readonly objectContents = new Map<string, Blob>();
   readonly events: string[] = [];
+  readonly requests: string[] = [];
   conflictsRemaining = 0;
   failObjectUpload = false;
+  failNextLegacyList = false;
   beforeWrite: (() => void) | undefined;
   onDownload: (() => void) | undefined;
   private revision = 0;
 
   async list(prefix: string): Promise<readonly RemoteDocument[]> {
+    this.requests.push(`list:${prefix}`);
+    if (prefix === LEGACY_BOOKS_ROOT && this.failNextLegacyList) {
+      this.failNextLegacyList = false;
+      throw new Error('Legacy layout unavailable');
+    }
     return [...this.documents.values()].filter((document) =>
       document.path.startsWith(prefix),
     );
   }
 
   async read(path: string): Promise<RemoteDocument | null> {
+    this.requests.push(`read:${path}`);
     return this.documents.get(path) ?? null;
   }
 
@@ -591,6 +678,7 @@ class MemoryTransport implements LibrarySyncTransport {
   }
 
   async headObject(path: string): Promise<RemoteObject | null> {
+    this.requests.push(`head:${path}`);
     return this.objects.get(path) ?? null;
   }
 
@@ -896,52 +984,27 @@ class MemoryRepository implements LibraryRepository {
     };
   }
 
-  addVariant(
-    _logicalBookId: LogicalBookId,
-    _variant: BookRecord,
-    _source: BookSource,
-    _identity: LogicalMutationIdentity,
-  ): Promise<AddLogicalBookVariantResult> {
+  addVariant(): Promise<AddLogicalBookVariantResult> {
     return Promise.reject(new Error('Not used'));
   }
 
-  associate(
-    _destination: LogicalBookId,
-    _source: LogicalBookId,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  associate(): Promise<LogicalBookMutationResult> {
     return Promise.reject(new Error('Not used'));
   }
 
-  detachVariant(
-    _logicalBookId: LogicalBookId,
-    _variantId: string,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  detachVariant(): Promise<LogicalBookMutationResult> {
     return Promise.reject(new Error('Not used'));
   }
 
-  deleteVariant(
-    _logicalBookId: LogicalBookId,
-    _variantId: string | null,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  deleteVariant(): Promise<LogicalBookMutationResult> {
     return Promise.reject(new Error('Not used'));
   }
 
-  saveLogicalBookFormatPreference(
-    _logicalBookId: LogicalBookId,
-    _format: PublicationFormat,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookChange | null> {
+  saveLogicalBookFormatPreference(): Promise<LogicalBookChange | null> {
     return Promise.resolve(null);
   }
 
-  reconcileMembership(
-    _conflictId: string,
-    _decision: MembershipReconciliationDecision,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  reconcileMembership(): Promise<LogicalBookMutationResult> {
     return Promise.reject(new Error('Not used'));
   }
 

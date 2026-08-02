@@ -3,16 +3,11 @@ import {
   BookSource,
   LibraryRepository,
   LogicalBookFormatPreference,
-  LogicalBookChange,
   LogicalBookId,
-  LogicalBookMutationResult,
   LogicalBookRecord,
   LogicalLibrarySnapshot,
-  LogicalMutationIdentity,
-  AddLogicalBookVariantResult,
   logicalBookFromVariant,
   MembershipReconciliation,
-  MembershipReconciliationDecision,
   PublicationFormat,
   PublicationAnnotation,
   PublicationBookmark,
@@ -788,52 +783,27 @@ class MemoryLibraryRepository
     }
   }
 
-  addVariant(
-    _logicalBookId: LogicalBookId,
-    _variant: BookRecord,
-    _source: BookSource,
-    _identity: LogicalMutationIdentity,
-  ): Promise<AddLogicalBookVariantResult> {
+  addVariant() {
     return Promise.reject(new Error('Not implemented for this test'));
   }
 
-  associate(
-    _destinationId: LogicalBookId,
-    _sourceId: LogicalBookId,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  associate() {
     return Promise.reject(new Error('Not implemented for this test'));
   }
 
-  detachVariant(
-    _logicalBookId: LogicalBookId,
-    _variantId: string,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  detachVariant() {
     return Promise.reject(new Error('Not implemented for this test'));
   }
 
-  deleteVariant(
-    _logicalBookId: LogicalBookId,
-    _variantId: string | null,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  deleteVariant() {
     return Promise.reject(new Error('Not implemented for this test'));
   }
 
-  saveLogicalBookFormatPreference(
-    _logicalBookId: LogicalBookId,
-    _format: PublicationFormat,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookChange | null> {
+  saveLogicalBookFormatPreference() {
     return Promise.resolve(null);
   }
 
-  reconcileMembership(
-    _conflictId: string,
-    _decision: MembershipReconciliationDecision,
-    _identity: LogicalMutationIdentity,
-  ): Promise<LogicalBookMutationResult> {
+  reconcileMembership() {
     return Promise.reject(new Error('Not implemented for this test'));
   }
 

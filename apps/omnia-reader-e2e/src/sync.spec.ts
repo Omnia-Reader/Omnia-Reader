@@ -201,7 +201,9 @@ test('creates and selects a private GitHub synchronization repository', async ({
   context,
   page,
 }) => {
-  const gateway = new SimulatedSyncGateway('git');
+  const gateway = new SimulatedSyncGateway('git', {
+    existingGitRepository: false,
+  });
   await gateway.install(context);
 
   await page.goto('/settings/sync');
@@ -219,6 +221,12 @@ test('creates and selects a private GitHub synchronization repository', async ({
     ),
   ).toBeVisible();
   await expect(page.locator('select').first()).toHaveValue('2');
+  await expect(
+    page.getByRole('heading', { name: 'Create a sync repository' }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('link', { name: 'Manage repository access' }),
+  ).toBeVisible();
 });
 
 test('restores GitHub setup and presents it consistently across Settings and the toolbar', async ({
@@ -319,10 +327,26 @@ test('finishes a stable repeated Git sync with only one revision request', async
   await selectProvider(page, { providerButtonName: /^Git \+ LFS/ });
   const sync = page.getByRole('button', { name: 'Sync books and progress' });
 
+  await expect(sync).toBeEnabled({ timeout: 30_000 });
+  await page.evaluate(() =>
+    localStorage.removeItem('omnia-reader.sync-checkpoint'),
+  );
+  gateway.clearRequestHistory();
   await sync.click();
   await expect(page.getByRole('status')).toContainText('Sync complete:', {
     timeout: 30_000,
   });
+  const firstSyncRequests = gateway.requestHistory();
+  expect(
+    firstSyncRequests.some(
+      (request) => request === 'GET /files?prefix=.omnia-reader%2Fv1%2Flibrary',
+    ),
+  ).toBe(true);
+  expect(
+    firstSyncRequests.filter(
+      (request) => request === 'GET /files?prefix=.omnia-reader%2Fv1%2Fbooks',
+    ),
+  ).toHaveLength(0);
   gateway.clearRequestHistory();
   const completedAt = await gitSyncSuccessTimestamp(page);
   await sync.click();
@@ -355,6 +379,7 @@ test('recovers when GitHub forbids repository creation', async ({
 }) => {
   const gateway = new SimulatedSyncGateway('git', {
     forbidRepositoryCreation: true,
+    existingGitRepository: false,
   });
   await gateway.install(context);
 
