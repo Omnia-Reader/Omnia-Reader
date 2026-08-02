@@ -8,7 +8,7 @@ npx nx test sync-git --skip-nx-cache
 npx nx test sync-gateway --skip-nx-cache
 ```
 
-Expected: two-second trailing progress debounce, separately budgeted interactive mutations, ten-second visible revision polling, provider backoff, single-flight behavior, and deterministic timer cleanup pass. No push broker, SSE route, or EventSource client remains.
+Expected: 750 ms trailing progress debounce, separately budgeted interactive mutations, bounded targeted continuation, ten-second visible revision polling, provider backoff, single-flight behavior, and deterministic timer cleanup pass. No push broker, SSE route, or EventSource client remains.
 
 ## Static and production gates
 

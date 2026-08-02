@@ -47,7 +47,7 @@ describe('AutoSyncScheduler', () => {
     });
   });
 
-  it('collapses continued paging into one sync after two quiet seconds', async () => {
+  it('collapses rapid paging into one sync after 750 quiet milliseconds', async () => {
     const environment = new FakeEnvironment();
     const activity = new SyncActivityNotifier();
     const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
@@ -57,11 +57,11 @@ describe('AutoSyncScheduler', () => {
     await flushPromises();
 
     activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(1_500);
+    environment.advance(500);
     activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(1_500);
+    environment.advance(500);
     activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(1_999);
+    environment.advance(749);
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(1);
 
@@ -97,7 +97,7 @@ describe('AutoSyncScheduler', () => {
     release();
     await flushPromises();
 
-    environment.advance(1_999);
+    environment.advance(749);
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(1);
 
@@ -615,7 +615,7 @@ function createScheduler(
 ): AutoSyncScheduler {
   return new AutoSyncScheduler({ synchronize }, selection, activity, {
     environment,
-    quietIntervalMs: 2_000,
+    quietIntervalMs: 750,
     interactiveQuietIntervalMs: 50,
     revisionCheckIntervalMs: 10_000,
     rateLimitStore,

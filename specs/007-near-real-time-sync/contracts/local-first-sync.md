@@ -2,7 +2,8 @@
 
 ## Local activity
 
-- A durable progress operation restarts a 2,000 ms trailing timer; annotations and bookmarks use their separately budgeted interactive timer.
+- A durable progress operation restarts a 750 ms trailing timer; annotations and bookmarks use their separately budgeted interactive timer.
+- Consecutive reading-state batches may remain on the targeted lane within one running client after a successful push; the next idle revision check still performs complete reconciliation.
 - Multiple operations inside the window create one attempt.
 - Book, background, online, startup, and destination events remain immediate.
 - Provider `Retry-After` overrides shorter schedules.

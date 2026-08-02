@@ -99,6 +99,7 @@ export class BrowserSyncCheckpointStore implements SyncCheckpointStore {
  */
 export class ChangeAwareSyncWorker implements SyncWorker {
   private activeSync: Promise<SyncWorkerResult> | null = null;
+  private readingStateContinuationScope: string | null = null;
 
   constructor(
     private readonly delegate: SyncWorker,
@@ -127,6 +128,7 @@ export class ChangeAwareSyncWorker implements SyncWorker {
       provider !== 'git' ||
       typeof this.remote.destinationRevision !== 'function'
     ) {
+      this.readingStateContinuationScope = null;
       return this.delegate.synchronize(options);
     }
 
@@ -151,27 +153,34 @@ export class ChangeAwareSyncWorker implements SyncWorker {
 
     if (
       this.readingStateWorker &&
-      trustedCheckpoint === revisionBefore &&
+      (trustedCheckpoint === revisionBefore ||
+        this.readingStateContinuationScope === revisionScope(revisionBefore)) &&
       isReadingStateOnly(pendingBefore)
     ) {
-      const result = await this.readingStateWorker.synchronizePending(
-        pendingBefore,
-        options,
-      );
+      let result: SyncWorkerResult;
+      try {
+        result = await this.readingStateWorker.synchronizePending(
+          pendingBefore,
+          options,
+        );
+      } catch (error) {
+        this.readingStateContinuationScope = null;
+        throw error;
+      }
       throwIfSyncAborted(options.signal);
       const pendingAfter = await this.journal.pending();
       throwIfSyncAborted(options.signal);
-      if (
-        result.pushed > 0 ||
-        result.conflicts > 0 ||
-        result.rejected > 0 ||
-        pendingAfter.length > 0
-      ) {
+      const canContinue = result.conflicts === 0 && result.rejected === 0;
+      this.readingStateContinuationScope = canContinue
+        ? revisionScope(revisionBefore)
+        : null;
+      if (result.pushed > 0 || !canContinue || pendingAfter.length > 0) {
         safeCheckpointWrite(this.checkpoints, provider, null);
       }
       return result;
     }
 
+    this.readingStateContinuationScope = null;
     const result = await this.delegate.synchronize(options);
     throwIfSyncAborted(options.signal);
     const pendingAfter = await this.journal.pending();
@@ -237,6 +246,11 @@ function isReadingStateOnly(operations: readonly SyncOperation[]): boolean {
         operation.entity === 'annotation',
     )
   );
+}
+
+function revisionScope(revision: string): string | null {
+  const separator = revision.lastIndexOf(':');
+  return separator > 0 ? revision.slice(0, separator) : null;
 }
 
 function combineResults(

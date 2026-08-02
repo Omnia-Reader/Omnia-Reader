@@ -48,6 +48,7 @@ export class ProgressSyncService {
   private readonly retryDelayMs: number;
   private readonly wait: (milliseconds: number) => Promise<void>;
   private activeSync: Promise<ProgressSyncResult> | null = null;
+  private readonly knownRemoteDocuments = new Map<string, RemoteDocument>();
 
   constructor(
     private readonly remote: LibrarySyncTransport,
@@ -87,7 +88,10 @@ export class ProgressSyncService {
     let conflicts = 0;
     let rejected = progressOperations.length - writes.acceptedOperationCount;
     for (const write of writes.documents.values()) {
-      const result = await this.pushProgress(write);
+      const result = await this.pushProgress(
+        write,
+        this.knownRemoteDocuments.get(progressDocumentPath(write.progress)),
+      );
       pushed += result.pushed ? 1 : 0;
       conflicts += result.conflicts;
       rejected += result.rejected;
@@ -203,6 +207,8 @@ export class ProgressSyncService {
 
   private async runSynchronization(): Promise<ProgressSyncResult> {
     const files = await this.remote.list(PROGRESS_ROOT);
+    this.knownRemoteDocuments.clear();
+    files.forEach((file) => this.knownRemoteDocuments.set(file.path, file));
     const pulled = await this.pull(files);
     const pushed = await this.push(
       new Map(files.map((file) => [file.path, file])),
@@ -227,6 +233,11 @@ export class ProgressSyncService {
         attempt === 0 && initialCurrent !== undefined
           ? initialCurrent
           : await this.remote.read(path);
+      if (current) {
+        this.knownRemoteDocuments.set(path, current);
+      } else {
+        this.knownRemoteDocuments.delete(path);
+      }
       const remoteProgress = current ? parseProgressFile(current) : null;
       if (
         current &&
@@ -247,18 +258,20 @@ export class ProgressSyncService {
       const content = serializeProgress(progress);
 
       if (current?.content === content) {
+        this.knownRemoteDocuments.set(path, current);
         await this.progressRepository.saveProgressDocument(progress);
         await this.journal.acknowledge(pending.operationIds);
         return { pushed: false, conflicts, rejected: 0 };
       }
 
       try {
-        await this.remote.write({
+        const written = await this.remote.write({
           path,
           content,
           expectedRevision: current?.revision,
           message: `Update reading progress for ${progress.bookId}`,
         });
+        this.knownRemoteDocuments.set(path, written);
         await this.progressRepository.saveProgressDocument(progress);
         await this.journal.acknowledge(pending.operationIds);
         return { pushed: true, conflicts, rejected: 0 };

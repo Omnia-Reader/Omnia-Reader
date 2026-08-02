@@ -72,7 +72,7 @@ export interface AutoSyncHistoryStore {
   write(provider: SyncProviderKind, history: AutoSyncHistory | null): void;
 }
 
-const DEFAULT_QUIET_INTERVAL_MS = 2_000;
+const DEFAULT_QUIET_INTERVAL_MS = 750;
 const DEFAULT_INTERACTIVE_QUIET_INTERVAL_MS = 50;
 const DEFAULT_REVISION_CHECK_INTERVAL_MS = 10_000;
 const DEFAULT_PROVIDER_RETRY_AFTER_MS = 60_000;

@@ -6,10 +6,10 @@
 - **Rationale**: GitHub offers no client-side repository change stream. A desktop or mobile process behind NAT cannot receive GitHub webhooks without a public relay. The existing revision checkpoint makes unchanged polls inexpensive and authoritative.
 - **Alternatives rejected**: webhook/SSE fan-out requires a remote deployment; two-second polling consumes unnecessary quota; full-sync polling repeats document and LFS work; moving the timer to Rust does not change GitHub notification semantics.
 
-## Decision: two-second trailing progress debounce
+## Decision: 750 ms trailing progress debounce
 
-- **Decision**: Coalesce page-progress activity for 2,000 ms, keep interactive annotations/bookmarks on their separate latency budget, and remove the five-minute successful-sync floor.
-- **Rationale**: The longer trailing page window prevents navigation spaced around one second apart from starting overlapping or queued GitHub commits. Local progress remains durable immediately, and GitHub `Retry-After` remains the adaptive throttle.
+- **Decision**: Coalesce page-progress activity for 750 ms, keep interactive annotations/bookmarks on their separate latency budget, allow conflict-free targeted reading-state continuation until idle reconciliation, and remove the five-minute successful-sync floor.
+- **Rationale**: The shorter trailing window reduces perceived latency. Targeted continuation prevents later page batches from re-entering the full-library pipeline, while active-sync queuing still collapses concurrent changes. Local progress remains durable immediately, and GitHub `Retry-After` remains the adaptive throttle.
 
 ## Decision: remove unused notification infrastructure
 

@@ -3,7 +3,7 @@
 ## Implementation
 
 - [x] T001 Record the local/desktop/mobile topology and revision-polling boundary in the specification and plan.
-- [x] T002 Implement a two-second trailing progress debounce, preserve the separate interactive mutation budget, and remove the five-minute successful-sync floor.
+- [x] T002 Implement a 750 ms trailing progress debounce, preserve the separate interactive mutation budget, keep conflict-free page batches targeted until idle reconciliation, and remove the five-minute successful-sync floor.
 - [x] T003 Implement visible, online, Git-only revision polling.
 - [x] T004 Reduce the revision interval to ten seconds for low remote-change latency.
 - [x] T005 Remove persisted last-periodic scheduling state while preserving provider `Retry-After` persistence.

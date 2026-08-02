@@ -224,6 +224,39 @@ describe('ProgressSyncService', () => {
     ).toEqual(current);
   });
 
+  it('reuses the authoritative revision returned by the previous targeted write', async () => {
+    const remote = new MemorySyncTransport();
+    const first = progress(
+      BOOK_ID,
+      'device-a',
+      '2026-07-24T10:00:00.000Z',
+      0.2,
+    );
+    const second = progress(
+      BOOK_ID,
+      'device-a',
+      '2026-07-24T10:01:00.000Z',
+      0.3,
+    );
+    const repository = new MemoryProgressRepository(first);
+    await repository.saveProgressDocument(first);
+    const service = new ProgressSyncService(
+      remote,
+      new MemoryJournal(),
+      repository,
+    );
+
+    await service.synchronizePending([operation('first', 1, first)]);
+    await repository.saveProgressDocument(second);
+    await service.synchronizePending([operation('second', 2, second)]);
+
+    expect(remote.readRequests).toBe(1);
+    expect(remote.writeAttempts).toBe(2);
+    expect(
+      JSON.parse(remote.files.get(progressDocumentPath(second))?.content ?? ''),
+    ).toEqual(second);
+  });
+
   it('seeds a newly selected provider from the current local progress snapshot', async () => {
     const local = progress(
       BOOK_ID,

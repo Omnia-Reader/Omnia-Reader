@@ -10,7 +10,7 @@
 
 ## Outcome and Scope
 
-Durable page-progress changes reach GitHub after a two-second quiet boundary so continued paging collapses into one attempt. Interactive annotation and bookmark changes use their separate latency budget. Changes made by another device are discovered through a lightweight GitHub revision check within ten seconds while the application is visible and online.
+Durable page-progress changes reach GitHub after a 750 ms quiet boundary so rapid paging collapses without imposing a long visible wait. Interactive annotation and bookmark changes use their separate latency budget. Consecutive conflict-free reading-state batches remain targeted, while the next idle revision check performs complete reconciliation. Changes made by another device are discovered through a lightweight GitHub revision check within ten seconds while the application is visible and online.
 
 The supported topology does not require a public callback service. GitHub push webhooks, server-sent events, browser notification streams, replay brokers, and webhook secrets are outside this feature.
 
@@ -19,7 +19,7 @@ The supported topology does not require a public callback service. GitHub push w
 ### Local changes disappear into sync (P1)
 
 1. Progress, bookmark, and annotation writes complete locally before network work.
-2. Clustered page-progress operations create one synchronization attempt two seconds after the latest write.
+2. Clustered page-progress operations create one synchronization attempt 750 ms after the latest write.
 3. Book changes, destination selection, backgrounding, startup, and reconnect remain immediate.
 4. Offline and provider-rate-limited states retain durable work and retry without blocking reading.
 
@@ -33,7 +33,7 @@ The supported topology does not require a public callback service. GitHub push w
 ## Requirements
 
 - **FR-001**: Local durable writes MUST complete before automatic synchronization is scheduled.
-- **FR-002**: Clustered reading-state changes MUST start one attempt no later than two seconds after the last change, unless offline or subject to provider `Retry-After`.
+- **FR-002**: Clustered page-progress changes MUST start one attempt 750 ms after the last change, unless offline or subject to provider `Retry-After`.
 - **FR-003**: The successful-sync five-minute floor and its persisted timestamp state MUST be removed.
 - **FR-004**: A visible, online GitHub client MUST check the remote revision at least once every ten seconds.
 - **FR-005**: Revision checks MUST stop while hidden, offline, stopped, or using another provider.
@@ -43,7 +43,7 @@ The supported topology does not require a public callback service. GitHub push w
 
 ## Success Criteria
 
-- **SC-001**: Deterministic scheduler tests start clustered progress work after two quiet seconds and collapse changes arriving during an active attempt into one later attempt.
+- **SC-001**: Deterministic scheduler tests start clustered progress work after 750 quiet milliseconds and collapse changes arriving during an active attempt into one later attempt.
 - **SC-002**: Deterministic scheduler tests perform one visible GitHub revision check every ten seconds and none while hidden or stopped.
 - **SC-003**: A stable repeated Git sync performs only `GET /revision`.
 - **SC-004**: Offline, rate-limited, and active-sync cases do not create overlapping work or hot loops.

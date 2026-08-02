@@ -10,7 +10,7 @@
 
 ## Outcome and Scope
 
-Highlights and bookmarks begin remote synchronization after a short trailing quiet period. When the selected GitHub destination is known to be fully converged, a batch containing only progress, bookmark, or annotation work synchronizes only the affected records. Any uncertain state uses the complete library merge.
+Highlights and bookmarks begin remote synchronization after a short trailing quiet period. When the selected GitHub destination is known to be fully converged, a batch containing only progress, bookmark, or annotation work synchronizes only the affected records. Conflict-free reading-state batches may continue on that exact-record lane for the same repository and branch until idle reconciliation. Any other uncertain state uses the complete library merge.
 
 Provider-wide push delivery, webhooks, synchronized format changes, and weaker conflict or tombstone handling are out of scope.
 
@@ -28,17 +28,17 @@ Given a stale or missing trusted destination checkpoint, mixed pending work, mal
 
 - Multiple rapid edits to one highlight coalesce behind the trailing quiet boundary and operation journal.
 - Mixed progress, bookmark, and annotation work runs only those represented reading-state domains.
-- Work arriving during a targeted attempt remains pending and forces later complete reconciliation.
+- Work arriving during a targeted attempt remains pending and creates at most one later attempt; eligible reading-state work may use the destination-scoped continuation.
 - A targeted push invalidates the global checkpoint so remote changes in other domains are discovered by the existing background revision check.
 
 ## Requirements
 
 - **FR-001**: Highlight and bookmark synchronization MUST be scheduled 50 ms after the last interactive mutation unless provider backoff requires a longer delay.
-- **FR-002**: Progress synchronization MUST use a two-second trailing quiet period so continued paging collapses into one provider attempt.
-- **FR-003**: A targeted attempt MUST require a selected GitHub provider, a supported destination revision, a non-empty reading-state-only journal batch, and equality between the current destination revision and the last trusted full checkpoint.
+- **FR-002**: Progress synchronization MUST use a 750 ms trailing quiet period, collapse activity arriving during an active attempt, reuse the last authoritative progress revision within the client, and keep conflict-free reading-state batches targeted until idle reconciliation.
+- **FR-003**: A targeted attempt MUST require a selected GitHub provider, a supported destination revision, and a non-empty reading-state-only journal batch. Its first attempt MUST match the last trusted full checkpoint; later attempts MAY use process-local continuation only for the same repository and branch after a conflict-free, unrejected reading-state result.
 - **FR-004**: A new targeted highlight or bookmark MUST attempt optimistic creation without a preflight read. An existing or conflicting record MAY perform one exact-document read and MUST NOT list unrelated prefixes or run schema, publication, or logical-book workers.
 - **FR-005**: Successful writes MUST be acknowledged only after the authoritative provider response. Conflicts, rejected operations, remaining work, and pushes MUST prevent the old global checkpoint from being treated as converged.
-- **FR-006**: Missing or stale checkpoints and non-reading-state operations MUST use the complete synchronization path.
+- **FR-006**: Missing or stale checkpoints without an eligible destination-scoped continuation, destination changes, and non-reading-state operations MUST use the complete synchronization path.
 - **FR-007**: GitHub document writes MUST use the caller's optimistic revision directly and MUST NOT perform a redundant provider read before the write.
 - **FR-008**: Local writes, deterministic merge rules, tombstones, bounded retries, cancellation behavior, and the gateway credential boundary MUST remain unchanged.
 
@@ -47,7 +47,7 @@ Given a stale or missing trusted destination checkpoint, mixed pending work, mal
 - **SC-001**: An eligible highlight waits at most 50 ms of local quiet time before its network attempt begins.
 - **SC-002**: One new eligible highlight causes one destination revision probe and one document write at the browser-to-gateway boundary, with no document read, prefix listing, or complete verification pass.
 - **SC-003**: The gateway performs one GitHub content mutation and no preflight content read for a document write carrying its optimistic revision.
-- **SC-004**: Unit evidence covers targeted success, stale-checkpoint fallback, mixed-domain fallback, malformed input, request counts, and checkpoint invalidation.
+- **SC-004**: Unit evidence covers targeted success, stale-checkpoint fallback, destination-switch fallback, idle reconciliation, mixed-domain fallback, malformed input, request counts, and checkpoint invalidation.
 - **SC-005**: With each provider operation delayed by 300 ms, a new eligible highlight completes its remote attempt in under one second including the 50 ms quiet boundary.
 
 ## Assumptions

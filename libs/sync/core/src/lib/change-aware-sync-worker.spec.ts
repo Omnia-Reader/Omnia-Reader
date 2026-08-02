@@ -206,6 +206,79 @@ describe('ChangeAwareSyncWorker', () => {
     expect(readingStateWorker.synchronizePending).not.toHaveBeenCalled();
   });
 
+  it('keeps consecutive reading-state batches targeted until an idle full reconciliation', async () => {
+    const first = pendingOperation('progress');
+    const second = { ...pendingOperation('progress'), id: 'operation-2' };
+    const journal = operationJournal([]);
+    journal.pending
+      .mockResolvedValueOnce([first])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([second])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const delegate = worker();
+    const readingStateWorker = pendingReadingStateWorker({
+      ...EMPTY_RESULT,
+      pushed: 1,
+    });
+    const sync = createWorker({
+      delegate,
+      journal,
+      readingStateWorker,
+      checkpoints: checkpointStore('repository:main:a'),
+      remote: revisionTransport(
+        'repository:main:a',
+        'repository:main:b',
+        'repository:main:c',
+        'repository:main:c',
+      ),
+    });
+
+    await sync.synchronize();
+    await sync.synchronize();
+
+    expect(readingStateWorker.synchronizePending).toHaveBeenCalledTimes(2);
+    expect(delegate.synchronize).not.toHaveBeenCalled();
+
+    await sync.synchronize();
+
+    expect(delegate.synchronize).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not continue targeted synchronization after the destination changes', async () => {
+    const first = pendingOperation('progress');
+    const second = { ...pendingOperation('progress'), id: 'operation-2' };
+    const journal = operationJournal([]);
+    journal.pending
+      .mockResolvedValueOnce([first])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([second])
+      .mockResolvedValueOnce([]);
+    const delegate = worker();
+    const readingStateWorker = pendingReadingStateWorker({
+      ...EMPTY_RESULT,
+      pushed: 1,
+    });
+    const sync = createWorker({
+      delegate,
+      journal,
+      readingStateWorker,
+      checkpoints: checkpointStore('repository-a:main:a'),
+      remote: revisionTransport(
+        'repository-a:main:a',
+        'repository-b:main:b',
+        'repository-b:main:b',
+      ),
+    });
+
+    await sync.synchronize();
+    await sync.synchronize();
+
+    expect(readingStateWorker.synchronizePending).toHaveBeenCalledTimes(1);
+    expect(delegate.synchronize).toHaveBeenCalledTimes(1);
+  });
+
   it('runs complete sync when local work appears during the revision probe', async () => {
     const delegate = worker();
     const journal = operationJournal([]);
