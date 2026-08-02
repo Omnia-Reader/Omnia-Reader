@@ -1,7 +1,8 @@
-import { createHash, randomBytes, sign } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { finished } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
+import { App, Octokit, RequestError } from 'octokit';
 import {
   AuthorizationHttpError,
   GatewayHttpError,
@@ -70,6 +71,8 @@ export interface GitHubAdapterOptions {
   apiVersion?: string;
   requestTimeoutMs?: number;
   transferTimeoutMs?: number;
+  providerRetryBaseValueMs?: number;
+  throttleId?: string;
   now?: () => number;
   randomState?: () => string;
   randomCodeVerifier?: () => string;
@@ -114,6 +117,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_TRANSFER_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MAX_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_TRANSFER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_PROVIDER_RETRY_BASE_VALUE_MS = 1_000;
+const MAX_PROVIDER_RETRY_BASE_VALUE_MS = 1_000;
 const MAX_REMOTE_DOCUMENTS = 10_000;
 
 export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
@@ -123,6 +128,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
   private readonly apiVersion: string;
   private readonly requestTimeoutMs: number;
   private readonly transferTimeoutMs: number;
+  private readonly providerRetryBaseValueMs: number;
   private readonly now: () => number;
   private readonly randomState: () => string;
   private readonly randomCodeVerifier: () => string;
@@ -130,6 +136,8 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     string,
     Promise<GitHubSessionState | null>
   >();
+  private readonly github: Octokit;
+  private readonly githubApp: App;
 
   constructor(private readonly options: GitHubAdapterOptions) {
     this.fetcher = options.fetcher ?? globalThis.fetch;
@@ -152,12 +160,58 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       MAX_TRANSFER_TIMEOUT_MS,
       'Git LFS transfer',
     );
+    this.providerRetryBaseValueMs = boundedTimeout(
+      options.providerRetryBaseValueMs,
+      DEFAULT_PROVIDER_RETRY_BASE_VALUE_MS,
+      MAX_PROVIDER_RETRY_BASE_VALUE_MS,
+      'GitHub provider retry base value',
+    );
     this.now = options.now ?? Date.now;
     this.randomState =
       options.randomState ?? (() => randomBytes(32).toString('base64url'));
     this.randomCodeVerifier =
       options.randomCodeVerifier ??
       (() => randomBytes(32).toString('base64url'));
+    const retryAfterFitsRequest = (retryAfter: number, retryCount: number) =>
+      retryCount === 0 &&
+      retryAfter >= 0 &&
+      retryAfter * 1_000 <= this.requestTimeoutMs;
+    const noOp = (): void => undefined;
+    this.github = new Octokit({
+      baseUrl: this.apiBaseUrl,
+      userAgent: 'Omnia-Reader-Sync-Gateway',
+      log: { debug: noOp, info: noOp, warn: noOp, error: noOp },
+      request: {
+        fetch: this.octokitFetch,
+        redirect: 'error',
+      },
+      retry: {
+        retries: 1,
+        retryAfterBaseValue: this.providerRetryBaseValueMs,
+        doNotRetry: [400, 401, 403, 404, 410, 422, 429, 451],
+      },
+      throttle: {
+        id: options.throttleId ?? `omnia-sync:${options.clientId}`,
+        retryAfterBaseValue: this.providerRetryBaseValueMs,
+        onRateLimit: (
+          retryAfter: number,
+          _request: unknown,
+          _octokit: unknown,
+          retryCount: number,
+        ) => retryAfterFitsRequest(retryAfter, retryCount),
+        onSecondaryRateLimit: (
+          retryAfter: number,
+          _request: unknown,
+          _octokit: unknown,
+          retryCount: number,
+        ) => retryAfterFitsRequest(retryAfter, retryCount),
+      },
+    });
+    this.githubApp = new App({
+      appId: options.appId,
+      privateKey: options.privateKey,
+      log: { debug: noOp, info: noOp, warn: noOp, error: noOp },
+    });
   }
 
   async session(sessionId: string): Promise<unknown> {
@@ -652,29 +706,21 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     refreshToken?: string;
     refreshExpiresAt?: number;
   }> {
-    const response = await this.providerFetch(
+    const value = await this.githubJson<unknown>(
       `${this.webBaseUrl}/login/oauth/access_token`,
       {
         method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+        accept: 'application/json',
+        retries: 0,
+        body: {
           client_id: this.options.clientId,
           client_secret: this.options.clientSecret,
           code,
           redirect_uri: this.options.callbackUrl,
           code_verifier: codeVerifier,
-        }),
-        redirect: 'error',
+        },
       },
-      this.requestTimeoutMs,
     );
-    const value = await responseJson(response);
-    if (!response.ok) {
-      throw await providerHttpError(response, value, this.now());
-    }
     if (!isRecord(value) || !isBoundedString(value['access_token'], 4096)) {
       throw providerProtocolError();
     }
@@ -842,30 +888,22 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     refreshToken: string;
     refreshExpiresAt: number;
   }> {
-    const response = await this.providerFetch(
+    const value = await this.githubJson<unknown>(
       `${this.webBaseUrl}/login/oauth/access_token`,
       {
         method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+        accept: 'application/json',
+        retries: 0,
+        body: {
           client_id: this.options.clientId,
           client_secret: this.options.clientSecret,
           grant_type: 'refresh_token',
           refresh_token: refreshToken,
-        }),
-        redirect: 'error',
+        },
       },
-      this.requestTimeoutMs,
     );
-    const value = await responseJson(response);
     if (isRecord(value) && value['error'] === 'bad_refresh_token') {
       throw new GatewayHttpError(401, 'GitHub session has expired');
-    }
-    if (!response.ok) {
-      throw await providerHttpError(response, value, this.now());
     }
     if (
       !isRecord(value) ||
@@ -888,29 +926,24 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
 
   private async revokeUserAccessToken(accessToken: string): Promise<void> {
     try {
-      const response = await this.fetcher(
-        `${this.apiBaseUrl}/applications/${encodeURIComponent(this.options.clientId)}/token`,
+      await this.githubJson<unknown>(
+        `/applications/${encodeURIComponent(this.options.clientId)}/token`,
         {
           method: 'DELETE',
-          headers: {
-            Accept: 'application/vnd.github+json',
-            Authorization: `Basic ${Buffer.from(
-              `${this.options.clientId}:${this.options.clientSecret}`,
-              'utf8',
-            ).toString('base64')}`,
-            'Content-Type': 'application/json',
-            'X-GitHub-Api-Version': this.apiVersion,
-            'User-Agent': 'Omnia-Reader-Sync-Gateway',
-          },
-          body: JSON.stringify({ access_token: accessToken }),
-          redirect: 'error',
+          authorization: `Basic ${Buffer.from(
+            `${this.options.clientId}:${this.options.clientSecret}`,
+            'utf8',
+          ).toString('base64')}`,
+          retries: 0,
           signal: AbortSignal.timeout(TOKEN_REVOCATION_TIMEOUT_MS),
+          body: {
+            access_token: accessToken,
+          },
+          accept: 'application/vnd.github+json',
         },
+        [404],
       );
-      if (response.status === 204 || response.status === 404) {
-        return;
-      }
-      this.reportUserTokenRevocationFailure();
+      return;
     } catch {
       this.reportUserTokenRevocationFailure();
     }
@@ -938,7 +971,6 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         const installations = await this.githubPaginated(
           '/user/installations?per_page=100',
           current.userAccessToken,
-          'installations',
         );
         const repositories: GitHubRepository[] = [];
         for (const installation of installations) {
@@ -949,7 +981,6 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
           const values = await this.githubPaginated(
             `/user/installations/${installationId}/repositories?per_page=100`,
             current.userAccessToken,
-            'repositories',
           );
           for (const value of values) {
             repositories.push(parseRepository(value, installationId));
@@ -1046,7 +1077,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         token: state.installationAccessToken,
       };
     }
-    const jwt = this.appJwt();
+    const jwt = await this.appJwt();
     let value: unknown;
     try {
       value = await this.githubJson<unknown>(
@@ -1058,6 +1089,7 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
             repository_ids: [state.repository.id],
             permissions: { contents: 'write' },
           },
+          retries: 0,
         },
       );
     } catch (error) {
@@ -1115,46 +1147,46 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     });
   }
 
-  private appJwt(): string {
-    const nowSeconds = Math.floor(this.now() / 1000);
-    const header = base64UrlJson({ alg: 'RS256', typ: 'JWT' });
-    const payload = base64UrlJson({
-      iat: nowSeconds - 60,
-      exp: nowSeconds + 9 * 60,
-      iss: this.options.appId,
-    });
-    const unsigned = `${header}.${payload}`;
-    const signature = sign('RSA-SHA256', Buffer.from(unsigned), {
-      key: this.options.privateKey,
-    }).toString('base64url');
-    return `${unsigned}.${signature}`;
+  private async appJwt(): Promise<string> {
+    const authentication = await this.githubApp.octokit.auth({ type: 'app' });
+    if (
+      !isRecord(authentication) ||
+      !isBoundedString(authentication['token'], 4096)
+    ) {
+      throw providerProtocolError('GitHub App authentication failed');
+    }
+    return authentication['token'];
   }
 
   private async githubPaginated(
     path: string,
     token: string,
-    collection: string,
   ): Promise<unknown[]> {
-    const result: unknown[] = [];
-    let next: string | null = `${this.apiBaseUrl}${path}`;
-    while (next) {
-      if (!next.startsWith(`${this.apiBaseUrl}/`)) {
-        throw providerProtocolError();
-      }
-      const response = await this.githubResponse(next, { token });
-      const value = await responseJson(response);
-      if (
-        !response.ok ||
-        !isRecord(value) ||
-        !Array.isArray(value[collection])
-      ) {
-        if (!response.ok) {
-          throw await providerHttpError(response, value, this.now());
+    const iterator = this.github.paginate.iterator as unknown as (
+      route: string,
+      parameters: Record<string, unknown>,
+    ) => AsyncIterable<{
+      data: unknown;
+      headers: Record<string, string | undefined>;
+    }>;
+    const result = await this.withOctokitErrors(async () => {
+      const values: unknown[] = [];
+      for await (const response of iterator(`GET ${path}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })) {
+        const next = nextLink(response.headers['link'] ?? null);
+        if (next && !next.startsWith(`${this.apiBaseUrl}/`)) {
+          throw providerProtocolError();
         }
-        throw providerProtocolError();
+        if (!Array.isArray(response.data)) {
+          throw providerProtocolError();
+        }
+        values.push(...response.data);
       }
-      result.push(...value[collection]);
-      next = nextLink(response.headers.get('link'));
+      return values;
+    });
+    if (!result) {
+      throw providerProtocolError();
     }
     return result;
   }
@@ -1164,54 +1196,57 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     request: {
       method?: string;
       token?: string;
+      authorization?: string;
       body?: unknown;
+      retries?: number;
+      signal?: AbortSignal;
+      accept?: string;
     } = {},
     nullStatuses: readonly number[] = [],
   ): Promise<T | null> {
-    const response = await this.githubResponse(
-      path.startsWith('http') ? path : `${this.apiBaseUrl}${path}`,
-      request,
-    );
-    if (nullStatuses.includes(response.status)) {
-      return null;
-    }
-    const value = await responseJson(response);
-    if (!response.ok) {
-      throw await providerHttpError(response, value, this.now());
-    }
-    return value as T;
+    const method = request.method ?? 'GET';
+    const url = path.startsWith('http') ? path : `${this.apiBaseUrl}${path}`;
+    return this.withOctokitErrors(async () => {
+      const response = await this.github.request(`${method} ${url}`, {
+        ...(isRecord(request.body) ? request.body : {}),
+        headers: {
+          accept: request.accept ?? 'application/vnd.github+json',
+          'x-github-api-version': this.apiVersion,
+          ...(request.authorization || request.token
+            ? {
+                authorization:
+                  request.authorization ?? `Bearer ${request.token}`,
+              }
+            : {}),
+        },
+        request: {
+          ...(request.retries !== undefined
+            ? { retries: request.retries }
+            : method === 'GET' || method === 'HEAD'
+              ? {}
+              : { retries: 0 }),
+          ...(request.signal ? { signal: request.signal } : {}),
+        },
+      });
+      return response.data as T;
+    }, nullStatuses);
   }
 
-  private async githubResponse(
-    url: string,
-    request: {
-      method?: string;
-      token?: string;
-      body?: unknown;
-    },
-  ): Promise<Response> {
-    return this.providerFetch(
-      url,
-      {
-        method: request.method ?? 'GET',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': this.apiVersion,
-          'User-Agent': 'Omnia-Reader-Sync-Gateway',
-          ...(request.token
-            ? { Authorization: `Bearer ${request.token}` }
-            : {}),
-          ...(request.body === undefined
-            ? {}
-            : { 'Content-Type': 'application/json' }),
-        },
-        ...(request.body === undefined
-          ? {}
-          : { body: JSON.stringify(request.body) }),
-        redirect: 'error',
-      },
-      this.requestTimeoutMs,
-    );
+  private async withOctokitErrors<T>(
+    operation: () => Promise<T>,
+    nullStatuses: readonly number[] = [],
+  ): Promise<T | null> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof RequestError) {
+        if (nullStatuses.includes(error.status)) {
+          return null;
+        }
+        throw await providerOctokitError(error, this.now());
+      }
+      throw error;
+    }
   }
 
   private async readFile(
@@ -1454,6 +1489,33 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
       throw await providerHttpError(response, undefined, this.now());
     }
   }
+
+  private readonly octokitFetch: typeof fetch = async (input, init = {}) => {
+    const timeout = AbortSignal.timeout(this.requestTimeoutMs);
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, timeout])
+      : timeout;
+    try {
+      const response = await this.fetcher(input, {
+        ...init,
+        redirect: 'error',
+        signal,
+      });
+      const body = response.body ? await response.arrayBuffer() : null;
+      const buffered = new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+      Object.defineProperty(buffered, 'url', { value: response.url });
+      return buffered;
+    } catch (error) {
+      if (isAbortTimeout(error, timeout)) {
+        throw new GitHubProviderTimeoutError();
+      }
+      throw error;
+    }
+  };
 
   private async providerFetch(
     input: string,
@@ -1851,6 +1913,29 @@ async function providerHttpError(
   );
 }
 
+async function providerOctokitError(
+  error: RequestError,
+  now: number,
+): Promise<GatewayHttpError> {
+  if (error.cause instanceof GitHubProviderTimeoutError) {
+    return new GatewayHttpError(504, 'GitHub provider request timed out');
+  }
+  if (!error.response) {
+    return new GatewayHttpError(502, 'GitHub provider request failed');
+  }
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(error.response.headers)) {
+    if (value !== undefined) {
+      headers.set(name, String(value));
+    }
+  }
+  return providerHttpError(
+    new Response(null, { status: error.status, headers }),
+    error.response.data,
+    now,
+  );
+}
+
 function providerRetryAfterSeconds(response: Response, now: number): number {
   const retryAfter = response.headers.get('retry-after');
   if (retryAfter && /^[0-9]{1,10}$/.test(retryAfter)) {
@@ -1907,10 +1992,6 @@ function nextLink(value: string | null): string | null {
     }
   }
   return null;
-}
-
-function base64UrlJson(value: unknown): string {
-  return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
 function encodeFullName(value: string): string {
@@ -1977,6 +2058,13 @@ function isAbortTimeout(error: unknown, signal: AbortSignal): boolean {
     (error === signal.reason ||
       (error instanceof DOMException && error.name === 'TimeoutError'))
   );
+}
+
+class GitHubProviderTimeoutError extends Error {
+  constructor() {
+    super('GitHub provider request timed out');
+    this.name = 'TimeoutError';
+  }
 }
 
 function isBoundedString(value: unknown, maximum: number): value is string {

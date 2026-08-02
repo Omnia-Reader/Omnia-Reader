@@ -2,7 +2,7 @@
 
 Status: GitHub/Git LFS and MEGA gateway adapters plus reference same-origin container deployment implemented; live-provider validation pending
 Version: 1
-Last updated: 2026-07-27
+Last updated: 2026-08-02
 
 ## Purpose
 
@@ -65,12 +65,14 @@ and deployment-specific image scanning, signing, and publication.
 
 ### GitHub App configuration
 
-The GitHub adapter uses the GitHub App web authorization flow with an S256 PKCE
-challenge, stores the one-time verifier only in its encrypted provider session,
-rotates that session after its state-bound callback, discovers repositories
-through the user's app installations, and exchanges an app JWT for a one-hour
-installation token scoped to the selected repository and `contents: write`.
-Configure:
+The GitHub adapter uses Octokit.js for GitHub App authentication, OAuth protocol
+requests, REST requests, pagination, retry, and provider-aware throttling. It
+uses the GitHub App web authorization flow with an S256 PKCE challenge, stores
+the one-time verifier only in its encrypted provider session, rotates that
+session after its state-bound callback, discovers repositories through the
+user's app installations, and exchanges an Octokit-generated App JWT for a
+one-hour installation token scoped to the selected repository and
+`contents: write`. Configure:
 
 ```text
 OMNIA_GITHUB_APP_ID=<numeric GitHub App ID>
@@ -143,6 +145,15 @@ header. Provider-controlled messages and the remaining-account quota are not
 forwarded. The Angular client persists the retry deadline and delays queued
 automatic work across restarts; manual retry and all local reading remain
 available.
+
+Octokit retries a safely replayable transient REST request once and follows one
+short primary or secondary rate-limit delay when it fits the configured gateway
+request deadline. OAuth code exchange, refresh-token rotation, repository
+creation, installation-token creation, token revocation, and repository content
+mutations disable ambiguous server-error replay. If throttling cannot complete
+inside the bounded in-request policy, the gateway preserves the application-
+owned `429 Retry-After` response above so the durable synchronization scheduler
+remains authoritative across restarts.
 
 For local development:
 
@@ -241,7 +252,8 @@ the local library remains unchanged. The adapter:
 2. Lists only repositories visible through the user's GitHub App
    installations and records the owning installation ID server-side.
 3. Uses GitHub blob SHAs for optimistic JSON document updates.
-4. Requests a basic Git LFS batch action for immutable EPUB/PDF bytes, streams
+4. Requests a basic Git LFS batch action outside Octokit's generated REST
+   surface for immutable EPUB/PDF bytes, streams
    and verifies the exact SHA-256 and length, invokes the LFS verification
    action when supplied, and only then commits `.gitattributes` and the
    canonical pointer. Transfer actions must use credential-free HTTPS URLs,

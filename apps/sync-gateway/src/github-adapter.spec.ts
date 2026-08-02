@@ -15,6 +15,7 @@ import {
 import { EncryptedMemorySessionStore } from './session-store.js';
 
 const NOW = Date.parse('2026-07-25T12:00:00.000Z');
+let testAdapterSequence = 0;
 const PRIVATE_KEY = generateKeyPairSync('rsa', {
   modulusLength: 2048,
 }).privateKey;
@@ -470,6 +471,109 @@ describe('GitHubSyncGatewayAdapter', () => {
     await expect(sessions.get('session')).resolves.toMatchObject({
       userAccessToken: 'user-token',
     });
+  });
+
+  it('retries a transient safe repository-discovery request', async () => {
+    const provider = new FakeGitHub();
+    provider.userInstallationTransientFailures = 1;
+    const { adapter } = testAdapter(provider);
+    await authorize(adapter);
+
+    await expect(adapter.destinations('session')).resolves.toEqual([
+      expect.objectContaining({ id: 99, fullName: 'reader/library' }),
+    ]);
+    expect(provider.userInstallationRequests).toBe(2);
+  });
+
+  it('bounds and retries a stalled safe GitHub REST response body', async () => {
+    const provider = new FakeGitHub();
+    let installationRequests = 0;
+    const fetcher: typeof fetch = async (input, init = {}) => {
+      if (new URL(String(input)).pathname === '/user/installations') {
+        installationRequests += 1;
+        return stalledJsonResponse(init.signal);
+      }
+      return provider.fetch(input, init);
+    };
+    const { adapter } = testAdapter(provider, {
+      fetcher,
+      requestTimeoutMs: 10,
+    });
+    await authorize(adapter);
+
+    await expect(adapter.destinations('session')).rejects.toMatchObject<
+      Partial<GatewayHttpError>
+    >({
+      statusCode: 504,
+      message: 'GitHub provider request timed out',
+    });
+    expect(installationRequests).toBe(2);
+  });
+
+  it('uses provider throttling once before returning repository destinations', async () => {
+    const provider = new FakeGitHub();
+    provider.userInstallationRateLimit = {
+      status: 429,
+      retryAfterSeconds: 1,
+      primary: false,
+    };
+    provider.userInstallationRateLimitFailures = 1;
+    const { adapter } = testAdapter(provider);
+    await authorize(adapter);
+
+    await expect(adapter.destinations('session')).resolves.toEqual([
+      expect.objectContaining({ id: 99, fullName: 'reader/library' }),
+    ]);
+    expect(provider.userInstallationRequests).toBe(2);
+  });
+
+  it('rejects an off-origin pagination link before forwarding user authorization', async () => {
+    const provider = new FakeGitHub();
+    provider.userInstallationNextLink =
+      'https://untrusted.test/user/installations?page=2';
+    const { adapter } = testAdapter(provider);
+    await authorize(adapter);
+
+    await expect(adapter.destinations('session')).rejects.toMatchObject<
+      Partial<GatewayHttpError>
+    >({
+      statusCode: 502,
+      message: 'GitHub returned an invalid synchronization response',
+    });
+    expect(provider.untrustedRequests).toBe(0);
+  });
+
+  it('does not replay repository creation after an ambiguous provider failure', async () => {
+    const provider = new FakeGitHub();
+    provider.repositoryCreationOutcome = 'applied-unavailable';
+    const { adapter } = testAdapter(provider);
+    await authorize(adapter);
+
+    await expect(
+      adapter.createDestination('session', {
+        name: 'omnia-reader-library',
+      }),
+    ).rejects.toMatchObject<Partial<GatewayHttpError>>({ statusCode: 502 });
+    expect(provider.repositoryCreationRequests).toBe(1);
+    expect(provider.createdRepositories).toEqual(['omnia-reader-library']);
+  });
+
+  it('does not replay a document write after an ambiguous provider failure', async () => {
+    const provider = new FakeGitHub();
+    const { adapter } = testAdapter(provider);
+    await authorizeAndSelect(adapter);
+    provider.contentMutationOutcome = 'applied-unavailable';
+    const path = '.omnia-reader/v1/progress/book/device.json';
+
+    await expect(
+      adapter.writeDocument('session', {
+        path,
+        content: '{"progress":0.5}',
+        message: 'Sync progress',
+      }),
+    ).rejects.toMatchObject<Partial<GatewayHttpError>>({ statusCode: 502 });
+    expect(provider.contentMutationRequests).toBe(1);
+    expect(provider.files.get(path)?.content).toBe('{"progress":0.5}');
   });
 
   it('directs the user to grant installation access when a new repository is not visible', async () => {
@@ -950,6 +1054,8 @@ function testAdapter(
       now: options.now ?? (() => NOW),
       randomState: () => 'fixed-state',
       randomCodeVerifier: () => 'v'.repeat(43),
+      providerRetryBaseValueMs: 1,
+      throttleId: `github-adapter-test:${++testAdapterSequence}`,
       ...(options.requestTimeoutMs
         ? { requestTimeoutMs: options.requestTimeoutMs }
         : {}),
@@ -1003,6 +1109,11 @@ class FakeGitHub {
   lfsUploadContentLength = '';
   lfsVerifyAccept = '';
   userInstallationRequests = 0;
+  userInstallationTransientFailures = 0;
+  userInstallationRateLimitFailures = Number.POSITIVE_INFINITY;
+  repositoryCreationRequests = 0;
+  contentMutationRequests = 0;
+  untrustedRequests = 0;
   private markRefreshStarted: () => void = () => undefined;
   readonly refreshStarted = new Promise<void>((resolve) => {
     this.markRefreshStarted = resolve;
@@ -1013,6 +1124,8 @@ class FakeGitHub {
     header?: Record<string, string>;
   } | null = null;
   forbidRepositoryCreation = false;
+  repositoryCreationOutcome: 'success' | 'applied-unavailable' = 'success';
+  contentMutationOutcome: 'success' | 'applied-unavailable' = 'success';
   exposeCreatedRepositoryToInstallation = true;
   refreshOutcome: 'success' | 'bad-token' | 'malformed' | 'unavailable' =
     'success';
@@ -1023,7 +1136,9 @@ class FakeGitHub {
     status: 403 | 429;
     retryAfterSeconds?: number;
     resetAt?: number;
+    primary?: boolean;
   } | null = null;
+  userInstallationNextLink: string | null = null;
   installationTokenOutcome: 'success' | 'missing' | 'unauthorized' = 'success';
   treeStatus: 200 | 404 | 409 = 200;
   deletedFile: {
@@ -1047,6 +1162,11 @@ class FakeGitHub {
   readonly fetch: typeof fetch = async (input, init = {}) => {
     const url = new URL(String(input));
     const method = (init.method ?? 'GET').toUpperCase();
+
+    if (url.origin === 'https://untrusted.test') {
+      this.untrustedRequests += 1;
+      return json({ installations: [] });
+    }
 
     if (
       url.origin === 'https://github.test' &&
@@ -1112,6 +1232,7 @@ class FakeGitHub {
       url.pathname === '/user/repos' &&
       method === 'POST'
     ) {
+      this.repositoryCreationRequests += 1;
       if (this.forbidRepositoryCreation) {
         return json({ message: 'Resource not accessible by integration' }, 403);
       }
@@ -1133,6 +1254,9 @@ class FakeGitHub {
       if (this.exposeCreatedRepositoryToInstallation) {
         this.repositories.push(repository);
       }
+      if (this.repositoryCreationOutcome === 'applied-unavailable') {
+        return json({ message: 'Provider maintenance' }, 503);
+      }
       return json(repository, 201);
     }
     if (url.origin === 'https://api.github.test' && url.pathname === '/user') {
@@ -1144,10 +1268,23 @@ class FakeGitHub {
     }
     if (url.pathname === '/user/installations') {
       this.userInstallationRequests += 1;
-      if (this.userInstallationRateLimit) {
+      if (this.userInstallationTransientFailures > 0) {
+        this.userInstallationTransientFailures -= 1;
+        return json({ message: 'Provider maintenance' }, 503);
+      }
+      if (
+        this.userInstallationRateLimit &&
+        this.userInstallationRateLimitFailures > 0
+      ) {
+        this.userInstallationRateLimitFailures -= 1;
         const rateLimit = this.userInstallationRateLimit;
         return json(
-          { message: 'Provider-controlled rate-limit detail' },
+          {
+            message:
+              rateLimit.primary === false
+                ? 'You have exceeded a secondary rate limit'
+                : 'Provider-controlled rate-limit detail',
+          },
           rateLimit.status,
           {
             ...(rateLimit.retryAfterSeconds === undefined
@@ -1156,7 +1293,9 @@ class FakeGitHub {
             ...(rateLimit.resetAt === undefined
               ? {}
               : { 'X-RateLimit-Reset': String(rateLimit.resetAt) }),
-            'X-RateLimit-Remaining': '0',
+            ...(rateLimit.primary === false
+              ? {}
+              : { 'X-RateLimit-Remaining': '0' }),
           },
         );
       }
@@ -1166,10 +1305,18 @@ class FakeGitHub {
       this.userAccessTokens.push(
         new Headers(init.headers).get('authorization') ?? '',
       );
-      return json({ installations: [{ id: 7 }] });
+      return jsonAt(
+        url,
+        { total_count: 1, installations: [{ id: 7 }] },
+        200,
+        this.userInstallationNextLink
+          ? { Link: `<${this.userInstallationNextLink}>; rel="next"` }
+          : {},
+      );
     }
     if (url.pathname === '/user/installations/7/repositories') {
-      return json({
+      return jsonAt(url, {
+        total_count: this.repositories.length,
         repositories: this.repositories,
       });
     }
@@ -1340,6 +1487,7 @@ class FakeGitHub {
       this.deletedFile = { path, ...body };
       return json({ commit: { sha: (++this.revision).toString(16) } });
     }
+    this.contentMutationRequests += 1;
     const body = JSON.parse(String(init.body)) as {
       content: string;
       sha?: string;
@@ -1356,6 +1504,9 @@ class FakeGitHub {
     if (path === '.gitattributes' || path.startsWith('.omnia-reader/')) {
       this.events.push(`git:${path}`);
     }
+    if (this.contentMutationOutcome === 'applied-unavailable') {
+      return json({ message: 'Provider maintenance' }, 503);
+    }
     return json({ content: { sha } }, current ? 200 : 201);
   }
 }
@@ -1369,6 +1520,17 @@ function json(
     status,
     headers: { 'Content-Type': 'application/json', ...headers },
   });
+}
+
+function jsonAt(
+  url: URL,
+  value: unknown,
+  status = 200,
+  headers: Readonly<Record<string, string>> = {},
+): Response {
+  const response = json(value, status, headers);
+  Object.defineProperty(response, 'url', { value: url.toString() });
+  return response;
 }
 
 async function requestBody(body: BodyInit | null | undefined): Promise<Buffer> {
