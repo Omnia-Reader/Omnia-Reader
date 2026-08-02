@@ -4,7 +4,7 @@
   "license": "MIT",
   "scripts": {
     "start": "nx serve omnia-reader --port=4300",
-    "start:full": "nx run-many -t serve -p sync-gateway omnia-reader --parallel=2 --configuration=development",
+    "start:full": "nx run-many -t serve -p sync-gateway omnia-reader --parallel=2 --configuration=development --outputStyle=stream",
     "gateway:start": "nx serve sync-gateway",
     "tauri": "tauri",
     "native:dev": "tauri dev",
