@@ -19,8 +19,10 @@ args = ["serve", "--mcp"]
 
 [mcp_servers.firecrawl]
 command = "npx"
-args = ["-y", "firecrawl-mcp"]
+args = ["-y", "firecrawl-mcp@3.23.0"]
 env = { FIRECRAWL_API_URL = "http://127.0.0.1:3002" }
+startup_timeout_sec = 60
+required = true
 
 [mcp_servers.playwright]
 command = "npx"
@@ -28,12 +30,16 @@ args = ["@playwright/mcp@latest"]
 
 [mcp_servers.chrome-devtools]
 command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
+args = ["-y", "chrome-devtools-mcp@1.6.0"]
+startup_timeout_sec = 60
+required = true
 
 [mcp_servers.nx]
 command = "npx"
-args = ["nx", "mcp", "--disableTelemetry"]
+args = ["--no-install", "nx", "mcp", "--disableTelemetry"]
 env = { npm_config_cache = "/tmp/omnia-reader-nx-mcp-cache" }
+startup_timeout_sec = 60
+required = true
 
 [mcp_servers.angular-cli]
 command = "npx"
