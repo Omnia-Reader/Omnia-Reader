@@ -77,16 +77,16 @@ test('filters, sorts, and remembers the accessible library view', async ({
     .poll(() => storedTotalProgression(page))
     .toBeGreaterThanOrEqual(0.4);
   const progressMilestones = page.getByTestId('reader-progress-milestone');
-  await expect(progressMilestones).toHaveCount(2);
+  await expect(progressMilestones).toHaveCount(4);
   await expect(
-    progressMilestones.first().locator('.reader-progress-milestone-inner'),
+    progressMilestones.nth(2).locator('.reader-progress-milestone-inner'),
   ).toBeVisible();
-  await expect(progressMilestones.first()).toHaveAttribute(
+  await expect(progressMilestones.nth(2)).toHaveAttribute(
     'aria-label',
     /Go to 1 Chapter One/,
   );
-  expect(await progressMilestones.first().getAttribute('title')).toBeNull();
-  const chapterTwoMilestone = progressMilestones.nth(1);
+  expect(await progressMilestones.nth(2).getAttribute('title')).toBeNull();
+  const chapterTwoMilestone = progressMilestones.nth(3);
   const progressBeforeMilestone = await storedTotalProgression(page);
   await chapterTwoMilestone.click();
   await expect
@@ -276,14 +276,14 @@ test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', a
   ).toBeVisible({ timeout: 20_000 });
 
   const progressMilestones = page.getByTestId('reader-progress-milestone');
-  await expect(progressMilestones).toHaveCount(5);
+  await expect(progressMilestones).toHaveCount(6);
   const chapterFourHeading = page
     .getByTestId('publication-viewport')
     .frameLocator('iframe')
     .getByRole('heading', { name: 'Chapter 4', exact: true });
-  const chapterFourMilestone = progressMilestones.nth(3);
+  const chapterFourMilestone = progressMilestones.nth(4);
   const chapterFourPercent = await milestonePercent(chapterFourMilestone);
-  const chapterFiveMilestone = progressMilestones.nth(4);
+  const chapterFiveMilestone = progressMilestones.nth(5);
   const chapterFivePercent = await milestonePercent(chapterFiveMilestone);
 
   await chapterFourMilestone.evaluate((element) =>
@@ -493,6 +493,141 @@ test('aligns and highlights chapter milestone stones in a multi-chapter EPUB', a
   );
 });
 
+test('scrubs and exposes every top-level milestone', async ({ page }) => {
+  test.setTimeout(90_000);
+  await importPublication(
+    page,
+    'omnia-progress.epub',
+    'application/epub+zip',
+    await createEpubFixture(),
+    'Omnia EPUB Fixture',
+  );
+
+  await libraryFormatButton(page, 'Omnia EPUB Fixture', 'epub').click();
+  const frame = page.getByTestId('publication-viewport').frameLocator('iframe');
+  await expect(
+    frame.getByRole('heading', { name: 'Chapter One', exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  const milestones = page.getByTestId('reader-progress-milestone');
+  await expect(milestones).toHaveCount(4);
+  await expect(milestones.nth(0)).toHaveAttribute(
+    'aria-label',
+    'Go to Beginning (0% of book)',
+  );
+  await expect(milestones.nth(1)).toHaveAttribute(
+    'aria-label',
+    /Go to Preface \(/,
+  );
+  await expect(milestones.nth(2)).toHaveAttribute(
+    'aria-label',
+    /Go to 1 Chapter One \(/,
+  );
+  await expect(milestones.nth(3)).toHaveAttribute(
+    'aria-label',
+    /Go to 2 Chapter Two \(/,
+  );
+
+  const slider = page.getByTestId('reader-progress-slider');
+  const sliderBox = await slider.boundingBox();
+  const beginningBox = await milestones.first().boundingBox();
+  expect(sliderBox).not.toBeNull();
+  expect(beginningBox).not.toBeNull();
+  const sliderGeometry = sliderBox as NonNullable<typeof sliderBox>;
+  const beginningGeometry = beginningBox as NonNullable<typeof beginningBox>;
+
+  const milestonePercent = async (index: number): Promise<number> => {
+    const label = await milestones.nth(index).getAttribute('aria-label');
+    const match = label?.match(/\((\d+(?:\.\d+)?)% of book\)$/);
+    expect(
+      match,
+      `milestone ${index} should expose its book percentage`,
+    ).not.toBeNull();
+    return Number(match?.[1]);
+  };
+  const clickSliderAt = async (percent: number): Promise<void> => {
+    await page.mouse.click(
+      sliderGeometry.x + sliderGeometry.width * (percent / 100),
+      sliderGeometry.y + sliderGeometry.height / 2,
+    );
+  };
+
+  const chapterOnePercent = await milestonePercent(2);
+  const chapterTwoPercent = await milestonePercent(3);
+  const forwardClickPercent =
+    chapterOnePercent + (chapterTwoPercent - chapterOnePercent) * 0.65;
+  await clickSliderAt(forwardClickPercent);
+  await expect
+    .poll(async () => Number(await slider.inputValue()))
+    .toBeGreaterThan(chapterOnePercent);
+  await expect
+    .poll(async () => Number(await slider.inputValue()))
+    .toBeLessThan(chapterTwoPercent);
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeGreaterThan(chapterOnePercent / 100);
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeLessThan(chapterTwoPercent / 100);
+  const forwardStoredProgression = await storedTotalProgression(page);
+
+  const backwardClickPercent =
+    chapterOnePercent + (chapterTwoPercent - chapterOnePercent) * 0.35;
+  await clickSliderAt(backwardClickPercent);
+  await expect
+    .poll(async () => Number(await slider.inputValue()))
+    .toBeGreaterThan(chapterOnePercent);
+  await expect
+    .poll(async () => Number(await slider.inputValue()))
+    .toBeLessThan(forwardClickPercent);
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeGreaterThan(chapterOnePercent / 100);
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeLessThan(forwardStoredProgression);
+
+  await page.mouse.move(
+    beginningGeometry.x + beginningGeometry.width / 2,
+    beginningGeometry.y + beginningGeometry.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    sliderGeometry.x + sliderGeometry.width * 0.75,
+    sliderGeometry.y + sliderGeometry.height / 2,
+    { steps: 4 },
+  );
+  await expect.poll(() => storedTotalProgression(page)).toBeGreaterThan(0.45);
+  await page.mouse.move(
+    sliderGeometry.x + sliderGeometry.width * 0.2,
+    sliderGeometry.y + sliderGeometry.height / 2,
+    { steps: 4 },
+  );
+  await page.mouse.up();
+  await expect.poll(() => storedTotalProgression(page)).toBeLessThan(0.4);
+
+  await milestones.nth(1).click();
+  await expect
+    .poll(
+      async () =>
+        (await storedProgress(page))?.locator.locations?.fragments?.[0],
+    )
+    .toContain('preface');
+  await expect(
+    frame.getByRole('heading', { name: 'Preface', exact: true }),
+  ).toBeVisible();
+
+  await milestones.last().click();
+  await expect.poll(() => storedProgressHref(page)).toContain('chapter-2');
+  await expect(
+    frame.getByRole('heading', { name: 'Chapter Two', exact: true }),
+  ).toBeVisible();
+  await milestones.first().click();
+  await expect
+    .poll(() => storedTotalProgression(page))
+    .toBeLessThanOrEqual(0.02);
+});
+
 test('shows hover feedback on the progress slider milestone dots', async ({
   page,
 }) => {
@@ -514,7 +649,7 @@ test('shows hover feedback on the progress slider milestone dots', async ({
   ).toBeVisible({ timeout: 20_000 });
 
   const milestones = page.getByTestId('reader-progress-milestone');
-  await expect(milestones).toHaveCount(2);
+  await expect(milestones).toHaveCount(4);
   const chapterMilestone = milestones.last();
   await expect(chapterMilestone).toBeVisible({ timeout: 20_000 });
 
@@ -527,6 +662,7 @@ test('shows hover feedback on the progress slider milestone dots', async ({
   await expect.poll(() => chapterMilestone.getAttribute('title')).toBeNull();
 
   const hoveredMilestone = milestones.first();
+  await expect(hoveredMilestone).toBeEnabled();
   const progressSlider = page.getByTestId('reader-progress-slider');
   const milestoneDot = hoveredMilestone.locator(
     '.reader-progress-milestone-inner',

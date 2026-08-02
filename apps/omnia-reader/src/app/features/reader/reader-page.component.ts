@@ -371,6 +371,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private clearSelectionInProgress = false;
   private manualProgressPercent: number | null = null;
   private pinnedProgressMilestoneKey: string | null = null;
+  private pendingProgressSeekPercent: number | null = null;
+  private progressSeekPromise: Promise<void> | null = null;
+  private progressSeekActive = false;
+  private progressMilestoneDrag: ProgressMilestoneDrag | null = null;
+  private suppressedProgressMilestoneClickTarget: HTMLElement | null = null;
   private destroyed = false;
   private progressSliderGeometryRefreshId: number | null = null;
   private formatProgressPercentByVariant: ReadonlyMap<string, number> =
@@ -894,9 +899,23 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       return null;
     }
 
+    const currentPercent = this.extractProgressPercent(locator);
+    const beginningMilestone = this.chapterProgressMilestones.find(
+      (milestone) => milestone.kind === 'beginning',
+    );
+    if (
+      beginningMilestone &&
+      currentPercent !== null &&
+      currentPercent <= PROGRESS_MILESTONE_MATCH_TOLERANCE
+    ) {
+      return beginningMilestone;
+    }
+
     const exactLocatorKey = locatorKey(locator);
     const exactLocatorMatch = this.chapterProgressMilestones.find(
-      (milestone) => locatorKey(milestone.locator) === exactLocatorKey,
+      (milestone) =>
+        milestone.kind === 'toc' &&
+        locatorKey(milestone.locator) === exactLocatorKey,
     );
     if (exactLocatorMatch) {
       return exactLocatorMatch;
@@ -908,8 +927,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (currentPosition !== null && this.pageStatus?.scope === 'publication') {
       const pageMatches = this.chapterProgressMilestones.filter(
         (milestone) =>
+          milestone.kind === 'toc' &&
           finiteAnnotationLocation(milestone.locator.locations?.position) ===
-          currentPosition,
+            currentPosition,
       );
       const pageMatch = this.chooseCurrentPageMilestone(pageMatches, locator);
       if (pageMatch) {
@@ -931,7 +951,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       return null;
     }
     const sectionMatches = this.chapterProgressMilestones.filter(
-      (milestone) => milestone.locator.href.split('#', 1)[0] === sectionHref,
+      (milestone) =>
+        milestone.kind === 'toc' &&
+        milestone.locator.href.split('#', 1)[0] === sectionHref,
     );
     if (sectionMatches.length === 1) {
       return sectionMatches[0];
@@ -993,7 +1015,17 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (slider === undefined) {
       return 0;
     }
-    return this.progressPercentToPixelOffset(progressPercent, slider);
+    const baseOffset = this.progressPercentToPixelOffset(
+      progressPercent,
+      slider,
+    );
+    const sliderWidth = Math.max(0, slider.getBoundingClientRect().width);
+    const thumbWidth = Math.min(this.progressSliderThumbWidthPx, sliderWidth);
+    return clamp(
+      baseOffset + milestone.collisionOffsetPx,
+      thumbWidth / 2,
+      Math.max(thumbWidth / 2, sliderWidth - thumbWidth / 2),
+    );
   }
 
   private progressPercentToPixelOffset(
@@ -1036,6 +1068,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     );
   }
 
+  get progressSliderDisabled(): boolean {
+    return this.loading || (this.navigationBusy && !this.progressSeekActive);
+  }
+
   get readerPanelOpen(): boolean {
     return this.shortcutsOpen || this.activeReaderPanel !== null;
   }
@@ -1061,7 +1097,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.setManualProgressPercent(normalized);
     this.pinnedProgressMilestoneKey = null;
     this.changeDetector.markForCheck();
-    await this.seekToProgressPercent(normalized);
+    await this.queueProgressSeek(normalized);
   }
 
   onProgressSliderInput(event: Event): void {
@@ -1076,19 +1112,37 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.setManualProgressPercent(normalizeProgressPercent(percent));
     this.pinnedProgressMilestoneKey = null;
     this.changeDetector.markForCheck();
+    void this.queueProgressSeek(percent);
+  }
+
+  onProgressSliderClick(event: MouseEvent): void {
+    if (
+      event.detail === 0 ||
+      event.button !== 0 ||
+      this.loading ||
+      (this.navigationBusy && !this.progressSeekActive)
+    ) {
+      return;
+    }
+    this.seekToProgressPointerPosition(event.clientX);
   }
 
   async seekToChapterMilestone(
     milestone: ReaderProgressMilestone,
     event?: MouseEvent,
   ): Promise<void> {
-    if (this.loading || this.navigationBusy) {
+    if (event?.currentTarget === this.suppressedProgressMilestoneClickTarget) {
+      this.suppressedProgressMilestoneClickTarget = null;
+      event?.preventDefault();
+      return;
+    }
+    this.suppressedProgressMilestoneClickTarget = null;
+    if (this.loading || (this.navigationBusy && !this.progressSeekActive)) {
       return;
     }
     if (!milestone) {
       return;
     }
-    const locator = milestone.locator;
     const normalized = normalizeProgressPercent(milestone.value);
     this.setManualProgressPercent(normalized);
     this.pinnedProgressMilestoneKey = milestone.key;
@@ -1097,7 +1151,126 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       this.queueFocus(event.currentTarget);
     }
     this.changeDetector.markForCheck();
-    await this.seekToLocator(locator, true);
+    if (milestone.kind === 'beginning') {
+      await this.queueProgressSeek(0);
+      return;
+    }
+    if (this.progressSeekActive) {
+      this.pendingProgressSeekPercent = null;
+      await this.progressSeekPromise;
+    }
+    if (
+      this.destroyed ||
+      this.loading ||
+      this.navigationBusy ||
+      this.pinnedProgressMilestoneKey !== milestone.key
+    ) {
+      return;
+    }
+    await this.seekToLocator(milestone.locator, true);
+  }
+
+  onProgressMilestonePointerDown(event: PointerEvent): void {
+    if (
+      event.button !== 0 ||
+      !event.isPrimary ||
+      this.loading ||
+      (this.navigationBusy && !this.progressSeekActive) ||
+      !(event.currentTarget instanceof HTMLElement)
+    ) {
+      return;
+    }
+    this.progressMilestoneDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      dragging: false,
+      target: event.currentTarget,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  onProgressMilestonePointerMove(event: PointerEvent): void {
+    const drag = this.progressMilestoneDrag;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    if (
+      !drag.dragging &&
+      Math.abs(event.clientX - drag.startX) < PROGRESS_DRAG_THRESHOLD_PX
+    ) {
+      return;
+    }
+    drag.dragging = true;
+    event.preventDefault();
+    this.seekToProgressPointerPosition(event.clientX);
+  }
+
+  onProgressMilestonePointerUp(event: PointerEvent): void {
+    const drag = this.progressMilestoneDrag;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    if (drag.dragging) {
+      event.preventDefault();
+      this.seekToProgressPointerPosition(event.clientX);
+      this.suppressedProgressMilestoneClickTarget = drag.target;
+    }
+    drag.target.releasePointerCapture?.(event.pointerId);
+    this.progressMilestoneDrag = null;
+  }
+
+  onProgressMilestonePointerCancel(event: PointerEvent): void {
+    const drag = this.progressMilestoneDrag;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    drag.target.releasePointerCapture?.(event.pointerId);
+    this.progressMilestoneDrag = null;
+  }
+
+  private seekToProgressPointerPosition(clientX: number): void {
+    const slider = this.readerProgressSlider?.nativeElement;
+    if (!slider) {
+      return;
+    }
+    const sliderRect = slider.getBoundingClientRect();
+    const thumbWidth = Math.min(
+      this.progressSliderThumbWidthPx,
+      sliderRect.width,
+    );
+    const trackWidth = Math.max(0.000001, sliderRect.width - thumbWidth);
+    const progressPercent = normalizeProgressPercent(
+      ((clientX - sliderRect.left - thumbWidth / 2) / trackWidth) * 100,
+    );
+    this.setManualProgressPercent(progressPercent);
+    this.pinnedProgressMilestoneKey = null;
+    this.changeDetector.markForCheck();
+    void this.queueProgressSeek(progressPercent);
+  }
+
+  private queueProgressSeek(percent: number): Promise<void> {
+    this.pendingProgressSeekPercent = normalizeProgressPercent(percent);
+    if (this.progressSeekPromise) {
+      return this.progressSeekPromise;
+    }
+    this.progressSeekActive = true;
+    this.progressSeekPromise = this.drainProgressSeekQueue();
+    return this.progressSeekPromise;
+  }
+
+  private async drainProgressSeekQueue(): Promise<void> {
+    try {
+      while (!this.destroyed && this.pendingProgressSeekPercent !== null) {
+        const percent = this.pendingProgressSeekPercent;
+        this.pendingProgressSeekPercent = null;
+        await this.seekToProgressPercent(percent);
+      }
+    } finally {
+      this.progressSeekActive = false;
+      this.progressSeekPromise = null;
+      this.alignManualProgressPercent();
+      this.changeDetector.markForCheck();
+    }
   }
 
   private async seekToLocator(
@@ -1131,7 +1304,11 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private async seekToProgressPercent(percent: number): Promise<void> {
     const engine = this.engine;
     const seek = engine?.goToProgression;
-    if (!seek || this.loading || this.navigationBusy) {
+    if (
+      !seek ||
+      this.loading ||
+      (this.navigationBusy && !this.progressSeekActive)
+    ) {
       return;
     }
 
@@ -1375,7 +1552,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       locations: tocItem.entry.locator.locations,
     });
     const byLocatorCandidates = this.chapterProgressMilestones.filter(
-      (milestone) => locatorKey(milestone.locator) === itemLocatorKey,
+      (milestone) =>
+        milestone.kind === 'toc' &&
+        locatorKey(milestone.locator) === itemLocatorKey,
     );
     if (byLocatorCandidates.length === 1) {
       return byLocatorCandidates[0] ?? null;
@@ -1414,20 +1593,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private findProgressMilestoneByChapterMilestoneOrder(
     tocItem: FlattenedTocEntry,
   ): ReaderProgressMilestone | null {
-    const topLevelItems = this.tocItems.filter((item) => item.depth === 0);
-    if (topLevelItems.length === 0) {
-      return null;
-    }
-
-    const chapterMilestoneItems = chooseChapterMilestoneEntries(
-      topLevelItems,
-      this.tocItems,
-    );
-    if (chapterMilestoneItems.length === 0) {
-      return null;
-    }
-
     const orderedMilestones = this.chapterProgressMilestones
+      .filter((milestone) => milestone.kind === 'toc')
       .slice()
       .sort((left, right) => left.tocItemIndex - right.tocItemIndex);
 
@@ -1440,17 +1607,6 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     );
     if (directMatch) {
       return directMatch;
-    }
-
-    const tocItemIsChapter = isChapterLikeTocEntry(tocItem);
-    if (tocItemIsChapter) {
-      const chapterMilestoneItemsLength = chapterMilestoneItems.length;
-      const chapterIndex = chapterMilestoneItems.findIndex(
-        (item) => item.key === tocItem.key,
-      );
-      if (chapterIndex >= 0 && chapterIndex < chapterMilestoneItemsLength) {
-        return orderedMilestones[chapterIndex] ?? null;
-      }
     }
 
     const targetIndex = this.tocItems.findIndex(
@@ -1489,7 +1645,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       return null;
     }
     const candidates = this.chapterProgressMilestones.filter(
-      (milestone) => milestone.locator.href.split('#', 1)[0] === targetHref,
+      (milestone) =>
+        milestone.kind === 'toc' &&
+        milestone.locator.href.split('#', 1)[0] === targetHref,
     );
     if (candidates.length === 0) {
       return null;
@@ -2676,6 +2834,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.destroyed = true;
+    this.pendingProgressSeekPercent = null;
+    this.progressMilestoneDrag = null;
     const readerRoot = this.readerRoot.nativeElement;
     if (this.progressSliderGeometryRefreshId !== null) {
       cancelAnimationFrame(this.progressSliderGeometryRefreshId);
@@ -3197,6 +3357,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (this.pinnedProgressMilestoneKey !== null) {
       return;
     }
+    if (this.progressSeekActive) {
+      return;
+    }
     const currentPercent = this.overallProgressPercent;
     if (currentPercent === null) {
       return;
@@ -3276,11 +3439,20 @@ interface FlattenedTocEntry {
 
 interface ReaderProgressMilestone {
   readonly key: string;
+  readonly kind: 'beginning' | 'toc';
   readonly value: number;
   readonly label: string;
   readonly locator: TocEntry['locator'];
   readonly tocItemKey: string;
   readonly tocItemIndex: number;
+  readonly collisionOffsetPx: number;
+}
+
+interface ProgressMilestoneDrag {
+  readonly pointerId: number;
+  readonly startX: number;
+  dragging: boolean;
+  readonly target: HTMLElement;
 }
 
 function deriveChapterProgressMilestones(
@@ -3288,90 +3460,67 @@ function deriveChapterProgressMilestones(
   pageStatus: ReaderPageStatus | null,
 ): readonly ReaderProgressMilestone[] {
   const topLevel = tocItems.filter((entry) => entry.depth === 0);
-  if (topLevel.length === 0) {
-    return [];
-  }
-
-  const chapterCandidates = chooseChapterMilestoneEntries(topLevel, tocItems);
-  if (chapterCandidates.length < 2) {
-    return [];
-  }
-
   const itemIndexByKey = new Map(
     tocItems.map((item, index) => [item.key, index]),
   );
-  const milestones: ReaderProgressMilestone[] = [];
+  const milestones: ReaderProgressMilestone[] = [
+    {
+      key: 'beginning',
+      kind: 'beginning',
+      value: 0,
+      label: 'Beginning',
+      locator: {
+        href: '',
+        type: topLevel[0]?.entry.locator.type ?? 'application/octet-stream',
+        title: 'Beginning',
+        locations: { totalProgression: 0 },
+      },
+      tocItemKey: '',
+      tocItemIndex: -1,
+      collisionOffsetPx: 0,
+    },
+  ];
 
-  for (let index = 0; index < chapterCandidates.length; index += 1) {
-    const item = chapterCandidates[index];
+  for (let index = 0; index < topLevel.length; index += 1) {
+    const item = topLevel[index];
     const value = extractLocatorProgressionPercent(
       item.entry.locator,
-      index,
-      chapterCandidates.length - 1,
+      index + 1,
+      topLevel.length + 1,
       pageStatus,
     );
     milestones.push({
       key: `${item.key}:${item.entry.locator.href}:${item.entry.locator.title ?? ''}:${milestones.length}`,
+      kind: 'toc',
       value,
       label: item.displayLabel,
       locator: item.entry.locator,
       tocItemKey: item.key,
       tocItemIndex: itemIndexByKey.get(item.key) ?? index,
+      collisionOffsetPx: 0,
     });
   }
 
-  return milestones;
+  return separateCollidingProgressMilestones(milestones);
 }
 
-function chooseChapterMilestoneEntries(
-  topLevel: readonly FlattenedTocEntry[],
-  tocItems: readonly FlattenedTocEntry[],
-): readonly FlattenedTocEntry[] {
-  const topLevelChapterCandidates = topLevel.filter(isChapterLikeTocEntry);
-  if (topLevelChapterCandidates.length >= 2) {
-    return topLevelChapterCandidates;
-  }
-
-  const maximumDepth = tocItems.reduce(
-    (result, entry) => Math.max(result, entry.depth),
-    0,
-  );
-  for (let depth = 1; depth <= maximumDepth; depth += 1) {
-    const candidatesAtDepth = tocItems.filter(
-      (entry) => entry.depth === depth && isChapterLikeTocEntry(entry),
-    );
-    if (candidatesAtDepth.length >= 2) {
-      return candidatesAtDepth;
+function separateCollidingProgressMilestones(
+  milestones: readonly ReaderProgressMilestone[],
+): readonly ReaderProgressMilestone[] {
+  const collisionIndexByValue = new Map<number, number>();
+  return milestones.map((milestone) => {
+    const collisionIndex = collisionIndexByValue.get(milestone.value) ?? 0;
+    collisionIndexByValue.set(milestone.value, collisionIndex + 1);
+    if (collisionIndex === 0) {
+      return milestone;
     }
-  }
-
-  if (topLevel.length >= 2 && topLevelChapterCandidates.length === 0) {
-    return topLevel;
-  }
-
-  return topLevelChapterCandidates;
-}
-
-function isChapterLikeTocEntry(entry: FlattenedTocEntry): boolean {
-  if (entry.entry.numbering === 'numbered') {
-    return true;
-  }
-  if (entry.entry.numbering === 'unnumbered') {
-    return false;
-  }
-  if (entry.number !== null) {
-    return true;
-  }
-  if (
-    entry.depth === 0 &&
-    isLikelyNonChapterTopLevelTocTitle(entry.entry.title)
-  ) {
-    return false;
-  }
-  return (
-    entry.depth > 0 ||
-    !UNNUMBERED_TOP_LEVEL_TOC_TITLES.has(normalizeTocTitle(entry.entry.title))
-  );
+    const direction = milestone.value > 50 ? -1 : 1;
+    return {
+      ...milestone,
+      collisionOffsetPx:
+        direction * collisionIndex * PROGRESS_MILESTONE_COLLISION_OFFSET_PX,
+    };
+  });
 }
 
 function extractLocatorProgressionPercent(
@@ -3535,6 +3684,8 @@ const EPUB_MAXIMUM_ZOOM_PERCENT = 200;
 const PDF_MINIMUM_ZOOM_PERCENT = 25;
 const PDF_MAXIMUM_ZOOM_PERCENT = 400;
 const PROGRESS_MILESTONE_MATCH_TOLERANCE = 0.6;
+const PROGRESS_DRAG_THRESHOLD_PX = 4;
+const PROGRESS_MILESTONE_COLLISION_OFFSET_PX = 24;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));

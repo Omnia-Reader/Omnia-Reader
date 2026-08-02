@@ -380,11 +380,79 @@ describe('ReaderPageComponent annotations', () => {
     progressSlider.value = '75';
     progressSlider.dispatchEvent(new Event('change'));
     await vi.waitFor(() => expect(goToProgression).toHaveBeenCalledWith(0.75));
+    goToProgression.mockClear();
+    vi.spyOn(progressSlider, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      right: 300,
+      top: 0,
+      bottom: 20,
+      width: 200,
+      height: 20,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    progressSlider.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        button: 0,
+        clientX: 219,
+        detail: 1,
+      }),
+    );
+    await vi.waitFor(() => expect(goToProgression).toHaveBeenCalledWith(0.6));
+    goToProgression.mockClear();
+    let releaseFirstProgressSeek!: () => void;
+    const firstProgressSeek = new Promise<void>((resolve) => {
+      releaseFirstProgressSeek = resolve;
+    });
+    let activeProgressSeeks = 0;
+    let maximumActiveProgressSeeks = 0;
+    goToProgression.mockImplementation(async (progression: number) => {
+      activeProgressSeeks += 1;
+      maximumActiveProgressSeeks = Math.max(
+        maximumActiveProgressSeeks,
+        activeProgressSeeks,
+      );
+      if (progression === 0.2) {
+        await firstProgressSeek;
+      }
+      activeProgressSeeks -= 1;
+    });
+    progressSlider.value = '20';
+    progressSlider.dispatchEvent(new Event('input'));
+    await vi.waitFor(() => expect(goToProgression).toHaveBeenCalledWith(0.2));
+    expect(progressSlider.disabled).toBe(false);
+    progressSlider.value = '80';
+    progressSlider.dispatchEvent(new Event('input'));
+    progressSlider.value = '10';
+    progressSlider.dispatchEvent(new Event('input'));
+    expect(goToProgression).toHaveBeenCalledTimes(1);
+    releaseFirstProgressSeek();
+    await vi.waitFor(() => expect(goToProgression).toHaveBeenCalledWith(0.1));
+    expect(goToProgression).toHaveBeenCalledTimes(2);
+    expect(maximumActiveProgressSeeks).toBe(1);
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.navigationBusy).toBe(false),
+    );
+    goToProgression.mockRejectedValueOnce(new Error('Seek failed'));
+    progressSlider.value = '30';
+    progressSlider.dispatchEvent(new Event('input'));
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.navigationError).toBe('Seek failed'),
+    );
+    goToProgression.mockResolvedValue(undefined);
+    progressSlider.value = '40';
+    progressSlider.dispatchEvent(new Event('input'));
+    await vi.waitFor(() => expect(goToProgression).toHaveBeenCalledWith(0.4));
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.navigationError).toBeNull(),
+    );
     fixture.detectChanges();
     const progressMilestones = fixture.nativeElement.querySelectorAll(
       '[data-testid="reader-progress-milestone"]',
     );
-    expect(progressMilestones.length).toBe(5);
+    expect(progressMilestones.length).toBe(8);
     const firstMilestone = progressMilestones.item(0) as HTMLElement;
     const firstMilestoneDot = firstMilestone.querySelector(
       '.reader-progress-milestone-inner',
@@ -393,7 +461,7 @@ describe('ReaderPageComponent annotations', () => {
     expect(
       firstMilestone.querySelector('.reader-progress-milestone-tooltip')
         ?.textContent,
-    ).toContain('Chapter One');
+    ).toContain('Beginning');
     expect(firstMilestone.hasAttribute('aria-pressed')).toBe(false);
     expect(firstMilestone.hasAttribute('aria-describedby')).toBe(false);
     const progressMilestoneLabels = Array.from(
@@ -402,7 +470,16 @@ describe('ReaderPageComponent annotations', () => {
       ),
       (button: HTMLElement) => button.getAttribute('aria-label') ?? '',
     );
-    expect(progressMilestoneLabels.length).toBe(5);
+    expect(progressMilestoneLabels).toEqual([
+      'Go to Beginning (0% of book)',
+      expect.stringMatching(/^Go to Preface /),
+      expect.stringMatching(/^Go to Contributors /),
+      expect.stringMatching(/^Go to 1 Chapter One /),
+      expect.stringMatching(/^Go to 2 Chapter Two /),
+      expect.stringMatching(/^Go to 3 Chapter Three /),
+      expect.stringMatching(/^Go to 4 Chapter Four /),
+      expect.stringMatching(/^Go to 5 Chapter Five /),
+    ]);
     const component = fixture.componentInstance as unknown as {
       chapterProgressMilestones: ReadonlyArray<{
         key: string;
@@ -431,17 +508,22 @@ describe('ReaderPageComponent annotations', () => {
       component.getMilestoneLeftPx(component.chapterProgressMilestones[0]),
     ).toBe(5);
     expect(
-      component.getMilestoneLeftPx(component.chapterProgressMilestones[4]),
+      component.getMilestoneLeftPx(component.chapterProgressMilestones[1]),
+    ).toBe(29);
+    expect(
+      component.getMilestoneLeftPx(component.chapterProgressMilestones[3]),
+    ).toBe(77);
+    expect(
+      component.getMilestoneLeftPx(component.chapterProgressMilestones[7]),
     ).toBe(315);
-    const goToCallsBeforeFirstMilestone = (
-      engine.goTo as ReturnType<typeof vi.fn>
-    ).mock.calls.length;
+    const progressionCallsBeforeBeginning = goToProgression.mock.calls.length;
     progressMilestones[0].dispatchEvent(new Event('click'));
-    await vi.waitFor(() => {
-      const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls.length).toBeGreaterThan(goToCallsBeforeFirstMilestone);
-      expect(calls[calls.length - 1][0].href).toBe('chapter-1');
-    });
+    await vi.waitFor(() =>
+      expect(goToProgression).toHaveBeenCalledTimes(
+        progressionCallsBeforeBeginning + 1,
+      ),
+    );
+    expect(goToProgression).toHaveBeenLastCalledWith(0);
     fixture.detectChanges();
     const internal = component as unknown as {
       manualProgressPercent: number | null;
@@ -477,14 +559,13 @@ describe('ReaderPageComponent annotations', () => {
         .item(0)
         ?.classList.contains('reader-progress-milestone-reached'),
     ).toBe(true);
-    const goToCallsBeforeSecondMilestone = (
-      engine.goTo as ReturnType<typeof vi.fn>
-    ).mock.calls.length;
+    const goToCallsBeforePreface = (engine.goTo as ReturnType<typeof vi.fn>)
+      .mock.calls.length;
     progressMilestones[1].dispatchEvent(new Event('click'));
     await vi.waitFor(() => {
       const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls.length).toBeGreaterThan(goToCallsBeforeSecondMilestone);
-      expect(calls[calls.length - 1][0].href).toBe('chapter-2');
+      expect(calls.length).toBeGreaterThan(goToCallsBeforePreface);
+      expect(calls[calls.length - 1][0].href).toBe('preface');
     });
     fixture.detectChanges();
     const secondMilestoneLeft = Number.parseFloat(
@@ -514,7 +595,7 @@ describe('ReaderPageComponent annotations', () => {
     const goToCallsBeforeThirdMilestone = (
       engine.goTo as ReturnType<typeof vi.fn>
     ).mock.calls.length;
-    progressMilestones[2].dispatchEvent(new Event('click'));
+    progressMilestones[5].dispatchEvent(new Event('click'));
     await vi.waitFor(() => {
       const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
       expect(calls.length).toBeGreaterThan(goToCallsBeforeThirdMilestone);
@@ -522,29 +603,29 @@ describe('ReaderPageComponent annotations', () => {
     });
     fixture.detectChanges();
     const thirdMilestoneLeft = Number.parseFloat(
-      (progressMilestones.item(2) as HTMLElement).style.left,
+      (progressMilestones.item(5) as HTMLElement).style.left,
     );
     const expectedThirdLeft = component.getMilestoneLeftPx(
-      component.chapterProgressMilestones[2],
+      component.chapterProgressMilestones[5],
     );
     expect(thirdMilestoneLeft).toBeCloseTo(expectedThirdLeft, 4);
     expect(Number(progressSlider.value)).toBeCloseTo(
-      component.chapterProgressMilestones[2]?.value,
+      component.chapterProgressMilestones[5]?.value,
       2,
     );
-    expect(document.activeElement).toBe(progressMilestones.item(2));
-    expect(progressMilestones.item(2)?.getAttribute('aria-current')).toBe(
+    expect(document.activeElement).toBe(progressMilestones.item(5));
+    expect(progressMilestones.item(5)?.getAttribute('aria-current')).toBe(
       'location',
     );
     expect(
       progressMilestones
-        .item(2)
+        .item(5)
         ?.classList.contains('reader-progress-milestone-active'),
     ).toBe(true);
     const goToCallsBeforeFourthMilestone = (
       engine.goTo as ReturnType<typeof vi.fn>
     ).mock.calls.length;
-    progressMilestones[3].dispatchEvent(new Event('click'));
+    progressMilestones[6].dispatchEvent(new Event('click'));
     await vi.waitFor(() => {
       const calls = (engine.goTo as ReturnType<typeof vi.fn>).mock.calls;
       expect(calls.length).toBeGreaterThan(goToCallsBeforeFourthMilestone);
@@ -552,24 +633,24 @@ describe('ReaderPageComponent annotations', () => {
     });
     fixture.detectChanges();
     const fourthMilestoneLeft = Number.parseFloat(
-      (progressMilestones.item(3) as HTMLElement).style.left,
+      (progressMilestones.item(6) as HTMLElement).style.left,
     );
     const expectedFourthLeft = component.getMilestoneLeftPx(
-      component.chapterProgressMilestones[3],
+      component.chapterProgressMilestones[6],
     );
     expect(fourthMilestoneLeft).toBeCloseTo(expectedFourthLeft, 4);
     expect(Number(progressSlider.value)).toBeCloseTo(
-      component.chapterProgressMilestones[3]?.value,
+      component.chapterProgressMilestones[6]?.value,
       2,
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(document.activeElement).toBe(progressMilestones.item(3));
-    expect(progressMilestones.item(3)?.getAttribute('aria-current')).toBe(
+    expect(document.activeElement).toBe(progressMilestones.item(6));
+    expect(progressMilestones.item(6)?.getAttribute('aria-current')).toBe(
       'location',
     );
     expect(
       progressMilestones
-        .item(3)
+        .item(6)
         ?.classList.contains('reader-progress-milestone-active'),
     ).toBe(true);
 
@@ -601,12 +682,12 @@ describe('ReaderPageComponent annotations', () => {
       },
     });
     fixture.detectChanges();
-    expect(progressMilestones.item(1)?.getAttribute('aria-current')).toBe(
+    expect(progressMilestones.item(4)?.getAttribute('aria-current')).toBe(
       'location',
     );
     expect(
       progressMilestones
-        .item(1)
+        .item(4)
         ?.classList.contains('reader-progress-milestone-active'),
     ).toBe(true);
 
@@ -646,15 +727,15 @@ describe('ReaderPageComponent annotations', () => {
     ).toBeNull();
     expect(
       progressMilestones
-        .item(1)
+        .item(4)
         ?.classList.contains('reader-progress-milestone-active'),
     ).toBe(false);
     expect(
       progressMilestones
-        .item(1)
+        .item(4)
         ?.classList.contains('reader-progress-milestone-reached'),
     ).toBe(true);
-    const chapterTwoProgress = component.chapterProgressMilestones[1]?.value;
+    const chapterTwoProgress = component.chapterProgressMilestones[4]?.value;
     expect(chapterTwoProgress).toBe(37);
     expect(fixture.componentInstance.displayedProgressPercent).toBe(49.6);
     expect(Number(progressSlider.value)).toBe(49.6);
@@ -696,7 +777,7 @@ describe('ReaderPageComponent annotations', () => {
     });
     fixture.detectChanges();
     expect(previousKey.defaultPrevented).toBe(true);
-    expect(progressMilestones.item(1)?.getAttribute('aria-current')).toBe(
+    expect(progressMilestones.item(4)?.getAttribute('aria-current')).toBe(
       'location',
     );
     engine.next.mockClear();
@@ -819,7 +900,7 @@ describe('ReaderPageComponent annotations', () => {
 
     const chapterFourTocItem = fixture.componentInstance.tocItems[6];
     const chapterFourMilestone =
-      fixture.componentInstance.chapterProgressMilestones[3];
+      fixture.componentInstance.chapterProgressMilestones[6];
     const internalProgressState = fixture.componentInstance as unknown as {
       pinnedProgressMilestoneKey: string | null;
     };
@@ -848,7 +929,7 @@ describe('ReaderPageComponent annotations', () => {
 
     const chapterOneIntroduction = fixture.componentInstance.tocItems[3];
     const chapterOneMilestone =
-      fixture.componentInstance.chapterProgressMilestones[0];
+      fixture.componentInstance.chapterProgressMilestones[3];
     const goToCallsBeforeIntro = (engine.goTo as ReturnType<typeof vi.fn>).mock
       .calls.length;
     await fixture.componentInstance.goToTocItem(chapterOneIntroduction);
@@ -870,7 +951,7 @@ describe('ReaderPageComponent annotations', () => {
 
     const chapterFiveTocItem = fixture.componentInstance.tocItems[7];
     const chapterFiveMilestone =
-      fixture.componentInstance.chapterProgressMilestones[4];
+      fixture.componentInstance.chapterProgressMilestones[7];
     const goToCallsBeforeTocChapterFive = (
       engine.goTo as ReturnType<typeof vi.fn>
     ).mock.calls.length;

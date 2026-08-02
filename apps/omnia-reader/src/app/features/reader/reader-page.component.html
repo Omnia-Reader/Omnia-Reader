@@ -2018,17 +2018,18 @@
               step="0.01"
               [value]="displayedProgressPercent"
               #readerProgressSlider
-              [disabled]="navigationBusy"
+              [disabled]="progressSliderDisabled"
               [attr.aria-valuetext]="displayedProgressPercentLabel"
               [attr.aria-describedby]="pageStatus ? 'reader-page-status' : null"
               [style.background-image]="progressSliderTrackBackground"
               (input)="onProgressSliderInput($event)"
               (change)="seekToProgress($event)"
+              (click)="onProgressSliderClick($event)"
             />
             @if (hasProgressMilestones) {
               <div
                 class="reader-progress-milestones pointer-events-none absolute inset-x-0 top-1/2 z-10 -translate-y-1/2"
-                aria-label="Progress chapter milestones"
+                aria-label="Book progress milestones"
                 role="group"
               >
                 @for (
@@ -2039,7 +2040,7 @@
                 ) {
                   <button
                     type="button"
-                    class="reader-progress-milestone pointer-events-auto absolute top-1/2 inline-flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="reader-progress-milestone pointer-events-auto absolute top-1/2 inline-flex touch-none cursor-pointer items-center justify-center border-0 bg-transparent p-0 disabled:cursor-not-allowed disabled:opacity-50"
                     data-testid="reader-progress-milestone"
                     [style.left.px]="getMilestoneLeftPx(milestone)"
                     [attr.aria-label]="
@@ -2059,6 +2060,10 @@
                     [class.reader-progress-milestone-first]="isFirst"
                     [class.reader-progress-milestone-last]="isLast"
                     [disabled]="loading"
+                    (pointerdown)="onProgressMilestonePointerDown($event)"
+                    (pointermove)="onProgressMilestonePointerMove($event)"
+                    (pointerup)="onProgressMilestonePointerUp($event)"
+                    (pointercancel)="onProgressMilestonePointerCancel($event)"
                     (click)="seekToChapterMilestone(milestone, $event)"
                   >
                     <span
