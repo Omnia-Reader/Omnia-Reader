@@ -51,6 +51,9 @@ describe('LogicalBookSyncService', () => {
     await expect(
       new LogicalBookSyncService(remote, journal, repository).synchronize(),
     ).resolves.toMatchObject({ pushed: 1, rejected: 0 });
+    expect(remote.listPrefixes).toEqual([
+      '.omnia-reader/v1/logical-books/changes',
+    ]);
     expect(remote.documents.size).toBe(1);
     expect(replaceLogicalBookState).toHaveBeenCalledWith([], [], []);
     expect(acknowledge).toHaveBeenCalledWith(['operation-1']);
@@ -88,9 +91,11 @@ describe('LogicalBookSyncService', () => {
 
 class MemoryTransport implements LibrarySyncTransport {
   readonly documents = new Map<string, RemoteDocument>();
+  readonly listPrefixes: string[] = [];
   writeError: Error | null = null;
 
-  list(): Promise<readonly RemoteDocument[]> {
+  list(prefix: string): Promise<readonly RemoteDocument[]> {
+    this.listPrefixes.push(prefix);
     return Promise.resolve([...this.documents.values()]);
   }
 

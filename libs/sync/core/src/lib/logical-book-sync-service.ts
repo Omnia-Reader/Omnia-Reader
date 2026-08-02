@@ -47,7 +47,7 @@ export class LogicalBookSyncService implements SyncWorker {
 
   private async run(): Promise<SyncWorkerResult> {
     const [documents, pending] = await Promise.all([
-      this.remote.list(`${SYNC_ROOT}/logical-books/changes/`),
+      this.remote.list(`${SYNC_ROOT}/logical-books/changes`),
       this.journal.pending(),
     ]);
     const remoteChanges = documents.map((document) =>
