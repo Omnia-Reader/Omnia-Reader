@@ -5,7 +5,7 @@ import {
 } from './library-sync-coordinator';
 
 describe('LibrarySyncCoordinator', () => {
-  it('validates the schema before books, progress, bookmarks, and annotations', async () => {
+  it('restores publication variants before applying logical membership', async () => {
     const order: string[] = [];
     const worker = (name: string, result: SyncWorkerResult): SyncWorker => ({
       synchronize: async () => {
@@ -25,6 +25,12 @@ describe('LibrarySyncCoordinator', () => {
         pushed: 2,
         conflicts: 0,
         rejected: 1,
+      }),
+      logicalBooks: worker('logical-books', {
+        pulled: 2,
+        pushed: 1,
+        conflicts: 0,
+        rejected: 0,
       }),
       progress: worker('progress', {
         pulled: 3,
@@ -47,16 +53,16 @@ describe('LibrarySyncCoordinator', () => {
     });
 
     await expect(coordinator.synchronize()).resolves.toEqual({
-      pulled: 16,
-      pushed: 21,
+      pulled: 18,
+      pushed: 22,
       conflicts: 7,
       rejected: 8,
       schemaPulled: 0,
       schemaPushed: 1,
       booksPulled: 1,
       booksPushed: 2,
-      logicalBooksPulled: 0,
-      logicalBooksPushed: 0,
+      logicalBooksPulled: 2,
+      logicalBooksPushed: 1,
       progressPulled: 3,
       progressPushed: 4,
       bookmarksPulled: 5,
@@ -67,6 +73,7 @@ describe('LibrarySyncCoordinator', () => {
     expect(order).toEqual([
       'schema',
       'books',
+      'logical-books',
       'progress',
       'bookmarks',
       'annotations',

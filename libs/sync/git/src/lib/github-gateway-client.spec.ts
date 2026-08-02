@@ -111,6 +111,7 @@ describe('GitHubGatewayClient', () => {
   });
 
   it('lists and selects writable repositories with CSRF protection', async () => {
+    const storage = memoryStorage();
     const fetcher = sequenceFetch(
       jsonResponse({
         repositories: [
@@ -137,7 +138,7 @@ describe('GitHubGatewayClient', () => {
         },
       }),
     );
-    const client = new GitHubGatewayClient({ fetcher });
+    const client = new GitHubGatewayClient({ fetcher, storage });
 
     await expect(client.repositories()).resolves.toHaveLength(1);
     await expect(client.selectRepository(11)).resolves.toMatchObject({
@@ -151,6 +152,117 @@ describe('GitHubGatewayClient', () => {
     expect(selectionInit?.credentials).toBe('include');
     expect(headers.get('X-Omnia-CSRF')).toBe('1');
     expect(selectionInit?.body).toBe('{"repositoryId":11}');
+    expect(storage.getItem('omnia-reader.sync-github-repository')).toBe(
+      '{"schemaVersion":1,"repository":{"id":11,"fullName":"reader/progress"}}',
+    );
+  });
+
+  it('restores a remembered accessible repository after reauthorization', async () => {
+    const storage = memoryStorage({
+      'omnia-reader.sync-github-repository':
+        '{"schemaVersion":1,"repository":{"id":11,"fullName":"reader/progress"}}',
+    });
+    const fetcher = sequenceFetch(
+      jsonResponse({
+        configured: true,
+        authenticated: true,
+        installationUrl: INSTALLATION_URL,
+        user: { id: 7, login: 'reader', avatarUrl: '' },
+        repository: null,
+      }),
+      jsonResponse({
+        configured: true,
+        authenticated: true,
+        installationUrl: INSTALLATION_URL,
+        user: { id: 7, login: 'reader', avatarUrl: '' },
+        repository: {
+          id: 11,
+          fullName: 'reader/progress',
+          private: true,
+          defaultBranch: 'main',
+          canPush: true,
+        },
+      }),
+    );
+
+    const client = new GitHubGatewayClient({ fetcher, storage });
+
+    await expect(client.session()).resolves.toMatchObject({
+      authenticated: true,
+      repository: { id: 11, fullName: 'reader/progress' },
+    });
+    expect(fetcher.mock.calls[1]?.[0]).toBe('/api/sync/github/repository');
+    expect(fetcher.mock.calls[1]?.[1]?.body).toBe('{"repositoryId":11}');
+  });
+
+  it('forgets a remembered repository that is no longer accessible', async () => {
+    const storage = memoryStorage({
+      'omnia-reader.sync-github-repository':
+        '{"schemaVersion":1,"repository":{"id":11,"fullName":"reader/progress"}}',
+    });
+    const fetcher = sequenceFetch(
+      jsonResponse({
+        configured: true,
+        authenticated: true,
+        installationUrl: INSTALLATION_URL,
+        user: { id: 7, login: 'reader', avatarUrl: '' },
+        repository: null,
+      }),
+      jsonResponse({ message: 'Repository access was removed' }, 403),
+    );
+
+    const client = new GitHubGatewayClient({ fetcher, storage });
+
+    await expect(client.session()).resolves.toMatchObject({
+      authenticated: true,
+      repository: null,
+    });
+    expect(storage.getItem('omnia-reader.sync-github-repository')).toBeNull();
+  });
+
+  it.each([
+    '{not-json',
+    JSON.stringify({
+      schemaVersion: 1,
+      repository: { id: 11, fullName: `reader/${'x'.repeat(1100)}` },
+    }),
+  ])('clears malformed remembered repository data', async (remembered) => {
+    const storage = memoryStorage({
+      'omnia-reader.sync-github-repository': remembered,
+    });
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse({
+          configured: true,
+          authenticated: true,
+          installationUrl: INSTALLATION_URL,
+          user: { id: 7, login: 'reader', avatarUrl: '' },
+          repository: null,
+        }),
+      ),
+      storage,
+    });
+
+    await expect(client.session()).resolves.toMatchObject({
+      authenticated: true,
+      repository: null,
+    });
+    expect(storage.getItem('omnia-reader.sync-github-repository')).toBeNull();
+  });
+
+  it('clears remembered repository state when disconnecting', async () => {
+    const storage = memoryStorage({
+      'omnia-reader.sync-github-repository':
+        '{"schemaVersion":1,"repository":{"id":11,"fullName":"reader/progress"}}',
+    });
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(new Response(null, { status: 204 })),
+      storage,
+    });
+
+    await client.disconnect();
+
+    expect(storage.getItem('omnia-reader.sync-github-repository')).toBeNull();
   });
 
   it('creates a private repository through the session gateway', async () => {
@@ -463,6 +575,22 @@ function sequenceFetch(...responses: Response[]) {
     }
     return Promise.resolve(response);
   });
+}
+
+function memoryStorage(
+  initial: Readonly<Record<string, string>> = {},
+): Storage {
+  const values = new Map(Object.entries(initial));
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
 }
 
 function blobText(blob: Blob): Promise<string> {

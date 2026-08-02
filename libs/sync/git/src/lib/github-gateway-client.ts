@@ -86,11 +86,13 @@ export interface GitHubGatewayClientOptions {
   redirect?: (url: string) => void;
   currentPath?: () => string;
   uploadRequester?: BrowserObjectUploadRequester;
+  storage?: Storage;
 }
 
 const DEFAULT_BASE_URL = '/api/sync/github';
 const DEFAULT_RETURN_PATH = '/settings/sync';
 const CSRF_HEADER = 'X-Omnia-CSRF';
+const REMEMBERED_REPOSITORY_KEY = 'omnia-reader.sync-github-repository';
 
 export class GitHubGatewayClient implements GitHubGateway {
   private readonly baseUrl: string;
@@ -98,6 +100,7 @@ export class GitHubGatewayClient implements GitHubGateway {
   private readonly redirect: (url: string) => void;
   private readonly currentPath: () => string;
   private readonly uploadRequester: BrowserObjectUploadRequester;
+  private readonly storage: Storage | undefined;
 
   constructor(options: GitHubGatewayClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
@@ -111,11 +114,35 @@ export class GitHubGatewayClient implements GitHubGateway {
         `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`);
     this.uploadRequester =
       options.uploadRequester ?? browserObjectUploadRequest;
+    this.storage = options.storage ?? browserStorage();
   }
 
   async session(): Promise<GitHubGatewaySession> {
     const response = await this.request('/session');
-    return parseSession(await responseJson(response));
+    const session = parseSession(await responseJson(response));
+    if (!session.authenticated) {
+      return session;
+    }
+    if (session.repository) {
+      this.rememberRepository(session.repository);
+      return session;
+    }
+    const remembered = this.readRememberedRepository();
+    if (!remembered) {
+      return session;
+    }
+    try {
+      return await this.selectRepository(remembered.id);
+    } catch (error) {
+      if (
+        error instanceof GitHubGatewayError &&
+        (error.status === 403 || error.status === 404)
+      ) {
+        this.forgetRepository();
+        return session;
+      }
+      throw error;
+    }
   }
 
   async repositories(): Promise<readonly GitHubRepository[]> {
@@ -139,7 +166,11 @@ export class GitHubGatewayClient implements GitHubGateway {
       method: 'PUT',
       body: JSON.stringify({ repositoryId }),
     });
-    return parseSession(await responseJson(response));
+    const session = parseSession(await responseJson(response));
+    if (session.authenticated && session.repository) {
+      this.rememberRepository(session.repository);
+    }
+    return session;
   }
 
   async createRepository(
@@ -155,11 +186,16 @@ export class GitHubGatewayClient implements GitHubGateway {
       method: 'POST',
       body: JSON.stringify({ name }),
     });
-    return parseRepositoryCreationResult(await responseJson(response));
+    const result = parseRepositoryCreationResult(await responseJson(response));
+    if (result.session.authenticated && result.session.repository) {
+      this.rememberRepository(result.session.repository);
+    }
+    return result;
   }
 
   async disconnect(): Promise<void> {
     await this.request('/session', { method: 'DELETE' });
+    this.forgetRepository();
   }
 
   async beginAuthorization(returnTo = this.currentPath()): Promise<void> {
@@ -345,6 +381,63 @@ export class GitHubGatewayClient implements GitHubGateway {
     }
     return response;
   }
+
+  private readRememberedRepository(): Pick<
+    GitHubRepository,
+    'id' | 'fullName'
+  > | null {
+    try {
+      const stored = this.storage?.getItem(REMEMBERED_REPOSITORY_KEY);
+      if (!stored) {
+        return null;
+      }
+      if (stored.length > 1024) {
+        this.forgetRepository();
+        return null;
+      }
+      const value: unknown = JSON.parse(stored);
+      if (
+        !isRecord(value) ||
+        value['schemaVersion'] !== 1 ||
+        !isRememberedRepository(value['repository'])
+      ) {
+        this.forgetRepository();
+        return null;
+      }
+      return value['repository'];
+    } catch {
+      this.forgetRepository();
+      return null;
+    }
+  }
+
+  private rememberRepository(
+    repository: Pick<GitHubRepository, 'id' | 'fullName'>,
+  ): void {
+    try {
+      this.storage?.setItem(
+        REMEMBERED_REPOSITORY_KEY,
+        JSON.stringify({
+          schemaVersion: 1,
+          repository: {
+            id: repository.id,
+            fullName: repository.fullName,
+          },
+        }),
+      );
+    } catch {
+      // Destination memory is a convenience; the gateway session remains
+      // authoritative when browser storage is restricted.
+    }
+  }
+
+  private forgetRepository(): void {
+    try {
+      this.storage?.removeItem(REMEMBERED_REPOSITORY_KEY);
+    } catch {
+      // A restricted storage implementation must not block disconnect.
+    }
+  }
 }
 
 async function responseJson(response: Response): Promise<unknown> {
@@ -481,6 +574,31 @@ function isRepository(value: unknown): value is GitHubRepository {
   );
 }
 
+function isRememberedRepository(
+  value: unknown,
+): value is Pick<GitHubRepository, 'id' | 'fullName'> {
+  const fullName = isRecord(value) ? value['fullName'] : undefined;
+  const segments = typeof fullName === 'string' ? fullName.split('/') : [];
+  return (
+    isRecord(value) &&
+    isPositiveInteger(value['id']) &&
+    typeof fullName === 'string' &&
+    fullName.length <= 512 &&
+    segments.length === 2 &&
+    segments.every(isSafeRepositoryNameSegment)
+  );
+}
+
+function isSafeRepositoryNameSegment(value: string): boolean {
+  return (
+    value.length > 0 &&
+    [...value].every((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint > 31 && codePoint !== 127;
+    })
+  );
+}
+
 function isGitFile(value: unknown): value is GitFile {
   return (
     isRecord(value) &&
@@ -529,6 +647,14 @@ function isSafeExternalUrl(value: unknown): value is string {
     );
   } catch {
     return false;
+  }
+}
+
+function browserStorage(): Storage | undefined {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
   }
 }
 

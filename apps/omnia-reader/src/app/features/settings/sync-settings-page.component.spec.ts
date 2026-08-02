@@ -625,6 +625,79 @@ describe('SyncSettingsPageComponent', () => {
     );
   });
 
+  it('restores the only writable GitHub repository with clear feedback', async () => {
+    selected = 'git';
+    const repository = {
+      id: 7,
+      fullName: 'reader/library',
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    };
+    const withoutRepository = {
+      configured: true as const,
+      authenticated: true as const,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository: null,
+    };
+    const restored = { ...withoutRepository, repository };
+    vi.mocked(git.session).mockResolvedValue(withoutRepository);
+    vi.mocked(git.repositories).mockResolvedValue([repository]);
+    vi.mocked(git.selectRepository).mockResolvedValue(restored);
+
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    expect(git.selectRepository).toHaveBeenCalledWith(repository.id);
+    expect(fixture.componentInstance.gitSession).toEqual(restored);
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'Restored sync repository reader/library',
+    );
+    expect(autoSync.requestImmediate).toHaveBeenCalledWith(
+      'destination-selected',
+    );
+  });
+
+  it('requires an explicit choice when multiple writable repositories exist', async () => {
+    selected = 'git';
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository: null,
+    });
+    vi.mocked(git.repositories).mockResolvedValue([
+      {
+        id: 7,
+        fullName: 'reader/first',
+        private: true,
+        defaultBranch: 'main',
+        canPush: true,
+      },
+      {
+        id: 8,
+        fullName: 'reader/second',
+        private: true,
+        defaultBranch: 'main',
+        canPush: true,
+      },
+    ]);
+
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    expect(git.selectRepository).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.selectedGitRepository).toBeNull();
+  });
+
   it('queues automatic synchronization when the selected provider already has a destination', async () => {
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();

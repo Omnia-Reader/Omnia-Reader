@@ -258,7 +258,12 @@
     }
 
     @if (selectedProvider === 'git') {
-      @if (!gitSession.configured) {
+      @if (!gatewayAvailable.git) {
+        <p class="mb-4 text-sm text-stone-600">
+          GitHub connection details will reappear when the sync gateway is
+          available.
+        </p>
+      } @else if (!gitSession.configured) {
         <section
           class="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
           aria-labelledby="github-sync-unconfigured-heading"

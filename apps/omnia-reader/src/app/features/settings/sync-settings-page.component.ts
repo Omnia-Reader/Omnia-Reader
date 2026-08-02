@@ -37,6 +37,7 @@ import {
   MegaGatewaySession,
 } from '@omnia-reader/sync/mega';
 import { firstValueFrom } from 'rxjs';
+import { SyncConnectionStatusService } from '../../sync-connection-status.service';
 import { DeleteRemoteBookDialogComponent } from './delete-remote-book-dialog.component';
 
 @Component({
@@ -58,6 +59,7 @@ export class SyncSettingsPageComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly syncConnection = inject(SyncConnectionStatusService);
 
   pendingChanges = 0;
   loading = true;
@@ -298,6 +300,7 @@ export class SyncSettingsPageComponent implements OnInit {
         `Sync repository set to ${repository.fullName}. ` +
         'Initial library synchronization queued.';
       this.autoSync.requestImmediate('destination-selected');
+      await this.syncConnection.refresh(true);
     });
   }
 
@@ -323,6 +326,7 @@ export class SyncSettingsPageComponent implements OnInit {
           `Created private repository ${result.repository.fullName}. ` +
           'Grant the Omnia Reader GitHub App access to it, then refresh the repository list.';
       }
+      await this.syncConnection.refresh(true);
     });
   }
 
@@ -332,6 +336,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.gitSession = await this.gitGateway.session();
       this.repositoryInstallationSettingsUrl = null;
       this.statusMessage = 'GitHub repositories refreshed.';
+      await this.syncConnection.refresh(true);
     });
   }
 
@@ -357,6 +362,7 @@ export class SyncSettingsPageComponent implements OnInit {
         `MEGA sync folder set to ${folder.path}. ` +
         'Initial library synchronization queued.';
       this.autoSync.requestImmediate('destination-selected');
+      await this.syncConnection.refresh(true);
     });
   }
 
@@ -455,6 +461,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.remoteBackups = [];
       this.statusMessage =
         'Sync disconnected. Local books and reading progress are unchanged.';
+      await this.syncConnection.refresh(true);
     });
   }
 
@@ -539,10 +546,26 @@ export class SyncSettingsPageComponent implements OnInit {
   private async refreshProvider(): Promise<void> {
     if (this.selectedProvider === 'git') {
       this.gitSession = await this.gitGateway.session();
-      this.gatewayAvailable.git = this.gitSession.configured;
+      this.gatewayAvailable.git = true;
       this.repositories = this.gitSession.authenticated
         ? await this.gitGateway.repositories()
         : [];
+      if (this.gitSession.authenticated && !this.gitSession.repository) {
+        const writable = this.repositories.filter(
+          (repository) => repository.canPush,
+        );
+        if (writable.length === 1) {
+          const repository = writable[0];
+          this.gitSession = await this.gitGateway.selectRepository(
+            repository.id,
+          );
+          this.autoSync.clearHistory('git');
+          this.statusMessage =
+            `Restored sync repository ${repository.fullName}. ` +
+            'Automatic library synchronization queued.';
+          this.autoSync.requestImmediate('destination-selected');
+        }
+      }
     } else if (this.selectedProvider === 'mega') {
       this.megaSession = await this.megaGateway.session();
       this.folders = this.megaSession.authenticated
@@ -554,6 +577,7 @@ export class SyncSettingsPageComponent implements OnInit {
     } else {
       this.remoteBackups = [];
     }
+    void this.syncConnection.refresh(true);
   }
 
   private async refreshAfterAutomaticSync(): Promise<void> {

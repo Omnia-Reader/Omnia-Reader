@@ -60,11 +60,11 @@ export class LibrarySyncCoordinator implements SyncWorker {
     throwIfSyncAborted(options.signal);
     const schema = await this.workers.schema.synchronize(options);
     throwIfSyncAborted(options.signal);
+    const books = await this.workers.books.synchronize(options);
+    throwIfSyncAborted(options.signal);
     const logicalBooks = this.workers.logicalBooks
       ? await this.workers.logicalBooks.synchronize(options)
       : EMPTY_SYNC_RESULT;
-    throwIfSyncAborted(options.signal);
-    const books = await this.workers.books.synchronize(options);
     throwIfSyncAborted(options.signal);
     const progress = await this.workers.progress.synchronize(options);
     throwIfSyncAborted(options.signal);

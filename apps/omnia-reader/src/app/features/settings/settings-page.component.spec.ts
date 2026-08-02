@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import {
@@ -6,6 +7,10 @@ import {
 } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  SyncConnectionSnapshot,
+  SyncConnectionStatusService,
+} from '../../sync-connection-status.service';
 import { SettingsPageComponent } from './settings-page.component';
 
 describe('SettingsPageComponent', () => {
@@ -25,6 +30,14 @@ describe('SettingsPageComponent', () => {
   const quarantineRepository = {
     listQuarantinedRecords: vi.fn(),
   };
+  const syncConnection = signal<SyncConnectionSnapshot>({
+    state: 'ready',
+    provider: 'git',
+    providerLabel: 'GitHub',
+    accountLabel: 'reader',
+    destinationLabel: 'reader/library',
+  });
+  const refreshSyncConnection = vi.fn();
 
   beforeEach(async () => {
     backups.exportArchive.mockReset();
@@ -45,6 +58,14 @@ describe('SettingsPageComponent', () => {
     platform.requestPersistentStorage.mockReset();
     quarantineRepository.listQuarantinedRecords.mockReset();
     quarantineRepository.listQuarantinedRecords.mockResolvedValue([]);
+    syncConnection.set({
+      state: 'ready',
+      provider: 'git',
+      providerLabel: 'GitHub',
+      accountLabel: 'reader',
+      destinationLabel: 'reader/library',
+    });
+    refreshSyncConnection.mockReset().mockResolvedValue(syncConnection());
     await TestBed.configureTestingModule({
       imports: [SettingsPageComponent],
       providers: [
@@ -54,6 +75,13 @@ describe('SettingsPageComponent', () => {
         {
           provide: LIBRARY_QUARANTINE_REPOSITORY,
           useValue: quarantineRepository,
+        },
+        {
+          provide: SyncConnectionStatusService,
+          useValue: {
+            snapshot: syncConnection,
+            refresh: refreshSyncConnection,
+          },
         },
       ],
     }).compileComponents();
@@ -88,6 +116,35 @@ describe('SettingsPageComponent', () => {
     expect(fixture.nativeElement.textContent).toContain(
       'Cross-device library sync',
     );
+    expect(fixture.nativeElement.textContent).toContain('reader/library');
+    expect(
+      fixture.nativeElement.querySelector('a[href="/settings/sync"]')
+        .textContent,
+    ).toContain('Manage library sync');
+  });
+
+  it('shows the completed setup and the precise next action', async () => {
+    syncConnection.set({
+      state: 'destination-required',
+      provider: 'git',
+      providerLabel: 'GitHub',
+      accountLabel: 'reader',
+    });
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const summary = fixture.nativeElement.querySelector(
+      '[data-testid="sync-connection-summary"]',
+    ) as HTMLElement;
+    expect(summary.textContent).toContain('GitHub account reader is connected');
+    expect(summary.textContent).toContain('Choose a repository');
+    expect(summary.textContent).not.toContain('Authorize');
+    expect(
+      fixture.nativeElement.querySelector('a[href="/settings/sync"]')
+        .textContent,
+    ).toContain('Continue sync setup');
   });
 
   it('shows local storage durability, quota usage, and a protection action', async () => {

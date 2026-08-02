@@ -7,12 +7,9 @@ import {
 } from '@angular/core';
 import { NgClass } from '@angular/common';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import {
-  AUTO_SYNC_SCHEDULER,
-  AutoSyncStatus,
-  SYNC_PROVIDER_SELECTION,
-} from '@omnia-reader/sync/core';
+import { AUTO_SYNC_SCHEDULER, AutoSyncStatus } from '@omnia-reader/sync/core';
 import { BackNavigationService } from '../back-navigation.service';
+import { SyncConnectionStatusService } from '../sync-connection-status.service';
 
 @Component({
   selector: 'omnia-navigation',
@@ -24,12 +21,9 @@ export class NavigationComponent implements OnDestroy {
   private readonly backNavigation = inject(BackNavigationService);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly autoSync = inject(AUTO_SYNC_SCHEDULER, { optional: true });
-  private readonly syncProviderSelection = inject(SYNC_PROVIDER_SELECTION, {
-    optional: true,
-  });
+  private readonly syncConnection = inject(SyncConnectionStatusService);
   private removeMenuBackHandler: (() => void) | null = null;
   private removeSyncStatusListener: (() => void) | null = null;
-  private removeSyncProviderListener: (() => void) | null = null;
 
   menuOpen = false;
   desktopMenuCollapsed = false;
@@ -43,10 +37,7 @@ export class NavigationComponent implements OnDestroy {
         this.automaticSyncStatus = status;
         this.changeDetector.markForCheck();
       }) ?? null;
-    this.removeSyncProviderListener =
-      this.syncProviderSelection?.subscribe?.(() =>
-        this.changeDetector.markForCheck(),
-      ) ?? null;
+    void this.syncConnection.refresh();
   }
 
   get mainSidenavExpanded(): boolean {
@@ -63,8 +54,21 @@ export class NavigationComponent implements OnDestroy {
     if (!this.autoSync) {
       return 'Local only';
     }
-    if (!this.syncProviderSelection?.current()) {
-      return 'Set up sync';
+    switch (this.syncConnection.snapshot().state) {
+      case 'local-only':
+        return 'Set up sync';
+      case 'checking':
+        return 'Checking sync';
+      case 'gateway-unavailable':
+        return 'Sync unavailable';
+      case 'provider-unconfigured':
+        return 'Configure provider';
+      case 'authorization-required':
+        return `Connect ${this.syncConnection.snapshot().providerLabel}`;
+      case 'destination-required':
+        return this.syncConnection.snapshot().provider === 'git'
+          ? 'Choose repository'
+          : 'Choose folder';
     }
 
     const status = this.automaticSyncStatus;
@@ -93,12 +97,30 @@ export class NavigationComponent implements OnDestroy {
       return 'This build keeps books and reading activity on this device.';
     }
 
-    const provider = this.syncProviderSelection?.current();
-    if (!provider) {
+    const connection = this.syncConnection.snapshot();
+    if (connection.state === 'local-only') {
       return 'Set up Git synchronization to protect and restore your library.';
     }
 
-    const providerName = provider === 'git' ? 'Git + LFS' : 'MEGA';
+    if (connection.state === 'checking') {
+      return 'Checking the current synchronization connection.';
+    }
+    if (connection.state === 'gateway-unavailable') {
+      return `${connection.providerLabel ?? 'The synchronization'} gateway is unavailable. Your local library is safe.`;
+    }
+    if (connection.state === 'provider-unconfigured') {
+      return `${connection.providerLabel ?? 'The synchronization provider'} is not configured on this gateway.`;
+    }
+    if (connection.state === 'authorization-required') {
+      return `Connect ${connection.providerLabel ?? 'your provider'} to continue synchronization.`;
+    }
+    if (connection.state === 'destination-required') {
+      return connection.accountLabel
+        ? `${connection.providerLabel} account ${connection.accountLabel} is connected. Choose a sync destination.`
+        : `Choose a ${connection.providerLabel} sync destination.`;
+    }
+
+    const providerName = connection.providerLabel ?? 'Library';
     const status = this.automaticSyncStatus;
     if (status.phase === 'error') {
       return (
@@ -113,16 +135,18 @@ export class NavigationComponent implements OnDestroy {
       return status.errorMessage;
     }
     if (status.lastSuccessAt) {
-      return `${providerName} last synchronized ${formatSyncDate(
-        status.lastSuccessAt,
-      )}.`;
+      return `${providerName} ${connection.accountLabel ?? ''} · ${connection.destinationLabel ?? ''}. Last synchronized ${formatSyncDate(status.lastSuccessAt)}.`;
     }
-    return `${providerName} synchronization is ready.`;
+    return `${providerName} synchronization is ready for ${connection.destinationLabel}.`;
   }
 
   get syncStatusIcon(): string {
-    if (!this.autoSync || !this.syncProviderSelection?.current()) {
+    const readiness = this.syncConnection.snapshot().state;
+    if (!this.autoSync || readiness === 'local-only') {
       return 'cloud_off';
+    }
+    if (readiness !== 'ready') {
+      return readiness === 'checking' ? 'sync' : 'sync_problem';
     }
     switch (this.automaticSyncStatus.phase) {
       case 'syncing':
@@ -144,8 +168,14 @@ export class NavigationComponent implements OnDestroy {
   }
 
   get syncStatusClasses(): string {
-    if (!this.autoSync || !this.syncProviderSelection?.current()) {
+    const readiness = this.syncConnection.snapshot().state;
+    if (!this.autoSync || readiness === 'local-only') {
       return 'bg-white/10 text-white hover:bg-white/20';
+    }
+    if (readiness !== 'ready') {
+      return readiness === 'checking'
+        ? 'bg-white/10 text-white hover:bg-white/20'
+        : 'bg-amber-100 text-amber-950 hover:bg-amber-50';
     }
     switch (this.automaticSyncStatus.phase) {
       case 'error':
@@ -209,8 +239,6 @@ export class NavigationComponent implements OnDestroy {
     this.closeMenu();
     this.removeSyncStatusListener?.();
     this.removeSyncStatusListener = null;
-    this.removeSyncProviderListener?.();
-    this.removeSyncProviderListener = null;
   }
 }
 

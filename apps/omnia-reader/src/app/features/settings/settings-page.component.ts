@@ -19,6 +19,7 @@ import {
 } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { PlatformStorageStatus } from '@omnia-reader/reader/domain';
+import { SyncConnectionStatusService } from '../../sync-connection-status.service';
 
 @Component({
   selector: 'omnia-settings-page',
@@ -38,6 +39,7 @@ export class SettingsPageComponent implements OnInit {
   private readonly quarantine = inject(LibraryQuarantineService);
   private readonly platform = inject(PLATFORM_PORT);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly syncConnection = inject(SyncConnectionStatusService);
   private backupAbortController: AbortController | null = null;
 
   busy = false;
@@ -58,7 +60,41 @@ export class SettingsPageComponent implements OnInit {
     await Promise.all([
       this.loadStorageStatus(),
       this.loadQuarantinedRecords(),
+      this.syncConnection.refresh(),
     ]);
+  }
+
+  get syncConnectionDescription(): string {
+    const connection = this.syncConnection.snapshot();
+    switch (connection.state) {
+      case 'checking':
+        return 'Checking the current synchronization connection…';
+      case 'gateway-unavailable':
+        return `${connection.providerLabel ?? 'The synchronization'} gateway is unavailable. Your local library remains available.`;
+      case 'provider-unconfigured':
+        return `${connection.providerLabel ?? 'The synchronization provider'} must be configured on this gateway before an account can connect.`;
+      case 'authorization-required':
+        return `Connect your ${connection.providerLabel ?? 'provider'} account to continue setup.`;
+      case 'destination-required':
+        return connection.provider === 'git'
+          ? `${connection.providerLabel} account ${connection.accountLabel} is connected. Choose a repository to finish setup.`
+          : `${connection.providerLabel} account ${connection.accountLabel} is connected. Choose a folder to finish setup.`;
+      case 'ready':
+        return `${connection.providerLabel} is connected as ${connection.accountLabel} and synchronizes with ${connection.destinationLabel}.`;
+      default:
+        return 'Connect GitHub or MEGA to protect and restore your library across devices.';
+    }
+  }
+
+  get syncConnectionAction(): string {
+    switch (this.syncConnection.snapshot().state) {
+      case 'ready':
+        return 'Manage library sync';
+      case 'local-only':
+        return 'Configure library sync';
+      default:
+        return 'Continue sync setup';
+    }
   }
 
   get storagePersistenceLabel(): string {

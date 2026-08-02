@@ -1,12 +1,13 @@
+import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import {
-  AUTO_SYNC_SCHEDULER,
-  AutoSyncStatus,
-  SYNC_PROVIDER_SELECTION,
-} from '@omnia-reader/sync/core';
+import { AUTO_SYNC_SCHEDULER, AutoSyncStatus } from '@omnia-reader/sync/core';
 
 import { BackNavigationService } from '../back-navigation.service';
+import {
+  SyncConnectionSnapshot,
+  SyncConnectionStatusService,
+} from '../sync-connection-status.service';
 import { NavigationComponent } from './navigation.component';
 
 describe('NavigationComponent', () => {
@@ -16,18 +17,26 @@ describe('NavigationComponent', () => {
   let unregisterTransientHandler: ReturnType<typeof vi.fn>;
   let syncStatusListener: ((status: AutoSyncStatus) => void) | null;
   let unregisterSyncStatus: ReturnType<typeof vi.fn>;
-  let syncProviderListener: (() => void) | null;
-  let unregisterSyncProvider: ReturnType<typeof vi.fn>;
-  let selectedProvider: 'git' | 'mega' | null;
+  const connection = signal<SyncConnectionSnapshot>({
+    state: 'ready',
+    provider: 'git',
+    providerLabel: 'GitHub',
+    accountLabel: 'reader',
+    destinationLabel: 'reader/library',
+  });
 
   beforeEach(async () => {
     transientHandler = null;
     unregisterTransientHandler = vi.fn();
     syncStatusListener = null;
     unregisterSyncStatus = vi.fn();
-    syncProviderListener = null;
-    unregisterSyncProvider = vi.fn();
-    selectedProvider = 'git';
+    connection.set({
+      state: 'ready',
+      provider: 'git',
+      providerLabel: 'GitHub',
+      accountLabel: 'reader',
+      destinationLabel: 'reader/library',
+    });
     await TestBed.configureTestingModule({
       imports: [NavigationComponent],
       providers: [
@@ -53,15 +62,8 @@ describe('NavigationComponent', () => {
           },
         },
         {
-          provide: SYNC_PROVIDER_SELECTION,
-          useValue: {
-            current: () => selectedProvider,
-            subscribe: vi.fn((listener: () => void) => {
-              syncProviderListener = listener;
-              listener();
-              return unregisterSyncProvider;
-            }),
-          },
+          provide: SyncConnectionStatusService,
+          useValue: { snapshot: connection, refresh: vi.fn() },
         },
       ],
     }).compileComponents();
@@ -133,7 +135,7 @@ describe('NavigationComponent', () => {
 
     expect(statusLink.getAttribute('href')).toBe('/settings/sync');
     expect(statusLink.textContent).toContain('Sync ready');
-    expect(statusLink.getAttribute('title')).toContain('Git + LFS');
+    expect(statusLink.getAttribute('title')).toContain('reader/library');
   });
 
   it('reports live transfer progress and actionable failures globally', () => {
@@ -173,8 +175,7 @@ describe('NavigationComponent', () => {
   });
 
   it('guides users to configure synchronization and releases its listener', () => {
-    selectedProvider = null;
-    syncProviderListener?.();
+    connection.set({ state: 'local-only', provider: null });
     fixture.detectChanges();
 
     const statusLink: HTMLAnchorElement = fixture.nativeElement.querySelector(
@@ -187,7 +188,30 @@ describe('NavigationComponent', () => {
 
     fixture.destroy();
     expect(unregisterSyncStatus).toHaveBeenCalledOnce();
-    expect(unregisterSyncProvider).toHaveBeenCalledOnce();
+  });
+
+  it('never presents stale success as synced when setup is incomplete', () => {
+    if (!syncStatusListener) {
+      throw new Error('Expected the synchronization status subscription');
+    }
+    syncStatusListener({
+      phase: 'idle',
+      lastSuccessAt: '2026-08-01T12:00:00.000Z',
+    });
+    connection.set({
+      state: 'destination-required',
+      provider: 'git',
+      providerLabel: 'GitHub',
+      accountLabel: 'reader',
+    });
+    fixture.detectChanges();
+
+    const statusLink: HTMLAnchorElement = fixture.nativeElement.querySelector(
+      '[data-testid="global-sync-status"]',
+    );
+    expect(statusLink.textContent).toContain('Choose repository');
+    expect(statusLink.textContent).not.toContain('Synced');
+    expect(statusLink.getAttribute('title')).toContain('reader');
   });
 });
 
@@ -201,6 +225,16 @@ describe('NavigationComponent in a local-only build', () => {
           provide: BackNavigationService,
           useValue: {
             registerTransientHandler: () => () => undefined,
+          },
+        },
+        {
+          provide: SyncConnectionStatusService,
+          useValue: {
+            snapshot: signal<SyncConnectionSnapshot>({
+              state: 'local-only',
+              provider: null,
+            }),
+            refresh: vi.fn(),
           },
         },
       ],

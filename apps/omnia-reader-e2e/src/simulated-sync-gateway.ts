@@ -35,6 +35,7 @@ interface SimulatedSyncGatewayOptions {
   conflictFirstBookManifestWrite?: boolean;
   holdFirstObjectUpload?: boolean;
   expectedPublication?: Buffer;
+  selectedGitRepository?: boolean;
 }
 
 /**
@@ -71,7 +72,7 @@ export class SimulatedSyncGateway {
       canPush: true,
     },
   ];
-  private selectedGitRepository = this.gitRepositories[0] ?? null;
+  private selectedGitRepository: SimulatedGitRepository | null;
 
   constructor(
     readonly provider: SimulatedSyncProvider,
@@ -91,6 +92,10 @@ export class SimulatedSyncGateway {
     this.expectedPublication = options.expectedPublication
       ? Buffer.from(options.expectedPublication)
       : undefined;
+    this.selectedGitRepository =
+      options.selectedGitRepository === false
+        ? null
+        : (this.gitRepositories[0] ?? null);
   }
 
   async install(context: BrowserContext): Promise<void> {

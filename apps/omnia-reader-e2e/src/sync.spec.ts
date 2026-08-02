@@ -221,6 +221,44 @@ test('creates and selects a private GitHub synchronization repository', async ({
   await expect(page.locator('select').first()).toHaveValue('2');
 });
 
+test('restores GitHub setup and presents it consistently across Settings and the toolbar', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git', {
+    selectedGitRepository: false,
+  });
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
+
+  await expect(
+    page.getByText('Restored sync repository omnia-reader/e2e-library', {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(page.getByText('Connected to GitHub as')).toBeVisible();
+  await expect(page.locator('select').first()).toHaveValue('1');
+
+  await page.goto('/settings');
+  await expect(page.getByTestId('sync-connection-summary')).toContainText(
+    'GitHub is connected as omnia-e2e',
+  );
+  await expect(page.getByTestId('sync-connection-summary')).toContainText(
+    'omnia-reader/e2e-library',
+  );
+  await expect(
+    page.getByRole('link', { name: 'Manage library sync' }),
+  ).toBeVisible();
+
+  await page.goto('/library');
+  await expect(page.getByTestId('global-sync-status')).toHaveAttribute(
+    'title',
+    /omnia-reader\/e2e-library/,
+  );
+});
+
 test('preserves successful Git sync details across an application reload', async ({
   context,
   page,
@@ -378,7 +416,7 @@ test('cancels an automatic publication upload without losing queued local work',
     );
 
     await page.getByRole('link', { name: 'Settings' }).click();
-    await page.getByRole('link', { name: 'Configure library sync' }).click();
+    await page.getByRole('link', { name: 'Manage library sync' }).click();
 
     const automaticStatus = page.getByTestId('automatic-sync-status');
     await expect(
@@ -391,7 +429,7 @@ test('cancels an automatic publication upload without losing queued local work',
     ).toBeVisible();
     await expect(automaticStatus.locator('progress')).toBeVisible();
     await expect(
-      page.getByText(/1 local change is waiting to sync/),
+      page.getByText(/local changes? (?:is|are) waiting to sync/),
     ).toBeVisible();
 
     await automaticStatus
@@ -410,7 +448,7 @@ test('cancels an automatic publication upload without losing queued local work',
       'Sync cancelled. View sync details.',
     );
     await expect(
-      page.getByText(/1 local change is waiting to sync/),
+      page.getByText(/local changes? (?:is|are) waiting to sync/),
     ).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Sync books and progress' }),
@@ -452,12 +490,14 @@ test('deletes a synchronized publication locally and remotely', async ({
     .find((path) => path.endsWith('/book.json'));
   const objectPath = gateway
     .objectPaths()
-    .find((path) => path.endsWith('.pdf'));
+    .find((path) => path.includes('/library/') && path.endsWith('.pdf'));
   expect(manifestPath).toBeDefined();
   expect(objectPath).toBeDefined();
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Remove Omnia PDF Fixture' }).click();
+  await page
+    .getByRole('button', { name: 'Remove PDF for Omnia PDF Fixture' })
+    .click();
   const confirmation = page.getByRole('dialog');
   await expect(confirmation).toContainText(
     'its remote publication file is deleted during the next synchronization',
@@ -537,8 +577,11 @@ test('deletes a remote publication backup without deleting the local copy', asyn
   const manifestPath = gateway
     .documentPaths()
     .find((path) => path.endsWith('/book.json'));
+  const libraryObjectPath = gateway
+    .objectPaths()
+    .find((path) => path.includes('/library/'));
   expect(manifestPath).toBeDefined();
-  expect(gateway.objectPaths()).toHaveLength(1);
+  expect(libraryObjectPath).toBeDefined();
   await expect(
     page.getByRole('button', {
       name: 'Delete remote backup for Omnia PDF Fixture',
@@ -564,7 +607,7 @@ test('deletes a remote publication backup without deleting the local copy', asyn
   await expect(
     page.getByText('No publication files are stored in this sync destination'),
   ).toBeVisible();
-  expect(gateway.objectPaths()).toEqual([]);
+  expect(gateway.objectPaths()).not.toContain(libraryObjectPath);
   expect(gateway.documentContent(manifestPath as string)).toBeNull();
   const deletionPath = gateway
     .documentPaths()
@@ -582,7 +625,7 @@ test('deletes a remote publication backup without deleting the local copy', asyn
   await expect(page.getByRole('status')).toContainText('Sync complete:', {
     timeout: 30_000,
   });
-  expect(gateway.objectPaths()).toEqual([]);
+  expect(gateway.objectPaths()).not.toContain(libraryObjectPath);
   await page.goto('/');
   await expect(
     page.getByText('Omnia PDF Fixture', { exact: true }),
