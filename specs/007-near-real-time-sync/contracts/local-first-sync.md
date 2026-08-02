@@ -2,7 +2,7 @@
 
 ## Local activity
 
-- A durable non-book operation restarts a 1,000 ms trailing timer.
+- A durable progress operation restarts a 2,000 ms trailing timer; annotations and bookmarks use their separately budgeted interactive timer.
 - Multiple operations inside the window create one attempt.
 - Book, background, online, startup, and destination events remain immediate.
 - Provider `Retry-After` overrides shorter schedules.

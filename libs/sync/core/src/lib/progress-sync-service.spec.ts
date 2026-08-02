@@ -126,24 +126,25 @@ describe('ProgressSyncService', () => {
     expect(remote.readRequests).toBe(0);
   });
 
-  it('coalesces queued updates and acknowledges them only after the remote write', async () => {
+  it('coalesces many queued page updates into one remote write', async () => {
     const remote = new MemorySyncTransport();
-    const first = progress(
-      BOOK_ID,
-      'device-a',
-      '2026-07-24T10:00:00.000Z',
-      0.2,
+    const updates = Array.from({ length: 20 }, (_, index) =>
+      progress(
+        BOOK_ID,
+        'device-a',
+        `2026-07-24T10:00:${String(index).padStart(2, '0')}.000Z`,
+        (index + 1) / 20,
+      ),
     );
-    const latest = progress(
-      BOOK_ID,
-      'device-a',
-      '2026-07-24T10:01:00.000Z',
-      0.3,
+    const latest = updates[updates.length - 1];
+    if (!latest) {
+      throw new Error('The progress coalescing fixture requires updates');
+    }
+    const journal = new MemoryJournal(
+      updates.map((update, index) =>
+        operation(`page-${index + 1}`, index + 1, update),
+      ),
     );
-    const journal = new MemoryJournal([
-      operation('one', 1, first),
-      operation('two', 2, latest),
-    ]);
     const service = new ProgressSyncService(
       remote,
       journal,
@@ -159,6 +160,7 @@ describe('ProgressSyncService', () => {
       rejected: 0,
     });
     expect(await journal.pending()).toEqual([]);
+    expect(remote.writeAttempts).toBe(1);
     const stored = remote.files.get(progressDocumentPath(latest));
     expect(stored?.path).toBe(progressDocumentPath(latest));
     expect(JSON.parse(stored?.content ?? '')).toEqual(latest);

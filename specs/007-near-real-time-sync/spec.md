@@ -10,7 +10,7 @@
 
 ## Outcome and Scope
 
-Durable local reading changes reach GitHub after a one-second quiet boundary. Changes made by another device are discovered through a lightweight GitHub revision check within ten seconds while the application is visible and online.
+Durable page-progress changes reach GitHub after a two-second quiet boundary so continued paging collapses into one attempt. Interactive annotation and bookmark changes use their separate latency budget. Changes made by another device are discovered through a lightweight GitHub revision check within ten seconds while the application is visible and online.
 
 The supported topology does not require a public callback service. GitHub push webhooks, server-sent events, browser notification streams, replay brokers, and webhook secrets are outside this feature.
 
@@ -19,7 +19,7 @@ The supported topology does not require a public callback service. GitHub push w
 ### Local changes disappear into sync (P1)
 
 1. Progress, bookmark, and annotation writes complete locally before network work.
-2. Clustered non-book operations create one synchronization attempt one second after the latest write.
+2. Clustered page-progress operations create one synchronization attempt two seconds after the latest write.
 3. Book changes, destination selection, backgrounding, startup, and reconnect remain immediate.
 4. Offline and provider-rate-limited states retain durable work and retry without blocking reading.
 
@@ -43,7 +43,7 @@ The supported topology does not require a public callback service. GitHub push w
 
 ## Success Criteria
 
-- **SC-001**: Deterministic scheduler tests start clustered local work after one second.
+- **SC-001**: Deterministic scheduler tests start clustered progress work after two quiet seconds and collapse changes arriving during an active attempt into one later attempt.
 - **SC-002**: Deterministic scheduler tests perform one visible GitHub revision check every ten seconds and none while hidden or stopped.
 - **SC-003**: A stable repeated Git sync performs only `GET /revision`.
 - **SC-004**: Offline, rate-limited, and active-sync cases do not create overlapping work or hot loops.

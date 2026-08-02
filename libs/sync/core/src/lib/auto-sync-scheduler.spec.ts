@@ -47,7 +47,7 @@ describe('AutoSyncScheduler', () => {
     });
   });
 
-  it('synchronizes clustered progress one second after activity becomes quiet', async () => {
+  it('collapses continued paging into one sync after two quiet seconds', async () => {
     const environment = new FakeEnvironment();
     const activity = new SyncActivityNotifier();
     const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
@@ -57,9 +57,11 @@ describe('AutoSyncScheduler', () => {
     await flushPromises();
 
     activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(500);
+    environment.advance(1_500);
     activity.notify({ kind: 'progress', entityId: 'sha256:book' });
-    environment.advance(999);
+    environment.advance(1_500);
+    activity.notify({ kind: 'progress', entityId: 'sha256:book' });
+    environment.advance(1_999);
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(1);
 
@@ -68,6 +70,40 @@ describe('AutoSyncScheduler', () => {
     expect(synchronize).toHaveBeenCalledTimes(2);
 
     expect(scheduler.status().reason).toBe('reading-quiet');
+  });
+
+  it('collapses progress arriving during an active sync into one trailing attempt', async () => {
+    const environment = new FakeEnvironment();
+    const activity = new SyncActivityNotifier();
+    let release = (): void => undefined;
+    const active = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const synchronize = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        await active;
+        return EMPTY_RESULT;
+      })
+      .mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(environment, activity, synchronize);
+    scheduler.start();
+    environment.advance(0);
+    await flushPromises();
+
+    activity.notify({ kind: 'progress', entityId: 'sha256:book' });
+    activity.notify({ kind: 'progress', entityId: 'sha256:book' });
+    activity.notify({ kind: 'progress', entityId: 'sha256:book' });
+    release();
+    await flushPromises();
+
+    environment.advance(1_999);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(1);
+
+    environment.advance(1);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
   });
 
   it('schedules interactive annotation work after a short trailing quiet period', async () => {
@@ -579,7 +615,7 @@ function createScheduler(
 ): AutoSyncScheduler {
   return new AutoSyncScheduler({ synchronize }, selection, activity, {
     environment,
-    quietIntervalMs: 1_000,
+    quietIntervalMs: 2_000,
     interactiveQuietIntervalMs: 50,
     revisionCheckIntervalMs: 10_000,
     rateLimitStore,

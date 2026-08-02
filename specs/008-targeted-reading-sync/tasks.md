@@ -5,7 +5,7 @@
 - [x] T003 Add failing exact-record request-count tests for progress, bookmarks, and annotations.
 - [x] T004 Implement targeted reading-state coordination and GitHub-only trusted dispatch in `libs/sync/core`.
 - [x] T005 Implement exact-operation synchronization in progress, bookmark, and annotation services.
-- [x] T006 Reduce highlight/bookmark trailing debounce to 150 ms while retaining one second for progress.
+- [x] T006 Use 50 ms for new highlight/bookmark latency and a two-second trailing idle window for progress-page coalescing.
 - [x] T007 Remove the redundant GitHub provider content read and cover optimistic conflict behavior.
 - [x] T008 Run full affected tests, lint, production builds, formatting, and diff checks.
 - [x] T009 Perform repository-specific synchronization risk review and resolve actionable findings.
@@ -13,7 +13,7 @@
 
 ## Verification Evidence
 
-- `npx nx test sync-core --skip-nx-cache`: 21 files, 165 tests passed, including the 50 ms quiet plus two 300 ms provider-leg sub-second budget.
+- `npx nx test sync-core --skip-nx-cache`: 21 files, 166 tests passed, including the 50 ms quiet plus two 300 ms provider-leg sub-second budget, two-second trailing progress collapse, and a 20-page batch producing one remote write.
 - `npx nx test sync-gateway --skip-nx-cache`: 8 files, 116 passed and 1 optional Redis test skipped.
 - Focused `omnia-reader` composition test: 1 passed.
 - `npx nx run-many -t lint -p sync-core sync-gateway omnia-reader --skip-nx-cache`: passed.

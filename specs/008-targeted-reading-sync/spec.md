@@ -34,7 +34,7 @@ Given a stale or missing trusted destination checkpoint, mixed pending work, mal
 ## Requirements
 
 - **FR-001**: Highlight and bookmark synchronization MUST be scheduled 50 ms after the last interactive mutation unless provider backoff requires a longer delay.
-- **FR-002**: Progress synchronization MUST retain its one-second quiet period to bound provider commits during reading.
+- **FR-002**: Progress synchronization MUST use a two-second trailing quiet period so continued paging collapses into one provider attempt.
 - **FR-003**: A targeted attempt MUST require a selected GitHub provider, a supported destination revision, a non-empty reading-state-only journal batch, and equality between the current destination revision and the last trusted full checkpoint.
 - **FR-004**: A new targeted highlight or bookmark MUST attempt optimistic creation without a preflight read. An existing or conflicting record MAY perform one exact-document read and MUST NOT list unrelated prefixes or run schema, publication, or logical-book workers.
 - **FR-005**: Successful writes MUST be acknowledged only after the authoritative provider response. Conflicts, rejected operations, remaining work, and pushes MUST prevent the old global checkpoint from being treated as converged.
