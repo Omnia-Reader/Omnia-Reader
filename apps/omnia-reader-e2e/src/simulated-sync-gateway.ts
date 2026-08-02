@@ -73,6 +73,7 @@ export class SimulatedSyncGateway {
     },
   ];
   private selectedGitRepository: SimulatedGitRepository | null;
+  private readonly requests: string[] = [];
 
   constructor(
     readonly provider: SimulatedSyncProvider,
@@ -125,6 +126,14 @@ export class SimulatedSyncGateway {
     this.releaseHeldObjectUpload();
   }
 
+  clearRequestHistory(): void {
+    this.requests.length = 0;
+  }
+
+  requestHistory(): readonly string[] {
+    return [...this.requests];
+  }
+
   private async handle(route: Route): Promise<void> {
     const request = route.request();
     const url = new URL(request.url());
@@ -132,6 +141,7 @@ export class SimulatedSyncGateway {
       this.provider === 'git' ? '/api/sync/github' : '/api/sync/mega';
     const path = url.pathname.slice(basePath.length);
     const method = request.method();
+    this.requests.push(`${method} ${path}`);
 
     if (path === '/session' && method === 'GET') {
       await this.fulfillJson(route, this.session());
@@ -238,6 +248,22 @@ export class SimulatedSyncGateway {
       return;
     }
 
+    if (this.provider === 'git' && path === '/revision' && method === 'GET') {
+      const repository = this.selectedGitRepository;
+      if (!repository) {
+        await this.fulfillJson(
+          route,
+          { message: 'No repository selected' },
+          404,
+        );
+        return;
+      }
+      await this.fulfillJson(route, {
+        revision: `${repository.id}:${repository.defaultBranch}:e2e-r${this.revisionSequence}`,
+      });
+      return;
+    }
+
     const listPath = this.provider === 'git' ? '/files' : '/documents';
     if (path === listPath && method === 'GET') {
       const prefix = url.searchParams.get('prefix') ?? '';
@@ -290,6 +316,7 @@ export class SimulatedSyncGateway {
         return;
       }
       this.documents.delete(remotePath);
+      this.nextRevision();
       await route.fulfill({ status: 204 });
       return;
     }
@@ -346,6 +373,7 @@ export class SimulatedSyncGateway {
         return;
       }
       this.objects.delete(remotePath);
+      this.nextRevision();
       await route.fulfill({ status: 204 });
       return;
     }

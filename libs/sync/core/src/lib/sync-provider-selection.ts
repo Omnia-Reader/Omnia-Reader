@@ -5,6 +5,7 @@ import {
   ObjectDeleteRequest,
   ObjectDownloadOptions,
   ObjectUploadRequest,
+  ObjectTransferOptions,
 } from './library-sync-transport';
 
 export type SyncProviderKind = 'git' | 'mega';
@@ -74,6 +75,14 @@ export class SelectedLibrarySyncTransport implements LibrarySyncTransport {
       Record<SyncProviderKind, LibrarySyncTransport>
     >,
   ) {}
+
+  destinationRevision(options?: Pick<ObjectTransferOptions, 'signal'>) {
+    const active = this.active();
+    if (!active.destinationRevision) {
+      return Promise.resolve(null);
+    }
+    return active.destinationRevision(options);
+  }
 
   list(prefix: string) {
     return this.active().list(prefix);

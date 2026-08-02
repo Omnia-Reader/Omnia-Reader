@@ -309,6 +309,7 @@ export class BookSyncService {
     options: SyncWorkerOptions,
   ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
     throwIfSyncAborted(options.signal);
+    let mutated = false;
     const deletion = await this.remote.read(
       bookDeletionPath(pending.manifest.bookId),
     );
@@ -319,9 +320,12 @@ export class BookSyncService {
       !isNewerThanDeletion(pending, remoteDeletion)
     ) {
       this.exclusions.exclude(pending.manifest.bookId);
-      await this.discardDeletedObjects(remoteDeletion, pending.manifest);
+      mutated = await this.discardDeletedObjects(
+        remoteDeletion,
+        pending.manifest,
+      );
       await this.journal.acknowledge(pending.operationIds);
-      return { pushed: false, conflicts: 0, rejected: 0 };
+      return { pushed: mutated, conflicts: 0, rejected: 0 };
     }
     const current = await this.remote.read(bookManifestPath(pending.manifest));
     const remoteBook = current ? parseBookSyncDocument(current) : null;
@@ -331,9 +335,9 @@ export class BookSyncService {
       !isNewerThanDeletion(pending, remoteBook)
     ) {
       this.exclusions.exclude(pending.manifest.bookId);
-      await this.discardDeletedObjects(remoteBook, pending.manifest);
+      mutated = await this.discardDeletedObjects(remoteBook, pending.manifest);
       await this.journal.acknowledge(pending.operationIds);
-      return { pushed: false, conflicts: 0, rejected: 0 };
+      return { pushed: mutated, conflicts: 0, rejected: 0 };
     }
     const source = await this.repository.getBookSource(pending.manifest.bookId);
     if (!source) {
@@ -390,6 +394,7 @@ export class BookSyncService {
           rejected: pending.operationIds.length,
         };
       }
+      mutated = true;
     }
 
     const result = await this.pushManifest(pending, options.signal);
@@ -401,7 +406,7 @@ export class BookSyncService {
       });
       this.exclusions.include(pending.manifest.bookId);
     }
-    return result;
+    return { ...result, pushed: mutated || result.pushed };
   }
 
   private async pushDeletion(
@@ -410,6 +415,7 @@ export class BookSyncService {
   ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
     const path = bookDeletionPath(pending.tombstone.bookId);
     let conflicts = 0;
+    let mutated = false;
 
     for (let attempt = 0; ; attempt += 1) {
       throwIfSyncAborted(options.signal);
@@ -440,6 +446,7 @@ export class BookSyncService {
             expectedRevision: current?.revision,
             message: `Delete book ${tombstone.bookId}`,
           });
+          mutated = true;
         }
         const manifestPath = bookManifestPath(tombstone);
         const manifest = await this.remote.read(manifestPath);
@@ -461,10 +468,12 @@ export class BookSyncService {
             expectedRevision: manifest.revision,
             message: `Delete book ${tombstone.bookId}`,
           });
+          mutated = true;
         }
-        await this.discardDeletedObjects(tombstone, remoteBook);
+        mutated =
+          (await this.discardDeletedObjects(tombstone, remoteBook)) || mutated;
         await this.journal.acknowledge(pending.operationIds);
-        return { pushed: true, conflicts, rejected: 0 };
+        return { pushed: mutated, conflicts, rejected: 0 };
       } catch (error) {
         if (
           !(error instanceof SyncConflictError) ||
@@ -491,10 +500,10 @@ export class BookSyncService {
       const current = await this.remote.read(path);
       if (current?.content === content) {
         if (await this.discardManifestIfDeleted(pending, current)) {
-          return { pushed: false, conflicts, rejected: 0 };
+          return { pushed: true, conflicts, rejected: 0 };
         }
         await this.journal.acknowledge(pending.operationIds);
-        return { pushed: true, conflicts, rejected: 0 };
+        return { pushed: false, conflicts, rejected: 0 };
       }
       if (current) {
         const currentBook = parseBookSyncDocument(current);
@@ -504,9 +513,12 @@ export class BookSyncService {
           !isNewerThanDeletion(pending, currentBook)
         ) {
           this.exclusions.exclude(pending.manifest.bookId);
-          await this.discardDeletedObjects(currentBook, pending.manifest);
+          const mutated = await this.discardDeletedObjects(
+            currentBook,
+            pending.manifest,
+          );
           await this.journal.acknowledge(pending.operationIds);
-          return { pushed: false, conflicts, rejected: 0 };
+          return { pushed: mutated, conflicts, rejected: 0 };
         }
         if (!currentBook) {
           return {
@@ -556,9 +568,9 @@ export class BookSyncService {
     }
   }
 
-  private async discardDeletedObject(path: string): Promise<void> {
+  private async discardDeletedObject(path: string): Promise<boolean> {
     if (!this.remote.deleteObject) {
-      return;
+      return false;
     }
     const object = await this.remote.headObject(path);
     if (object) {
@@ -566,7 +578,9 @@ export class BookSyncService {
         path,
         expectedRevision: object.revision,
       });
+      return true;
     }
+    return false;
   }
 
   private async discardManifestIfDeleted(
@@ -609,16 +623,17 @@ export class BookSyncService {
   private async discardDeletedObjects(
     tombstone: BookSyncDeletionTombstone,
     remoteBook: BookSyncDocument | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const paths = new Set([
       tombstone.objectPath,
       bookObjectPath(tombstone),
       legacyBookObjectPath(tombstone.bookId, tombstone.format),
       ...(remoteBook ? [remoteBook.objectPath] : []),
     ]);
-    for (const path of paths) {
-      await this.discardDeletedObject(path);
-    }
+    const deleted = await Promise.all(
+      [...paths].map((path) => this.discardDeletedObject(path)),
+    );
+    return deleted.some(Boolean);
   }
 
   private async cleanupLegacyRemoteLayout(): Promise<void> {

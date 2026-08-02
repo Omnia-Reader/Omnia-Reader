@@ -30,6 +30,7 @@ import {
   BookmarkSyncService,
   BookSyncExclusions,
   BrowserBookSyncExclusions,
+  ChangeAwareSyncWorker,
   BrowserSyncProviderSelection,
   LibrarySyncCoordinator,
   LibrarySyncManifestService,
@@ -94,8 +95,9 @@ function createLibrarySyncService(
     ProgressDocumentRepository &
     LogicalBookStateRepository,
   exclusions: BookSyncExclusions,
+  selection: SyncProviderSelection,
 ): SyncWorker {
-  return new LibrarySyncCoordinator({
+  const coordinator = new LibrarySyncCoordinator({
     schema: new LibrarySyncManifestService(remote),
     logicalBooks: new LogicalBookSyncService(remote, journal, repository),
     books: new BookSyncService(remote, journal, repository, { exclusions }),
@@ -103,6 +105,7 @@ function createLibrarySyncService(
     bookmarks: new BookmarkSyncService(remote, journal, repository),
     annotations: new AnnotationSyncService(remote, journal, repository),
   });
+  return new ChangeAwareSyncWorker(coordinator, remote, journal, selection);
 }
 
 function createRemoteBookBackupService(
@@ -264,6 +267,7 @@ export const appConfig: ApplicationConfig = {
               SYNC_OPERATION_JOURNAL,
               LIBRARY_REPOSITORY,
               BOOK_SYNC_EXCLUSIONS,
+              SYNC_PROVIDER_SELECTION,
             ],
           },
           {

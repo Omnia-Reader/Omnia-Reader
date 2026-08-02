@@ -5,6 +5,7 @@ export interface SyncWorkerResult {
   pushed: number;
   conflicts: number;
   rejected: number;
+  unchanged?: true;
 }
 
 export interface SyncWorkerOptions {
@@ -66,15 +67,16 @@ export class LibrarySyncCoordinator implements SyncWorker {
       ? await this.workers.logicalBooks.synchronize(options)
       : EMPTY_SYNC_RESULT;
     throwIfSyncAborted(options.signal);
-    const progress = await this.workers.progress.synchronize(options);
+    const [progress, bookmarks, annotations] = await Promise.all([
+      this.workers.progress.synchronize(options),
+      this.workers.bookmarks
+        ? this.workers.bookmarks.synchronize(options)
+        : EMPTY_SYNC_RESULT,
+      this.workers.annotations
+        ? this.workers.annotations.synchronize(options)
+        : EMPTY_SYNC_RESULT,
+    ]);
     throwIfSyncAborted(options.signal);
-    const bookmarks = this.workers.bookmarks
-      ? await this.workers.bookmarks.synchronize(options)
-      : EMPTY_SYNC_RESULT;
-    throwIfSyncAborted(options.signal);
-    const annotations = this.workers.annotations
-      ? await this.workers.annotations.synchronize(options)
-      : EMPTY_SYNC_RESULT;
     return {
       pulled:
         schema.pulled +

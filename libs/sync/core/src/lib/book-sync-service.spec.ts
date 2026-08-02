@@ -97,6 +97,22 @@ describe('BookSyncService', () => {
     expect(remote.documents.has(bookManifestPath(fixture.book))).toBe(true);
   });
 
+  it('reports no push when the publication and manifest are already identical', async () => {
+    const remote = new MemoryTransport();
+    remote.seed(createBookSyncManifest(fixture.book), fixture.blob);
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      new MemoryRepository(fixture.book, fixture.source),
+    );
+
+    await expect(service.push()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    expect(remote.events).toEqual([]);
+  });
+
   it('removes the obsolete hash-addressed layout after publishing named files', async () => {
     const remote = new MemoryTransport();
     const legacyManifest = legacyBookManifestPath(fixture.book.id);
@@ -204,6 +220,26 @@ describe('BookSyncService', () => {
     expect(remote.objects.has(fixture.manifest.objectPath)).toBe(false);
   });
 
+  it('reports no push when an excluded remote deletion is already complete', async () => {
+    const remote = new MemoryTransport();
+    remote.seedTombstone(
+      createBookSyncDeletionTombstone(fixture.book, '2026-07-25T03:00:00.000Z'),
+    );
+    remote.events.length = 0;
+    const service = new BookSyncService(
+      remote,
+      new MemoryJournal(),
+      new MemoryRepository(),
+      { exclusions: new MemoryBookSyncExclusions([fixture.book.id]) },
+    );
+
+    await expect(service.push()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    expect(remote.events).toEqual([]);
+  });
+
   it('does not restore a book excluded while its download is in flight', async () => {
     const repository = new MemoryRepository();
     const remote = new MemoryTransport();
@@ -286,7 +322,7 @@ describe('BookSyncService', () => {
     );
 
     await expect(service.push()).resolves.toMatchObject({
-      pushed: 0,
+      pushed: 1,
       rejected: 0,
     });
     expect(journal.acknowledged).toEqual(['op-1']);
@@ -344,7 +380,7 @@ describe('BookSyncService', () => {
     );
 
     await expect(service.push()).resolves.toMatchObject({
-      pushed: 0,
+      pushed: 1,
       conflicts: 0,
       rejected: 0,
     });

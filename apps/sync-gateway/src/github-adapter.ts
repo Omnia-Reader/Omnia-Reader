@@ -120,6 +120,7 @@ const MAX_TRANSFER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PROVIDER_RETRY_BASE_VALUE_MS = 1_000;
 const MAX_PROVIDER_RETRY_BASE_VALUE_MS = 1_000;
 const MAX_REMOTE_DOCUMENTS = 10_000;
+const MAX_CONCURRENT_DOCUMENT_READS = 8;
 
 export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
   private readonly fetcher: typeof fetch;
@@ -461,20 +462,35 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         'The synchronization document set is too large',
       );
     }
-    const documents: RemoteDocument[] = [];
-    for (const blob of blobs) {
+    return mapConcurrent(blobs, MAX_CONCURRENT_DOCUMENT_READS, async (blob) => {
       const content = await this.readBlob(
         context.repository,
         context.token,
         blob['sha'] as string,
       );
-      documents.push({
+      return {
         path: blob['path'] as string,
         content,
         revision: blob['sha'] as string,
-      });
+      };
+    });
+  }
+
+  async destinationRevision(sessionId: string): Promise<string> {
+    const context = await this.repositoryContext(sessionId);
+    const branch = encodeURIComponent(context.repository.defaultBranch);
+    const tree = await this.githubJson<unknown>(
+      `/repos/${encodeFullName(context.repository.fullName)}/git/trees/${branch}`,
+      { token: context.token },
+      [404, 409],
+    );
+    if (tree === null) {
+      return `${context.repository.id}:${context.repository.defaultBranch}:empty`;
     }
-    return documents;
+    if (!isRecord(tree) || !isGitSha(tree['sha'])) {
+      throw providerProtocolError();
+    }
+    return `${context.repository.id}:${context.repository.defaultBranch}:${tree['sha']}`;
   }
 
   async readDocument(
@@ -2019,6 +2035,33 @@ function stripTrailingSlash(value: string): string {
 
 function isGitSha(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{40,64}$/.test(value);
+}
+
+async function mapConcurrent<Input, Output>(
+  values: readonly Input[],
+  concurrency: number,
+  transform: (value: Input) => Promise<Output>,
+): Promise<Output[]> {
+  const output = new Array<Output>(values.length);
+  let nextIndex = 0;
+  let failed = false;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (!failed && nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        try {
+          output[index] = await transform(values[index] as Input);
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+  return output;
 }
 
 function isPkceCodeVerifier(value: unknown): value is string {

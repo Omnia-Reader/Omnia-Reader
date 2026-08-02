@@ -231,6 +231,20 @@ describe('sync gateway', () => {
     await app.close();
   });
 
+  it('exposes a no-store selected-destination revision for capable providers', async () => {
+    const app = gateway();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/sync/github/revision',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.json()).toEqual({ revision: 'github:revision:0' });
+    await app.close();
+  });
+
   it('reports an unconfigured provider before authorization starts', async () => {
     const app = gateway(new UnconfiguredSyncGatewayAdapter('GitHub/Git LFS'));
 
@@ -835,6 +849,11 @@ class MemoryGatewayAdapter implements SyncGatewayAdapter {
     void sessionId;
     void selection;
     return this.session();
+  }
+
+  async destinationRevision(sessionId: string): Promise<string> {
+    void sessionId;
+    return `${this.kind}:revision:${this.revision}`;
   }
 
   async listDocuments(

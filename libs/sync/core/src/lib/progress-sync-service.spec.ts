@@ -62,7 +62,7 @@ describe('ProgressSyncService', () => {
     expect(await repository.listProgressDocuments()).toEqual([older, newer]);
   });
 
-  it('rejects progress for a publication that is not in the local library', async () => {
+  it('ignores valid progress for a publication that is not in the local library', async () => {
     const remote = new MemorySyncTransport();
     const orphan = progress(
       `sha256:${'b'.repeat(64)}`,
@@ -79,9 +79,51 @@ describe('ProgressSyncService', () => {
       pulled: 0,
       pushed: 0,
       conflicts: 0,
-      rejected: 1,
+      rejected: 0,
     });
     await expect(repository.listProgressDocuments()).resolves.toEqual([]);
+  });
+
+  it('normalizes and acknowledges legacy unknown-position journal entries', async () => {
+    const current = progress(
+      BOOK_ID,
+      'device-a',
+      '2026-07-24T10:01:00.000Z',
+      0.3,
+    );
+    const legacy = {
+      ...progress(BOOK_ID, 'device-a', '2026-07-24T10:00:00.000Z', 0.2),
+      locator: {
+        href: 'chapter.xhtml',
+        type: 'application/xhtml+xml',
+        locations: { position: -1, totalProgression: 0.2 },
+      },
+    };
+    const remote = new MemorySyncTransport();
+    remote.seed(current);
+    const journal = new MemoryJournal([
+      {
+        id: 'legacy',
+        entity: 'progress',
+        entityId: BOOK_ID,
+        operation: 'upsert',
+        revision: 1,
+        createdAt: legacy.updatedAt,
+        payload: legacy,
+      },
+    ]);
+    const service = new ProgressSyncService(
+      remote,
+      journal,
+      new MemoryProgressRepository(current),
+    );
+
+    await expect(service.synchronize()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    await expect(journal.pending()).resolves.toEqual([]);
+    expect(remote.readRequests).toBe(0);
   });
 
   it('coalesces queued updates and acknowledges them only after the remote write', async () => {
@@ -143,6 +185,28 @@ describe('ProgressSyncService', () => {
       rejected: 0,
     });
     expect(await remote.read(progressDocumentPath(local))).not.toBeNull();
+  });
+
+  it('reuses the pulled snapshot and reports no push for identical progress', async () => {
+    const local = progress(
+      BOOK_ID,
+      'device-a',
+      '2026-07-24T10:00:00.000Z',
+      0.4,
+    );
+    const remote = new MemorySyncTransport();
+    remote.seed(local);
+    const service = new ProgressSyncService(
+      remote,
+      new MemoryJournal(),
+      new MemoryProgressRepository(local),
+    );
+
+    await expect(service.synchronize()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    expect(remote.readRequests).toBe(0);
   });
 
   it('migrates every cached device document to a newly selected provider', async () => {
@@ -303,6 +367,7 @@ describe('ProgressSyncService', () => {
 class MemorySyncTransport implements LibrarySyncTransport {
   readonly files = new Map<string, RemoteDocument>();
   conflictsBeforeSuccess = 0;
+  readRequests = 0;
   writeAttempts = 0;
   private revision = 0;
 
@@ -313,6 +378,7 @@ class MemorySyncTransport implements LibrarySyncTransport {
   }
 
   async read(path: string): Promise<RemoteDocument | null> {
+    this.readRequests += 1;
     return this.files.get(path) ?? null;
   }
 

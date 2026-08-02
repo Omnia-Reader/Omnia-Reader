@@ -58,12 +58,13 @@ export class BookmarkSyncService {
     return this.activeSync;
   }
 
-  async pull(): Promise<SyncWorkerResult> {
-    const documents = await this.remote.list(BOOKMARKS_ROOT);
+  async pull(documents?: readonly RemoteDocument[]): Promise<SyncWorkerResult> {
+    const remoteDocuments =
+      documents ?? (await this.remote.list(BOOKMARKS_ROOT));
     let pulled = 0;
     let rejected = 0;
 
-    for (const document of documents) {
+    for (const document of remoteDocuments) {
       const incoming = parseBookmarkDocument(document);
       if (!incoming || bookmarkDocumentPath(incoming) !== document.path) {
         rejected += 1;
@@ -86,7 +87,9 @@ export class BookmarkSyncService {
     return { pulled, pushed: 0, conflicts: 0, rejected };
   }
 
-  async push(): Promise<SyncWorkerResult> {
+  async push(
+    knownDocuments?: ReadonlyMap<string, RemoteDocument>,
+  ): Promise<SyncWorkerResult> {
     const pending = await this.journal.pending();
     const bookmarkOperations = pending.filter(
       (operation) => operation.entity === 'bookmark',
@@ -106,7 +109,11 @@ export class BookmarkSyncService {
     let conflicts = 0;
     let rejected = bookmarkOperations.length - writes.acceptedOperationCount;
     for (const write of writes.documents.values()) {
-      const result = await this.pushBookmark(write);
+      const path = bookmarkDocumentPath(write.bookmark);
+      const result = await this.pushBookmark(
+        write,
+        knownDocuments ? (knownDocuments.get(path) ?? null) : undefined,
+      );
       pushed += result.pushed ? 1 : 0;
       conflicts += result.conflicts;
       rejected += result.rejected;
@@ -115,8 +122,11 @@ export class BookmarkSyncService {
   }
 
   private async runSynchronization(): Promise<SyncWorkerResult> {
-    const pulled = await this.pull();
-    const pushed = await this.push();
+    const documents = await this.remote.list(BOOKMARKS_ROOT);
+    const pulled = await this.pull(documents);
+    const pushed = await this.push(
+      new Map(documents.map((document) => [document.path, document])),
+    );
     return {
       pulled: pulled.pulled,
       pushed: pushed.pushed,
@@ -127,12 +137,16 @@ export class BookmarkSyncService {
 
   private async pushBookmark(
     pending: PendingBookmarkWrite,
+    initialCurrent?: RemoteDocument | null,
   ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
     const path = bookmarkDocumentPath(pending.bookmark);
     let conflicts = 0;
 
     for (let attempt = 0; ; attempt += 1) {
-      const current = await this.remote.read(path);
+      const current =
+        attempt === 0 && initialCurrent !== undefined
+          ? initialCurrent
+          : await this.remote.read(path);
       const remoteBookmark = current ? parseBookmarkDocument(current) : null;
       if (
         current &&
@@ -156,7 +170,7 @@ export class BookmarkSyncService {
       const content = serializeBookmark(bookmark);
       if (current?.content === content) {
         await this.journal.acknowledge(pending.operationIds);
-        return { pushed: true, conflicts, rejected: 0 };
+        return { pushed: false, conflicts, rejected: 0 };
       }
 
       try {

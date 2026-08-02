@@ -9,6 +9,7 @@ import {
   type SyncProviderKind,
   supportsCredentialAuthorization,
   supportsDestinationCreation,
+  supportsDestinationRevision,
 } from './gateway-contract.js';
 import {
   logicalSyncPath,
@@ -194,6 +195,15 @@ export async function registerProviderRoutes(
       requireSameOriginMutation(request);
       const sessionId = session(request, reply, cookieName, options);
       return destinationAdapter.createDestination(sessionId, request.body);
+    });
+  }
+
+  if (supportsDestinationRevision(options.adapter)) {
+    const revisionAdapter = options.adapter;
+    app.get('/revision', async (request, reply) => {
+      const sessionId = session(request, reply, cookieName, options);
+      const revision = await revisionAdapter.destinationRevision(sessionId);
+      return reply.header('Cache-Control', 'no-store').send({ revision });
     });
   }
 

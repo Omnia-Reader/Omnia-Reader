@@ -22,6 +22,7 @@ import {
   RemoteBookBackup,
   SYNC_PROVIDER_SELECTION,
   SyncProviderKind,
+  SyncWorkerResult,
 } from '@omnia-reader/sync/core';
 import {
   GITHUB_GATEWAY,
@@ -97,8 +98,8 @@ export class SyncSettingsPageComponent implements OnInit {
       if (nextSuccess !== observedSuccess) {
         observedSuccess = nextSuccess;
         this.lastCompletedSyncAt = nextSuccess;
-        if (nextSuccess) {
-          void this.refreshAfterAutomaticSync();
+        if (nextSuccess && status.reason !== 'manual') {
+          void this.refreshAfterAutomaticSync(status.lastResult);
         }
       }
       this.changeDetector.markForCheck();
@@ -388,7 +389,9 @@ export class SyncSettingsPageComponent implements OnInit {
           },
         });
         await this.refreshPendingCount();
-        await this.refreshRemoteBackups();
+        if (!result.unchanged) {
+          await this.refreshRemoteBackups();
+        }
         this.autoSync.recordManualSuccess(result);
         this.statusMessage =
           `Sync complete: ${result.pulled} pulled, ${result.pushed} pushed` +
@@ -580,10 +583,12 @@ export class SyncSettingsPageComponent implements OnInit {
     void this.syncConnection.refresh(true);
   }
 
-  private async refreshAfterAutomaticSync(): Promise<void> {
+  private async refreshAfterAutomaticSync(
+    result: SyncWorkerResult | undefined,
+  ): Promise<void> {
     await this.refreshPendingCount().catch(() => undefined);
     await this.refreshReconciliations().catch(() => undefined);
-    if (this.hasConfiguredDestination()) {
+    if (this.hasConfiguredDestination() && !result?.unchanged) {
       await this.refreshRemoteBackups().catch(() => undefined);
     }
     this.changeDetector.markForCheck();

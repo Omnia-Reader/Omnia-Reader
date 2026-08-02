@@ -68,6 +68,23 @@ describe('AnnotationSyncService', () => {
     expect(JSON.parse(document?.content ?? '')).toEqual(ANNOTATION);
   });
 
+  it('reuses the pulled snapshot and reports no push for an identical annotation', async () => {
+    const remote = new MemoryTransport([
+      remoteDocument(ANNOTATION, `${JSON.stringify(ANNOTATION, null, 2)}\n`),
+    ]);
+    const service = new AnnotationSyncService(
+      remote,
+      new MemoryJournal(),
+      annotationRepository(ANNOTATION),
+    );
+
+    await expect(service.synchronize()).resolves.toMatchObject({
+      pushed: 0,
+      rejected: 0,
+    });
+    expect(remote.readRequests).toBe(0);
+  });
+
   it('pulls a newer deletion tombstone without resurrecting the annotation', async () => {
     const deletedAt = '2026-07-25T09:00:00.000Z';
     const tombstone: PublicationAnnotation = {
@@ -141,6 +158,7 @@ describe('AnnotationSyncService', () => {
 class MemoryTransport implements LibrarySyncTransport {
   readonly documents = new Map<string, RemoteDocument>();
   conflictsRemaining = 0;
+  readRequests = 0;
 
   constructor(documents: readonly RemoteDocument[] = []) {
     documents.forEach((document) =>
@@ -155,6 +173,7 @@ class MemoryTransport implements LibrarySyncTransport {
   }
 
   async read(path: string): Promise<RemoteDocument | null> {
+    this.readRequests += 1;
     return this.documents.get(path) ?? null;
   }
 

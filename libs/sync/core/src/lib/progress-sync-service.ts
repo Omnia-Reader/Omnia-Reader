@@ -70,8 +70,8 @@ export class ProgressSyncService {
     return this.activeSync;
   }
 
-  async pull(): Promise<ProgressSyncResult> {
-    const files = await this.remote.list(PROGRESS_ROOT);
+  async pull(files?: readonly RemoteDocument[]): Promise<ProgressSyncResult> {
+    const remoteFiles = files ?? (await this.remote.list(PROGRESS_ROOT));
     const knownDocuments = new Map(
       (await this.progressRepository.listProgressDocuments()).map(
         (progress) => [progressDocumentPath(progress), progress],
@@ -81,14 +81,20 @@ export class ProgressSyncService {
     const pulledByBook = new Map<string, ReadingProgress[]>();
     let rejected = 0;
 
-    for (const file of files) {
+    for (const file of remoteFiles) {
       const progress = parseProgressFile(file);
       if (!progress || progressDocumentPath(progress) !== file.path) {
         rejected += 1;
         continue;
       }
       const book = await this.progressRepository.getBook(progress.bookId);
-      if (!book || book.format !== progress.format) {
+      if (!book) {
+        // A device may retain progress for a publication that this device has
+        // not imported (or has deliberately removed). The document is valid
+        // remote state, but there is no local record to merge it into yet.
+        continue;
+      }
+      if (book.format !== progress.format) {
         rejected += 1;
         continue;
       }
@@ -136,7 +142,9 @@ export class ProgressSyncService {
     return { pulled, pushed: 0, conflicts: 0, rejected };
   }
 
-  async push(): Promise<ProgressSyncResult> {
+  async push(
+    knownDocuments?: ReadonlyMap<string, RemoteDocument>,
+  ): Promise<ProgressSyncResult> {
     const pending = await this.journal.pending();
     const progressOperations = pending.filter(
       (operation) => operation.entity === 'progress',
@@ -153,7 +161,11 @@ export class ProgressSyncService {
     let rejected = progressOperations.length - writes.acceptedOperationCount;
 
     for (const write of writes.documents.values()) {
-      const result = await this.pushProgress(write);
+      const path = progressDocumentPath(write.progress);
+      const result = await this.pushProgress(
+        write,
+        knownDocuments ? (knownDocuments.get(path) ?? null) : undefined,
+      );
       conflicts += result.conflicts;
       rejected += result.rejected;
       if (result.pushed) {
@@ -165,8 +177,11 @@ export class ProgressSyncService {
   }
 
   private async runSynchronization(): Promise<ProgressSyncResult> {
-    const pulled = await this.pull();
-    const pushed = await this.push();
+    const files = await this.remote.list(PROGRESS_ROOT);
+    const pulled = await this.pull(files);
+    const pushed = await this.push(
+      new Map(files.map((file) => [file.path, file])),
+    );
     return {
       pulled: pulled.pulled,
       pushed: pushed.pushed,
@@ -177,12 +192,16 @@ export class ProgressSyncService {
 
   private async pushProgress(
     pending: PendingProgressWrite,
+    initialCurrent?: RemoteDocument | null,
   ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
     const path = progressDocumentPath(pending.progress);
     let conflicts = 0;
 
     for (let attempt = 0; ; attempt += 1) {
-      const current = await this.remote.read(path);
+      const current =
+        attempt === 0 && initialCurrent !== undefined
+          ? initialCurrent
+          : await this.remote.read(path);
       const remoteProgress = current ? parseProgressFile(current) : null;
       if (
         current &&
@@ -205,7 +224,7 @@ export class ProgressSyncService {
       if (current?.content === content) {
         await this.progressRepository.saveProgressDocument(progress);
         await this.journal.acknowledge(pending.operationIds);
-        return { pushed: true, conflicts, rejected: 0 };
+        return { pushed: false, conflicts, rejected: 0 };
       }
 
       try {
@@ -255,35 +274,79 @@ function coalesceProgressOperations(operations: readonly SyncOperation[]): {
   let acceptedOperationCount = 0;
 
   for (const operation of operations) {
+    const progress = normalizeProgressOperationPayload(operation.payload);
     if (
       operation.entity !== 'progress' ||
       operation.operation !== 'upsert' ||
-      !isReadingProgress(operation.payload) ||
-      operation.entityId !== operation.payload.bookId
+      !progress ||
+      operation.entityId !== progress.bookId
     ) {
       continue;
     }
 
     acceptedOperationCount += 1;
-    const path = progressDocumentPath(operation.payload);
+    const normalizedOperation: SyncOperation = {
+      ...operation,
+      payload: progress,
+    };
+    const path = progressDocumentPath(progress);
     const existing = documents.get(path);
     if (!existing) {
       documents.set(path, {
-        progress: operation.payload,
+        progress,
         operationIds: [operation.id],
-        latestOperation: operation,
+        latestOperation: normalizedOperation,
       });
       continue;
     }
 
     existing.operationIds.push(operation.id);
-    if (compareOperations(operation, existing.latestOperation) > 0) {
-      existing.progress = operation.payload;
-      existing.latestOperation = operation;
+    if (compareOperations(normalizedOperation, existing.latestOperation) > 0) {
+      existing.progress = progress;
+      existing.latestOperation = normalizedOperation;
     }
   }
 
   return { documents, acceptedOperationCount };
+}
+
+/**
+ * Early EPUB locators used -1 as an "unknown position" sentinel. Current
+ * locators correctly omit an unknown position, so normalize that one legacy
+ * shape before validating durable journal entries. This keeps the queued
+ * reading progress and lets a successful remote comparison acknowledge it.
+ */
+function normalizeProgressOperationPayload(
+  value: unknown,
+): ReadingProgress | null {
+  if (isReadingProgress(value)) {
+    return value;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const locator = value['locator'];
+  if (!isRecord(locator)) {
+    return null;
+  }
+  const locations = locator['locations'];
+  if (!isRecord(locations) || locations['position'] !== -1) {
+    return null;
+  }
+  const normalizedLocations = { ...locations };
+  delete normalizedLocations['position'];
+  const normalized = {
+    ...value,
+    locator: {
+      ...locator,
+      locations: normalizedLocations,
+    },
+  };
+  return isReadingProgress(normalized) ? normalized : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function mergeProgressSnapshot(

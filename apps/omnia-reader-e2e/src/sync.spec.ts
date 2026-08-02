@@ -308,6 +308,47 @@ test('preserves successful Git sync details across an application reload', async
   );
 });
 
+test('finishes a stable repeated Git sync with only one revision request', async ({
+  context,
+  page,
+}) => {
+  const gateway = new SimulatedSyncGateway('git');
+  await gateway.install(context);
+
+  await page.goto('/settings/sync');
+  await selectProvider(page, { providerButtonName: /^Git \+ LFS/ });
+  const sync = page.getByRole('button', { name: 'Sync books and progress' });
+
+  await sync.click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+  gateway.clearRequestHistory();
+  const completedAt = await gitSyncSuccessTimestamp(page);
+  await sync.click();
+  await expect
+    .poll(() => gitSyncSuccessTimestamp(page), { timeout: 30_000 })
+    .not.toBe(completedAt);
+  await expect(page.getByRole('status')).toContainText(
+    'Sync complete: 0 pulled, 0 pushed.',
+  );
+
+  expect(gateway.requestHistory()).toEqual(['GET /revision']);
+});
+
+async function gitSyncSuccessTimestamp(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const value = localStorage.getItem('omnia-reader.auto-sync.v1.history.git');
+    if (!value) {
+      return null;
+    }
+    const history = JSON.parse(value) as { lastSuccessAt?: unknown };
+    return typeof history.lastSuccessAt === 'string'
+      ? history.lastSuccessAt
+      : null;
+  });
+}
+
 test('recovers when GitHub forbids repository creation', async ({
   context,
   page,

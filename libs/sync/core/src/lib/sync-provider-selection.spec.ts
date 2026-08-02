@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BrowserSyncProviderSelection } from './sync-provider-selection';
+import { LibrarySyncTransport } from './library-sync-transport';
+import {
+  BrowserSyncProviderSelection,
+  SelectedLibrarySyncTransport,
+} from './sync-provider-selection';
 
 describe('BrowserSyncProviderSelection', () => {
   it('persists selections and notifies subscribers immediately', () => {
@@ -31,6 +35,29 @@ describe('BrowserSyncProviderSelection', () => {
     expect(() => selection.select('git')).not.toThrow();
     expect(selection.current()).toBe('git');
     expect(healthyListener).toHaveBeenLastCalledWith('git');
+  });
+});
+
+describe('SelectedLibrarySyncTransport', () => {
+  it('forwards a supported destination revision and safely reports an unsupported provider', async () => {
+    const storage = new MemoryStorage();
+    const selection = new BrowserSyncProviderSelection(storage);
+    const destinationRevision = vi
+      .fn()
+      .mockResolvedValue('repository:main:revision');
+    const transport = new SelectedLibrarySyncTransport(selection, {
+      git: { destinationRevision } as unknown as LibrarySyncTransport,
+      mega: {} as LibrarySyncTransport,
+    });
+
+    selection.select('git');
+    await expect(transport.destinationRevision()).resolves.toBe(
+      'repository:main:revision',
+    );
+    expect(destinationRevision).toHaveBeenCalledTimes(1);
+
+    selection.select('mega');
+    await expect(transport.destinationRevision()).resolves.toBeNull();
   });
 });
 

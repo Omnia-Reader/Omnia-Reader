@@ -763,7 +763,8 @@ function isAutoSyncHistory(value: unknown): value is AutoSyncHistory {
     isSyncCount(result['pulled']) &&
     isSyncCount(result['pushed']) &&
     isSyncCount(result['conflicts']) &&
-    isSyncCount(result['rejected'])
+    isSyncCount(result['rejected']) &&
+    (result['unchanged'] === undefined || result['unchanged'] === true)
   );
 }
 

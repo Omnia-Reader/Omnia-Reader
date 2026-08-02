@@ -60,6 +60,9 @@ export interface ObjectDeleteRequest {
 }
 
 export interface LibrarySyncTransport {
+  destinationRevision?(
+    options?: Pick<ObjectTransferOptions, 'signal'>,
+  ): Promise<string | null>;
   list(prefix: string): Promise<readonly RemoteDocument[]>;
   read(path: string): Promise<RemoteDocument | null>;
   write(request: DocumentWriteRequest): Promise<RemoteDocument>;

@@ -191,6 +191,58 @@ when no GitHub App credentials are present. The Settings page keeps the user in
 the app and explains the missing setup instead of navigating to a failed
 authorization response.
 
+### Lightweight GitHub synchronization revision
+
+An authenticated client with a selected repository can call:
+
+```text
+GET /api/sync/github/revision
+```
+
+The no-store response contains `{ "revision": "<opaque value>" }`. The gateway
+derives the bounded value from the selected repository identity, default branch,
+and current Git tree SHA; an empty selected repository has its own scoped empty
+value. The route performs no synchronized-document blob reads and no Git LFS
+operation. Authentication, repository access, rate limits, timeouts, and safe
+error mapping are identical to the other GitHub read routes.
+
+The browser keeps a bounded, schema-versioned, device-local checkpoint. Before a
+GitHub sync it checks the durable operation journal and this revision. If the
+journal is empty and the revision matches a trusted checkpoint, the shared manual
+and automatic sync worker returns a zero-change success without running document,
+merge, or publication workers.
+
+That result carries an internal `unchanged` marker. Status consumers use it to
+retain already-current remote-backup presentation instead of immediately
+re-listing GitHub documents after the fast check. Older stored status history
+without the optional marker remains valid.
+
+A first, changed, unsupported, invalid, or storage-blocked state always falls
+back to the complete synchronization path. A complete no-op pass establishes a
+new checkpoint only when the remote revision is identical before and after the
+pass, no journal work remains, and the result reports no push, conflict, or
+rejected record. A successful mutating or unstable pass immediately runs one
+bounded complete verification pass; a stable mutation-free verification stores
+the checkpoint during the same user-visible synchronization. Continued
+instability stores nothing, preventing a concurrent remote change from being
+recorded as already applied without forcing the next user action through another
+full pass.
+
+During a complete fallback, progress, bookmark, and annotation synchronization
+reuse the documents returned by their prefix list as the optimistic write
+snapshot. Identical local records therefore cause no individual `/file` request;
+only a `409` conflict retries the affected path. Those three independent state
+workers start concurrently after schema, publication, and logical-book ordering
+requirements complete. Concurrency is bounded to those three workers, while
+conflict retries and mutation ordering remain unchanged. Within each GitHub
+document listing, matching blobs are fetched with concurrency bounded to eight
+and returned in deterministic tree order instead of being read sequentially.
+Checkpoint I/O is best effort and never affects local reading or authoritative
+sync data.
+
+MEGA does not implement this optional revision capability and retains its existing
+complete synchronization behavior.
+
 ### Shared session store and key rotation
 
 For localhost or a single gateway process, persist the encrypted session

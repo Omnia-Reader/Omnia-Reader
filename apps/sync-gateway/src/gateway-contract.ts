@@ -66,6 +66,7 @@ export interface SyncGatewayAdapter {
   disconnect(sessionId: string): Promise<void>;
   destinations(sessionId: string): Promise<readonly unknown[]>;
   selectDestination(sessionId: string, selection: unknown): Promise<unknown>;
+  destinationRevision?(sessionId: string): Promise<string>;
   listDocuments(
     sessionId: string,
     prefix: string,
@@ -118,6 +119,17 @@ export function supportsDestinationCreation(
   return (
     'createDestination' in adapter &&
     typeof adapter.createDestination === 'function'
+  );
+}
+
+export function supportsDestinationRevision(
+  adapter: SyncGatewayAdapter,
+): adapter is SyncGatewayAdapter & {
+  destinationRevision(sessionId: string): Promise<string>;
+} {
+  return (
+    'destinationRevision' in adapter &&
+    typeof adapter.destinationRevision === 'function'
   );
 }
 

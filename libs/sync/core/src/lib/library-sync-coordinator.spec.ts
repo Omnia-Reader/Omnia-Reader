@@ -98,6 +98,45 @@ describe('LibrarySyncCoordinator', () => {
     expect(child).not.toHaveBeenCalled();
   });
 
+  it('runs independent progress, bookmark, and annotation workers concurrently', async () => {
+    const started: string[] = [];
+    let release = (): void => undefined;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const completed = (): SyncWorker => ({
+      synchronize: async () => ({
+        pulled: 0,
+        pushed: 0,
+        conflicts: 0,
+        rejected: 0,
+      }),
+    });
+    const trailing = (name: string): SyncWorker => ({
+      synchronize: async () => {
+        started.push(name);
+        await wait;
+        return { pulled: 0, pushed: 0, conflicts: 0, rejected: 0 };
+      },
+    });
+    const coordinator = new LibrarySyncCoordinator({
+      schema: completed(),
+      books: completed(),
+      logicalBooks: completed(),
+      progress: trailing('progress'),
+      bookmarks: trailing('bookmarks'),
+      annotations: trailing('annotations'),
+    });
+
+    const synchronization = coordinator.synchronize();
+    await vi.waitFor(() => {
+      expect(started).toEqual(['progress', 'bookmarks', 'annotations']);
+    });
+    release();
+
+    await expect(synchronization).resolves.toMatchObject({ rejected: 0 });
+  });
+
   it('propagates transfer controls and stops before the next worker after cancellation', async () => {
     const controller = new AbortController();
     const books = vi.fn<SyncWorker['synchronize']>();

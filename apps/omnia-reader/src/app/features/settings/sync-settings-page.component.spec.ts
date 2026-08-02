@@ -200,6 +200,45 @@ describe('SyncSettingsPageComponent', () => {
     expect(fixture.componentInstance.statusMessage).toContain('2 pulled');
   });
 
+  it('does not relist unchanged remote backups after a fast manual sync', async () => {
+    selected = 'git';
+    const repository = {
+      id: 7,
+      fullName: 'reader/library',
+      private: true,
+      defaultBranch: 'main',
+      canPush: true,
+    };
+    vi.mocked(git.session).mockResolvedValue({
+      configured: true,
+      authenticated: true,
+      installationUrl,
+      user: { id: 42, login: 'reader', avatarUrl: '' },
+      repository,
+    });
+    vi.mocked(git.repositories).mockResolvedValue([repository]);
+    synchronize.mockResolvedValueOnce({
+      pulled: 0,
+      pushed: 0,
+      conflicts: 0,
+      rejected: 0,
+      unchanged: true,
+    });
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
+
+    await fixture.componentInstance.syncNow();
+
+    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
+    expect(autoSync.recordManualSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({ unchanged: true }),
+    );
+  });
+
   it('shows the scheduled automatic retry after provider rate limiting', async () => {
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();
@@ -525,6 +564,31 @@ describe('SyncSettingsPageComponent', () => {
     expect(result?.textContent).toContain('Sent');
     expect(result?.textContent).toContain('2');
     expect(result?.textContent).toContain('Conflicts retried');
+  });
+
+  it('does not relist remote backups after an unchanged automatic sync', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
+
+    autoSyncListener?.({
+      phase: 'idle',
+      reason: 'startup',
+      lastSuccessAt: '2026-07-27T14:00:00.000Z',
+      lastResult: {
+        pulled: 0,
+        pushed: 0,
+        conflicts: 0,
+        rejected: 0,
+        unchanged: true,
+      },
+    });
+
+    await vi.waitFor(() => expect(pending).toHaveBeenCalledTimes(2));
+    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
   });
 
   it('offers an immediate manual retry when automatic sync needs attention', async () => {

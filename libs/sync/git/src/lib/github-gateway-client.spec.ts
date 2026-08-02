@@ -378,6 +378,52 @@ describe('GitHubGatewayClient', () => {
     expect(writeHeaders.get('X-Omnia-CSRF')).toBe('1');
   });
 
+  it('reads one bounded destination revision without a mutation header', async () => {
+    const fetcher = mockFetch(
+      jsonResponse({ revision: `99:main:${'a'.repeat(40)}` }),
+    );
+    const client = new GitHubGatewayClient({ fetcher });
+
+    await expect(client.destinationRevision()).resolves.toBe(
+      `99:main:${'a'.repeat(40)}`,
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/sync/github/revision');
+    const init = fetcher.mock.calls[0]?.[1];
+    expect(init?.method).toBe('GET');
+    expect(new Headers(init?.headers).has('X-Omnia-CSRF')).toBe(false);
+  });
+
+  it.each([
+    {},
+    { revision: '' },
+    { revision: 'x'.repeat(1_025) },
+    { revision: 42 },
+  ])('rejects an invalid destination revision response %#', async (value) => {
+    const client = new GitHubGatewayClient({
+      fetcher: mockFetch(jsonResponse(value)),
+    });
+
+    await expect(client.destinationRevision()).rejects.toBeInstanceOf(
+      GitHubGatewayProtocolError,
+    );
+  });
+
+  it('forwards cancellation to the destination revision request', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      expect(init?.signal).toBe(controller.signal);
+      throw controller.signal?.reason;
+    });
+    const client = new GitHubGatewayClient({ fetcher });
+    controller.abort(new DOMException('Cancelled', 'AbortError'));
+
+    await expect(
+      client.destinationRevision({ signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('maps HTTP 409 writes to the sync coordinator conflict type', async () => {
     const client = new GitHubGatewayClient({
       fetcher: mockFetch(new Response(null, { status: 409 })),

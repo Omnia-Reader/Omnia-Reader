@@ -212,6 +212,25 @@ export class GitHubGatewayClient implements GitHubGateway {
     );
   }
 
+  async destinationRevision(
+    options: Pick<ObjectDownloadOptions, 'signal'> = {},
+  ): Promise<string> {
+    const response = await this.request('/revision', {
+      signal: options.signal,
+    });
+    const value = await responseJson(response);
+    if (
+      !isRecord(value) ||
+      typeof value['revision'] !== 'string' ||
+      value['revision'].length === 0 ||
+      value['revision'].length > 1024 ||
+      value['revision'].includes('\0')
+    ) {
+      throw new GitHubGatewayProtocolError();
+    }
+    return value['revision'];
+  }
+
   async list(prefix: string): Promise<readonly GitFile[]> {
     const response = await this.request(
       `/files?prefix=${encodeURIComponent(prefix)}`,

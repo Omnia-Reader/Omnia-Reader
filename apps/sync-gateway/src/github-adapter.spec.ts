@@ -685,6 +685,67 @@ describe('GitHubSyncGatewayAdapter', () => {
     },
   );
 
+  it('reads listed Git documents with bounded provider concurrency', async () => {
+    const provider = new FakeGitHub();
+    for (let index = 0; index < 12; index += 1) {
+      provider.files.set(`.omnia-reader/v1/annotations/book/${index}.json`, {
+        content: JSON.stringify({ index }),
+        sha: index.toString(16).padStart(40, '0'),
+      });
+    }
+    let release = (): void => undefined;
+    provider.blobReadWait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { adapter } = testAdapter(provider);
+    await authorizeAndSelect(adapter);
+
+    const listing = adapter.listDocuments(
+      'session',
+      '.omnia-reader/v1/annotations',
+    );
+    await vi.waitFor(() => {
+      expect(provider.maxConcurrentBlobRequests).toBe(8);
+    });
+    release();
+
+    await expect(listing).resolves.toEqual(
+      Array.from({ length: 12 }, (_, index) =>
+        expect.objectContaining({
+          path: `.omnia-reader/v1/annotations/book/${index}.json`,
+        }),
+      ),
+    );
+    expect(provider.maxConcurrentBlobRequests).toBe(8);
+  });
+
+  it('reports one bounded selected-repository revision without reading blobs', async () => {
+    const provider = new FakeGitHub();
+    const { adapter } = testAdapter(provider);
+    await authorizeAndSelect(adapter);
+
+    await expect(adapter.destinationRevision('session')).resolves.toBe(
+      `99:main:${'a'.repeat(40)}`,
+    );
+
+    expect(provider.treeRequests).toBe(1);
+    expect(provider.blobRequests).toBe(0);
+  });
+
+  it.each([404, 409])(
+    'reports a destination-scoped empty revision for GitHub tree status %s',
+    async (status) => {
+      const provider = new FakeGitHub();
+      provider.treeStatus = status as 404 | 409;
+      const { adapter } = testAdapter(provider);
+      await authorizeAndSelect(adapter);
+
+      await expect(adapter.destinationRevision('session')).resolves.toBe(
+        '99:main:empty',
+      );
+    },
+  );
+
   it('uploads verified LFS bytes before publishing the pointer and downloads them', async () => {
     const provider = new FakeGitHub();
     const { adapter } = testAdapter(provider);
@@ -1113,6 +1174,11 @@ class FakeGitHub {
   userInstallationRateLimitFailures = Number.POSITIVE_INFINITY;
   repositoryCreationRequests = 0;
   contentMutationRequests = 0;
+  treeRequests = 0;
+  blobRequests = 0;
+  activeBlobRequests = 0;
+  maxConcurrentBlobRequests = 0;
+  blobReadWait: Promise<void> | null = null;
   untrustedRequests = 0;
   private markRefreshStarted: () => void = () => undefined;
   readonly refreshStarted = new Promise<void>((resolve) => {
@@ -1342,10 +1408,12 @@ class FakeGitHub {
       return this.contents(url, method, init);
     }
     if (url.pathname.includes('/git/trees/')) {
+      this.treeRequests += 1;
       if (this.treeStatus !== 200) {
         return json({ message: 'Git Repository is empty.' }, this.treeStatus);
       }
       return json({
+        sha: 'a'.repeat(40),
         tree: [...this.files.entries()].map(([path, file]) => ({
           path,
           type: 'blob',
@@ -1355,16 +1423,27 @@ class FakeGitHub {
       });
     }
     if (url.pathname.includes('/git/blobs/')) {
-      const sha = url.pathname.split('/').at(-1);
-      const file = [...this.files.values()].find(
-        (candidate) => candidate.sha === sha,
+      this.blobRequests += 1;
+      this.activeBlobRequests += 1;
+      this.maxConcurrentBlobRequests = Math.max(
+        this.maxConcurrentBlobRequests,
+        this.activeBlobRequests,
       );
-      return file
-        ? json({
-            encoding: 'base64',
-            content: Buffer.from(file.content).toString('base64'),
-          })
-        : json({ message: 'Not Found' }, 404);
+      try {
+        await this.blobReadWait;
+        const sha = url.pathname.split('/').at(-1);
+        const file = [...this.files.values()].find(
+          (candidate) => candidate.sha === sha,
+        );
+        return file
+          ? json({
+              encoding: 'base64',
+              content: Buffer.from(file.content).toString('base64'),
+            })
+          : json({ message: 'Not Found' }, 404);
+      } finally {
+        this.activeBlobRequests -= 1;
+      }
     }
     if (url.pathname.endsWith('/info/lfs/objects/batch')) {
       const request = JSON.parse(String(init.body)) as {

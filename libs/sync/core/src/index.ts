@@ -6,6 +6,7 @@ export * from './lib/book-sync-exclusions';
 export * from './lib/book-sync-service';
 export * from './lib/browser-object-transfer';
 export * from './lib/bookmark-sync-service';
+export * from './lib/change-aware-sync-worker';
 export * from './lib/library-sync-coordinator';
 export * from './lib/library-sync-manifest';
 export * from './lib/logical-book-change';

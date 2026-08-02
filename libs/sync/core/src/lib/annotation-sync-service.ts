@@ -57,12 +57,13 @@ export class AnnotationSyncService {
     return this.activeSync;
   }
 
-  async pull(): Promise<SyncWorkerResult> {
-    const documents = await this.remote.list(ANNOTATIONS_ROOT);
+  async pull(documents?: readonly RemoteDocument[]): Promise<SyncWorkerResult> {
+    const remoteDocuments =
+      documents ?? (await this.remote.list(ANNOTATIONS_ROOT));
     let pulled = 0;
     let rejected = 0;
 
-    for (const document of documents) {
+    for (const document of remoteDocuments) {
       const incoming = parseAnnotationDocument(document);
       if (!incoming || annotationDocumentPath(incoming) !== document.path) {
         rejected += 1;
@@ -85,7 +86,9 @@ export class AnnotationSyncService {
     return { pulled, pushed: 0, conflicts: 0, rejected };
   }
 
-  async push(): Promise<SyncWorkerResult> {
+  async push(
+    knownDocuments?: ReadonlyMap<string, RemoteDocument>,
+  ): Promise<SyncWorkerResult> {
     const pending = await this.journal.pending();
     const annotationOperations = pending.filter(
       (operation) => operation.entity === 'annotation',
@@ -104,7 +107,11 @@ export class AnnotationSyncService {
     let conflicts = 0;
     let rejected = annotationOperations.length - writes.acceptedOperationCount;
     for (const write of writes.documents.values()) {
-      const result = await this.pushAnnotation(write);
+      const path = annotationDocumentPath(write.annotation);
+      const result = await this.pushAnnotation(
+        write,
+        knownDocuments ? (knownDocuments.get(path) ?? null) : undefined,
+      );
       pushed += result.pushed ? 1 : 0;
       conflicts += result.conflicts;
       rejected += result.rejected;
@@ -113,8 +120,11 @@ export class AnnotationSyncService {
   }
 
   private async runSynchronization(): Promise<SyncWorkerResult> {
-    const pulled = await this.pull();
-    const pushed = await this.push();
+    const documents = await this.remote.list(ANNOTATIONS_ROOT);
+    const pulled = await this.pull(documents);
+    const pushed = await this.push(
+      new Map(documents.map((document) => [document.path, document])),
+    );
     return {
       pulled: pulled.pulled,
       pushed: pushed.pushed,
@@ -125,12 +135,16 @@ export class AnnotationSyncService {
 
   private async pushAnnotation(
     pending: PendingAnnotationWrite,
+    initialCurrent?: RemoteDocument | null,
   ): Promise<{ pushed: boolean; conflicts: number; rejected: number }> {
     const path = annotationDocumentPath(pending.annotation);
     let conflicts = 0;
 
     for (let attempt = 0; ; attempt += 1) {
-      const current = await this.remote.read(path);
+      const current =
+        attempt === 0 && initialCurrent !== undefined
+          ? initialCurrent
+          : await this.remote.read(path);
       const remoteAnnotation = current
         ? parseAnnotationDocument(current)
         : null;
@@ -156,7 +170,7 @@ export class AnnotationSyncService {
       const content = serializeAnnotation(annotation);
       if (current?.content === content) {
         await this.journal.acknowledge(pending.operationIds);
-        return { pushed: true, conflicts, rejected: 0 };
+        return { pushed: false, conflicts, rejected: 0 };
       }
 
       try {
