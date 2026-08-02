@@ -58,6 +58,31 @@ export class BookmarkSyncService {
     return this.activeSync;
   }
 
+  async synchronizePending(
+    operations: readonly SyncOperation[],
+  ): Promise<SyncWorkerResult> {
+    const bookmarkOperations = operations.filter(
+      (operation) => operation.entity === 'bookmark',
+    );
+    const writes = coalesceBookmarkOperations(bookmarkOperations);
+    for (const write of writes.documents.values()) {
+      const current = await this.repository.getBookmark(write.bookmark.id);
+      if (current) {
+        mergeSnapshot(writes.documents, current);
+      }
+    }
+    let pushed = 0;
+    let conflicts = 0;
+    let rejected = bookmarkOperations.length - writes.acceptedOperationCount;
+    for (const write of writes.documents.values()) {
+      const result = await this.pushBookmark(write);
+      pushed += result.pushed ? 1 : 0;
+      conflicts += result.conflicts;
+      rejected += result.rejected;
+    }
+    return { pulled: 0, pushed, conflicts, rejected };
+  }
+
   async pull(documents?: readonly RemoteDocument[]): Promise<SyncWorkerResult> {
     const remoteDocuments =
       documents ?? (await this.remote.list(BOOKMARKS_ROOT));

@@ -1,5 +1,6 @@
 import {
   LibrarySyncCoordinator,
+  ReadingStateSyncCoordinator,
   SyncWorker,
   SyncWorkerResult,
 } from './library-sync-coordinator';
@@ -167,3 +168,68 @@ describe('LibrarySyncCoordinator', () => {
     expect(books).not.toHaveBeenCalled();
   });
 });
+
+describe('ReadingStateSyncCoordinator', () => {
+  it('runs only the reading-state workers represented by the pending batch', async () => {
+    const progress = workerResult();
+    const bookmarks = workerResult({ pushed: 1 });
+    const annotations = workerResult({ pulled: 2 });
+    const coordinator = new ReadingStateSyncCoordinator({
+      progress,
+      bookmarks,
+      annotations,
+    });
+
+    await expect(
+      coordinator.synchronizePending([
+        operation('bookmark'),
+        operation('annotation'),
+      ]),
+    ).resolves.toEqual({
+      pulled: 2,
+      pushed: 1,
+      conflicts: 0,
+      rejected: 0,
+    });
+
+    expect(progress.synchronizePending).not.toHaveBeenCalled();
+    expect(bookmarks.synchronizePending).toHaveBeenCalledTimes(1);
+    expect(annotations.synchronizePending).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects non-reading-state work instead of silently skipping it', async () => {
+    const coordinator = new ReadingStateSyncCoordinator({
+      progress: workerResult(),
+    });
+
+    await expect(
+      coordinator.synchronizePending([operation('book')]),
+    ).rejects.toThrow(/only reading-state/i);
+  });
+});
+
+function workerResult(result: Partial<SyncWorkerResult> = {}) {
+  const resolved = {
+    pulled: 0,
+    pushed: 0,
+    conflicts: 0,
+    rejected: 0,
+    ...result,
+  };
+  return {
+    synchronize: vi.fn().mockResolvedValue(resolved),
+    synchronizePending: vi.fn().mockResolvedValue(resolved),
+  };
+}
+
+function operation(entity: 'book' | 'progress' | 'bookmark' | 'annotation') {
+  return {
+    id: `operation-${entity}`,
+    entity,
+    entityId: 'entity-1',
+    operation: 'upsert' as const,
+    revision: 1,
+    createdAt: '2026-08-02T00:00:00.000Z',
+    payload: {},
+  };
+}

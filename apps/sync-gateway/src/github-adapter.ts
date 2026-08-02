@@ -1310,14 +1310,6 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
     token: string,
     request: DocumentWriteRequest,
   ): Promise<RemoteDocument> {
-    const current = await this.readFile(repository, token, request.path);
-    if (
-      (request.expectedRevision !== undefined &&
-        current?.revision !== request.expectedRevision) ||
-      (request.expectedRevision === undefined && current !== null)
-    ) {
-      throw new GatewayHttpError(409, 'The remote Git document changed');
-    }
     const value = await this.githubJson<unknown>(
       `/repos/${encodeFullName(repository.fullName)}/contents/${encodePath(request.path)}`,
       {
@@ -1327,7 +1319,9 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
           message: request.message,
           content: Buffer.from(request.content).toString('base64'),
           branch: repository.defaultBranch,
-          ...(current ? { sha: current.revision } : {}),
+          ...(request.expectedRevision
+            ? { sha: request.expectedRevision }
+            : {}),
         },
       },
     );

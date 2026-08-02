@@ -164,6 +164,64 @@ describe('ProgressSyncService', () => {
     expect(JSON.parse(stored?.content ?? '')).toEqual(latest);
   });
 
+  it('synchronizes pending progress with one targeted read and no prefix list', async () => {
+    const remote = new MemorySyncTransport();
+    const latest = progress(
+      BOOK_ID,
+      'device-a',
+      '2026-07-24T10:01:00.000Z',
+      0.3,
+    );
+    const pending = operation('progress-op', 1, latest);
+    const journal = new MemoryJournal([pending]);
+    const service = new ProgressSyncService(
+      remote,
+      journal,
+      new MemoryProgressRepository(latest),
+    );
+
+    await expect(service.synchronizePending([pending])).resolves.toMatchObject({
+      pushed: 1,
+      rejected: 0,
+    });
+
+    expect(remote.listRequests).toBe(0);
+    expect(remote.readRequests).toBe(1);
+    await expect(journal.pending()).resolves.toEqual([]);
+  });
+
+  it('publishes the latest local progress document after the batch snapshot', async () => {
+    const remote = new MemorySyncTransport();
+    const pendingProgress = progress(
+      BOOK_ID,
+      'device-a',
+      '2026-07-24T10:00:00.000Z',
+      0.2,
+    );
+    const current = progress(
+      BOOK_ID,
+      'device-a',
+      '2026-07-24T10:01:00.000Z',
+      0.3,
+    );
+    const pending = operation('progress-op', 1, pendingProgress);
+    const repository = new MemoryProgressRepository(current);
+    await repository.saveProgressDocument(current);
+    const service = new ProgressSyncService(
+      remote,
+      new MemoryJournal([pending]),
+      repository,
+    );
+
+    await service.synchronizePending([pending]);
+
+    expect(
+      JSON.parse(
+        remote.files.get(progressDocumentPath(current))?.content ?? '',
+      ),
+    ).toEqual(current);
+  });
+
   it('seeds a newly selected provider from the current local progress snapshot', async () => {
     const local = progress(
       BOOK_ID,
@@ -368,10 +426,12 @@ class MemorySyncTransport implements LibrarySyncTransport {
   readonly files = new Map<string, RemoteDocument>();
   conflictsBeforeSuccess = 0;
   readRequests = 0;
+  listRequests = 0;
   writeAttempts = 0;
   private revision = 0;
 
   async list(prefix: string): Promise<readonly RemoteDocument[]> {
+    this.listRequests += 1;
     return [...this.files.values()].filter((file) =>
       file.path.startsWith(`${prefix}/`),
     );

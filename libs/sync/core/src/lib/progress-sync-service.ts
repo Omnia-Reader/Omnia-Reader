@@ -70,6 +70,31 @@ export class ProgressSyncService {
     return this.activeSync;
   }
 
+  async synchronizePending(
+    operations: readonly SyncOperation[],
+  ): Promise<ProgressSyncResult> {
+    const progressOperations = operations.filter(
+      (operation) => operation.entity === 'progress',
+    );
+    const writes = coalesceProgressOperations(progressOperations);
+    const targetPaths = new Set(writes.documents.keys());
+    for (const current of await this.progressRepository.listProgressDocuments()) {
+      if (targetPaths.has(progressDocumentPath(current))) {
+        mergeProgressSnapshot(writes.documents, current);
+      }
+    }
+    let pushed = 0;
+    let conflicts = 0;
+    let rejected = progressOperations.length - writes.acceptedOperationCount;
+    for (const write of writes.documents.values()) {
+      const result = await this.pushProgress(write);
+      pushed += result.pushed ? 1 : 0;
+      conflicts += result.conflicts;
+      rejected += result.rejected;
+    }
+    return { pulled: 0, pushed, conflicts, rejected };
+  }
+
   async pull(files?: readonly RemoteDocument[]): Promise<ProgressSyncResult> {
     const remoteFiles = files ?? (await this.remote.list(PROGRESS_ROOT));
     const knownDocuments = new Map(

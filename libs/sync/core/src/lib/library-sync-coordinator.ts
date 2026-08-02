@@ -1,3 +1,4 @@
+import { SyncOperation } from '@omnia-reader/reader/domain';
 import { ObjectTransferProgressListener } from './library-sync-transport';
 
 export interface SyncWorkerResult {
@@ -15,6 +16,31 @@ export interface SyncWorkerOptions {
 
 export interface SyncWorker {
   synchronize(options?: SyncWorkerOptions): Promise<SyncWorkerResult>;
+}
+
+export type ReadingStateSyncEntity = Extract<
+  SyncOperation['entity'],
+  'progress' | 'bookmark' | 'annotation'
+>;
+
+export interface PendingReadingStateSyncWorker {
+  synchronizePending(
+    operations: readonly SyncOperation[],
+    options?: SyncWorkerOptions,
+  ): Promise<SyncWorkerResult>;
+}
+
+export interface TargetedReadingStateSyncWorker extends SyncWorker {
+  synchronizePending(
+    operations: readonly SyncOperation[],
+    options?: SyncWorkerOptions,
+  ): Promise<SyncWorkerResult>;
+}
+
+export interface ReadingStateSyncWorkers {
+  progress: TargetedReadingStateSyncWorker;
+  bookmarks?: TargetedReadingStateSyncWorker;
+  annotations?: TargetedReadingStateSyncWorker;
 }
 
 export interface LibrarySyncResult extends SyncWorkerResult {
@@ -122,12 +148,88 @@ export class LibrarySyncCoordinator implements SyncWorker {
   }
 }
 
+/**
+ * Synchronizes only the mutable reading-state domains represented by a durable
+ * operation batch. The caller is responsible for proving that the remote
+ * schema and publication state are already at a trusted checkpoint.
+ */
+export class ReadingStateSyncCoordinator
+  implements PendingReadingStateSyncWorker
+{
+  private activeSync: Promise<SyncWorkerResult> | null = null;
+
+  constructor(private readonly workers: ReadingStateSyncWorkers) {}
+
+  synchronizePending(
+    operations: readonly SyncOperation[],
+    options: SyncWorkerOptions = {},
+  ): Promise<SyncWorkerResult> {
+    if (!this.activeSync) {
+      this.activeSync = this.runSynchronization(operations, options).finally(
+        () => {
+          this.activeSync = null;
+        },
+      );
+    }
+    return this.activeSync;
+  }
+
+  private async runSynchronization(
+    operations: readonly SyncOperation[],
+    options: SyncWorkerOptions,
+  ): Promise<SyncWorkerResult> {
+    throwIfSyncAborted(options.signal);
+    const entities = new Set(operations.map((operation) => operation.entity));
+    if ([...entities].some((entity) => !isReadingStateEntity(entity))) {
+      throw new TypeError(
+        'Targeted synchronization accepts only reading-state operations',
+      );
+    }
+
+    const results = await Promise.all([
+      entities.has('progress')
+        ? this.workers.progress.synchronizePending(operations, options)
+        : EMPTY_SYNC_RESULT,
+      entities.has('bookmark') && this.workers.bookmarks
+        ? this.workers.bookmarks.synchronizePending(operations, options)
+        : EMPTY_SYNC_RESULT,
+      entities.has('annotation') && this.workers.annotations
+        ? this.workers.annotations.synchronizePending(operations, options)
+        : EMPTY_SYNC_RESULT,
+    ]);
+    throwIfSyncAborted(options.signal);
+    return combineWorkerResults(results);
+  }
+}
+
 const EMPTY_SYNC_RESULT: SyncWorkerResult = {
   pulled: 0,
   pushed: 0,
   conflicts: 0,
   rejected: 0,
 };
+
+function isReadingStateEntity(
+  entity: SyncOperation['entity'],
+): entity is ReadingStateSyncEntity {
+  return (
+    entity === 'progress' || entity === 'bookmark' || entity === 'annotation'
+  );
+}
+
+function combineWorkerResults(
+  results: readonly SyncWorkerResult[],
+): SyncWorkerResult {
+  return results.reduce<SyncWorkerResult>(
+    (combined, result) => ({
+      pulled: combined.pulled + result.pulled,
+      pushed: combined.pushed + result.pushed,
+      conflicts: combined.conflicts + result.conflicts,
+      rejected: combined.rejected + result.rejected,
+    }),
+    { ...EMPTY_SYNC_RESULT },
+  );
+}
 
 export function throwIfSyncAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) {

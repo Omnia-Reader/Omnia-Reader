@@ -1,0 +1,28 @@
+# Implementation Plan: Targeted Reading-State Synchronization
+
+## Summary
+
+Add a provider-neutral reading-state coordinator in `sync-core`, dispatch it from the change-aware GitHub worker only at a matching trusted checkpoint, give mutable-state services exact-operation methods, shorten interactive debounce, and remove the GitHub adapter's redundant preflight read.
+
+## Constitution Check
+
+- [x] Local durable writes remain authoritative and independent of network success.
+- [x] Targeted dispatch requires a trusted full checkpoint and preserves complete fallback.
+- [x] Credentials remain in `apps/sync-gateway`; no synchronized schema changes.
+- [x] Tombstones, deterministic merge selection, optimistic conflicts, bounded retry, and cancellation remain intact.
+- [x] Exact request counts and fallback behavior receive focused tests before completion.
+
+## Ownership and Design
+
+- `libs/sync/core`: operation-aware dispatch, exact-record synchronization, debounce policy, checkpoint invalidation.
+- `apps/omnia-reader`: compose the full and targeted coordinators from the same state workers.
+- `apps/sync-gateway`: submit optimistic GitHub Contents writes directly; GitHub maps stale or create-existing writes to conflict.
+
+The fast lane is GitHub-only because it relies on the existing authoritative repository revision checkpoint. It requires all pending operations to be progress, bookmark, or annotation work and the probed revision to equal the trusted checkpoint. Services coalesce their supplied operations and read only each exact target document before merge/write. Any push clears the global checkpoint; the existing revision scheduler subsequently performs a complete reconciliation. This avoids falsely checkpointing concurrent changes in unrelated domains.
+
+## Verification
+
+- Focused and full `sync-core` tests; exact targeted list/read/write counters.
+- Focused and full `sync-gateway` tests; no preflight GitHub content read.
+- `omnia-reader` composition test, affected lint, production builds, formatting, and `git diff --check`.
+- Chromium request evidence and live credentialed GitHub timing are separate gates and are reported if unavailable.

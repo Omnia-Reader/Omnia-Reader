@@ -57,6 +57,31 @@ export class AnnotationSyncService {
     return this.activeSync;
   }
 
+  async synchronizePending(
+    operations: readonly SyncOperation[],
+  ): Promise<SyncWorkerResult> {
+    const annotationOperations = operations.filter(
+      (operation) => operation.entity === 'annotation',
+    );
+    const writes = coalesceAnnotationOperations(annotationOperations);
+    for (const write of writes.documents.values()) {
+      const current = await this.repository.getAnnotation(write.annotation.id);
+      if (current) {
+        mergeSnapshot(writes.documents, current);
+      }
+    }
+    let pushed = 0;
+    let conflicts = 0;
+    let rejected = annotationOperations.length - writes.acceptedOperationCount;
+    for (const write of writes.documents.values()) {
+      const result = await this.pushAnnotation(write);
+      pushed += result.pushed ? 1 : 0;
+      conflicts += result.conflicts;
+      rejected += result.rejected;
+    }
+    return { pulled: 0, pushed, conflicts, rejected };
+  }
+
   async pull(documents?: readonly RemoteDocument[]): Promise<SyncWorkerResult> {
     const remoteDocuments =
       documents ?? (await this.remote.list(ANNOTATIONS_ROOT));

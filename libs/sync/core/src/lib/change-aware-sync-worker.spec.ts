@@ -8,7 +8,11 @@ import {
   ChangeAwareSyncWorker,
   SyncCheckpointStore,
 } from './change-aware-sync-worker';
-import { SyncWorker, SyncWorkerResult } from './library-sync-coordinator';
+import {
+  PendingReadingStateSyncWorker,
+  SyncWorker,
+  SyncWorkerResult,
+} from './library-sync-coordinator';
 import { LibrarySyncTransport } from './library-sync-transport';
 import { SyncProviderSelection } from './sync-provider-selection';
 
@@ -87,6 +91,83 @@ describe('ChangeAwareSyncWorker', () => {
     await sync.synchronize();
 
     expect(delegate.synchronize).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the targeted lane for reading-state work at a trusted checkpoint', async () => {
+    const delegate = worker();
+    const operation = pendingOperation('annotation');
+    const journal = operationJournal([operation]);
+    journal.pending
+      .mockResolvedValueOnce([operation])
+      .mockResolvedValueOnce([]);
+    const readingStateWorker = pendingReadingStateWorker({
+      ...EMPTY_RESULT,
+      pushed: 1,
+    });
+    const checkpoints = checkpointStore('repository:main:a');
+    const sync = createWorker({
+      delegate,
+      journal,
+      readingStateWorker,
+      checkpoints,
+      remote: revisionTransport('repository:main:a'),
+    });
+
+    await expect(sync.synchronize()).resolves.toMatchObject({ pushed: 1 });
+
+    expect(readingStateWorker.synchronizePending).toHaveBeenCalledWith(
+      [operation],
+      {},
+    );
+    expect(delegate.synchronize).not.toHaveBeenCalled();
+    expect(checkpoints.write).toHaveBeenLastCalledWith('git', null);
+  });
+
+  it.each(['book', 'logical-book-change', 'preference'] as const)(
+    'keeps %s operations on the complete synchronization path',
+    async (entity) => {
+      const delegate = worker();
+      const operation = pendingOperation(entity);
+      const readingStateWorker = pendingReadingStateWorker();
+      const journal = operationJournal([operation]);
+      journal.pending
+        .mockResolvedValueOnce([operation])
+        .mockResolvedValueOnce([]);
+      const sync = createWorker({
+        delegate,
+        journal,
+        readingStateWorker,
+        checkpoints: checkpointStore('repository:main:a'),
+        remote: revisionTransport('repository:main:a', 'repository:main:a'),
+      });
+
+      await sync.synchronize();
+
+      expect(delegate.synchronize).toHaveBeenCalledTimes(1);
+      expect(readingStateWorker.synchronizePending).not.toHaveBeenCalled();
+    },
+  );
+
+  it('uses complete synchronization when the trusted checkpoint is stale', async () => {
+    const delegate = worker();
+    const operation = pendingOperation('bookmark');
+    const readingStateWorker = pendingReadingStateWorker();
+    const journal = operationJournal([operation]);
+    journal.pending
+      .mockResolvedValueOnce([operation])
+      .mockResolvedValueOnce([]);
+    const sync = createWorker({
+      delegate,
+      journal,
+      readingStateWorker,
+      checkpoints: checkpointStore('repository:main:old'),
+      remote: revisionTransport('repository:main:new', 'repository:main:new'),
+    });
+
+    await sync.synchronize();
+
+    expect(delegate.synchronize).toHaveBeenCalledTimes(1);
+    expect(readingStateWorker.synchronizePending).not.toHaveBeenCalled();
   });
 
   it('runs complete sync when local work appears during the revision probe', async () => {
@@ -332,6 +413,7 @@ function createWorker(
     journal?: ReturnType<typeof operationJournal>;
     selection?: SyncProviderSelection;
     checkpoints?: SyncCheckpointStore;
+    readingStateWorker?: PendingReadingStateSyncWorker;
   } = {},
 ): ChangeAwareSyncWorker {
   return new ChangeAwareSyncWorker(
@@ -344,6 +426,7 @@ function createWorker(
       clear: vi.fn(),
     },
     overrides.checkpoints ?? checkpointStore(null),
+    overrides.readingStateWorker,
   );
 }
 
@@ -389,10 +472,22 @@ function checkpointStore(initial: string | null): SyncCheckpointStore & {
   };
 }
 
-function pendingOperation(): SyncOperation {
+function pendingReadingStateWorker(
+  result: SyncWorkerResult = EMPTY_RESULT,
+): PendingReadingStateSyncWorker & {
+  synchronizePending: ReturnType<typeof vi.fn>;
+} {
+  return {
+    synchronizePending: vi.fn().mockResolvedValue(result),
+  };
+}
+
+function pendingOperation(
+  entity: SyncOperation['entity'] = 'progress',
+): SyncOperation {
   return {
     id: 'operation',
-    entity: 'progress',
+    entity,
     entityId: 'book',
     operation: 'upsert',
     revision: 1,

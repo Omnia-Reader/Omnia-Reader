@@ -645,6 +645,7 @@ describe('GitHubSyncGatewayAdapter', () => {
       message: 'Sync progress',
     });
     expect(created.revision).toMatch(/^[a-f0-9]{40}$/);
+    expect(provider.contentReadRequests).toBe(0);
     await expect(adapter.readDocument('session', path)).resolves.toEqual(
       created,
     );
@@ -660,6 +661,7 @@ describe('GitHubSyncGatewayAdapter', () => {
         message: 'Stale progress',
       }),
     ).rejects.toMatchObject<Partial<GatewayHttpError>>({ statusCode: 409 });
+    expect(provider.contentReadRequests).toBe(1);
 
     await expect(
       adapter.deleteDocument('session', {
@@ -1174,6 +1176,7 @@ class FakeGitHub {
   userInstallationRateLimitFailures = Number.POSITIVE_INFINITY;
   repositoryCreationRequests = 0;
   contentMutationRequests = 0;
+  contentReadRequests = 0;
   treeRequests = 0;
   blobRequests = 0;
   activeBlobRequests = 0;
@@ -1540,6 +1543,7 @@ class FakeGitHub {
       .join('/');
     const current = this.files.get(path);
     if (method === 'GET') {
+      this.contentReadRequests += 1;
       return current
         ? json({
             path,

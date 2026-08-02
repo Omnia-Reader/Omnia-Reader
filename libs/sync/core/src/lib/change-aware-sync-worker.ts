@@ -1,5 +1,9 @@
-import { SyncOperationJournal } from '@omnia-reader/reader/domain';
 import {
+  SyncOperation,
+  SyncOperationJournal,
+} from '@omnia-reader/reader/domain';
+import {
+  PendingReadingStateSyncWorker,
   SyncWorker,
   SyncWorkerOptions,
   SyncWorkerResult,
@@ -102,6 +106,7 @@ export class ChangeAwareSyncWorker implements SyncWorker {
     private readonly journal: SyncOperationJournal,
     private readonly selection: SyncProviderSelection,
     private readonly checkpoints: SyncCheckpointStore = new BrowserSyncCheckpointStore(),
+    private readonly readingStateWorker?: PendingReadingStateSyncWorker,
   ) {}
 
   synchronize(options: SyncWorkerOptions = {}): Promise<SyncWorkerResult> {
@@ -135,15 +140,36 @@ export class ChangeAwareSyncWorker implements SyncWorker {
       return this.delegate.synchronize(options);
     }
 
-    if (
-      pendingBefore.length === 0 &&
-      safeCheckpointRead(this.checkpoints, provider) === revisionBefore
-    ) {
+    const trustedCheckpoint = safeCheckpointRead(this.checkpoints, provider);
+    if (pendingBefore.length === 0 && trustedCheckpoint === revisionBefore) {
       const pendingAfterProbe = await this.journal.pending();
       throwIfSyncAborted(options.signal);
       if (pendingAfterProbe.length === 0) {
         return { ...UNCHANGED_RESULT };
       }
+    }
+
+    if (
+      this.readingStateWorker &&
+      trustedCheckpoint === revisionBefore &&
+      isReadingStateOnly(pendingBefore)
+    ) {
+      const result = await this.readingStateWorker.synchronizePending(
+        pendingBefore,
+        options,
+      );
+      throwIfSyncAborted(options.signal);
+      const pendingAfter = await this.journal.pending();
+      throwIfSyncAborted(options.signal);
+      if (
+        result.pushed > 0 ||
+        result.conflicts > 0 ||
+        result.rejected > 0 ||
+        pendingAfter.length > 0
+      ) {
+        safeCheckpointWrite(this.checkpoints, provider, null);
+      }
+      return result;
     }
 
     const result = await this.delegate.synchronize(options);
@@ -199,6 +225,18 @@ export class ChangeAwareSyncWorker implements SyncWorker {
     );
     return result;
   }
+}
+
+function isReadingStateOnly(operations: readonly SyncOperation[]): boolean {
+  return (
+    operations.length > 0 &&
+    operations.every(
+      (operation) =>
+        operation.entity === 'progress' ||
+        operation.entity === 'bookmark' ||
+        operation.entity === 'annotation',
+    )
+  );
 }
 
 function combineResults(

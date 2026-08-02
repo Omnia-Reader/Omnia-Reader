@@ -68,6 +68,49 @@ describe('AnnotationSyncService', () => {
     expect(JSON.parse(document?.content ?? '')).toEqual(ANNOTATION);
   });
 
+  it('synchronizes a pending annotation with one targeted read and no prefix list', async () => {
+    const remote = new MemoryTransport();
+    const pending = operation('annotation-op', ANNOTATION);
+    const journal = new MemoryJournal([pending]);
+    const service = new AnnotationSyncService(
+      remote,
+      journal,
+      annotationRepository(ANNOTATION),
+    );
+
+    await expect(service.synchronizePending([pending])).resolves.toMatchObject({
+      pushed: 1,
+      rejected: 0,
+    });
+
+    expect(remote.listRequests).toBe(0);
+    expect(remote.readRequests).toBe(1);
+    expect(journal.acknowledged).toEqual(['annotation-op']);
+  });
+
+  it('publishes the latest local annotation when it changed after the batch snapshot', async () => {
+    const remote = new MemoryTransport();
+    const current = {
+      ...ANNOTATION,
+      note: 'Latest local note',
+      updatedAt: '2026-07-25T08:31:00.000Z',
+    };
+    const pending = operation('annotation-op', ANNOTATION);
+    const service = new AnnotationSyncService(
+      remote,
+      new MemoryJournal([pending]),
+      annotationRepository(current),
+    );
+
+    await service.synchronizePending([pending]);
+
+    expect(
+      JSON.parse(
+        remote.documents.get(annotationDocumentPath(current))?.content ?? '',
+      ),
+    ).toEqual(current);
+  });
+
   it('reuses the pulled snapshot and reports no push for an identical annotation', async () => {
     const remote = new MemoryTransport([
       remoteDocument(ANNOTATION, `${JSON.stringify(ANNOTATION, null, 2)}\n`),
@@ -159,6 +202,7 @@ class MemoryTransport implements LibrarySyncTransport {
   readonly documents = new Map<string, RemoteDocument>();
   conflictsRemaining = 0;
   readRequests = 0;
+  listRequests = 0;
 
   constructor(documents: readonly RemoteDocument[] = []) {
     documents.forEach((document) =>
@@ -167,6 +211,7 @@ class MemoryTransport implements LibrarySyncTransport {
   }
 
   async list(prefix: string): Promise<readonly RemoteDocument[]> {
+    this.listRequests += 1;
     return [...this.documents.values()].filter((document) =>
       document.path.startsWith(prefix),
     );

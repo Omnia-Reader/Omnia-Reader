@@ -70,7 +70,7 @@ describe('AutoSyncScheduler', () => {
     expect(scheduler.status().reason).toBe('reading-quiet');
   });
 
-  it('schedules annotations through the same quiet, rate-limited path', async () => {
+  it('schedules interactive annotation work after a short trailing quiet period', async () => {
     const environment = new FakeEnvironment();
     const activity = new SyncActivityNotifier();
     const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
@@ -80,7 +80,7 @@ describe('AutoSyncScheduler', () => {
     await flushPromises();
 
     activity.notify({ kind: 'annotation', entityId: 'annotation-1' });
-    environment.advance(999);
+    environment.advance(149);
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(1);
 
@@ -580,6 +580,7 @@ function createScheduler(
   return new AutoSyncScheduler({ synchronize }, selection, activity, {
     environment,
     quietIntervalMs: 1_000,
+    interactiveQuietIntervalMs: 150,
     revisionCheckIntervalMs: 10_000,
     rateLimitStore,
     historyStore,

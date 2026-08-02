@@ -50,6 +50,7 @@ export interface AutoSyncEnvironment {
 
 export interface AutoSyncSchedulerOptions {
   quietIntervalMs?: number;
+  interactiveQuietIntervalMs?: number;
   revisionCheckIntervalMs?: number;
   environment?: AutoSyncEnvironment;
   rateLimitStore?: AutoSyncRateLimitStore;
@@ -72,6 +73,7 @@ export interface AutoSyncHistoryStore {
 }
 
 const DEFAULT_QUIET_INTERVAL_MS = 1_000;
+const DEFAULT_INTERACTIVE_QUIET_INTERVAL_MS = 150;
 const DEFAULT_REVISION_CHECK_INTERVAL_MS = 10_000;
 const DEFAULT_PROVIDER_RETRY_AFTER_MS = 60_000;
 const PROVIDER_RATE_LIMIT_MESSAGE =
@@ -85,6 +87,7 @@ const PROVIDER_RATE_LIMIT_MESSAGE =
  */
 export class AutoSyncScheduler {
   private readonly quietIntervalMs: number;
+  private readonly interactiveQuietIntervalMs: number;
   private readonly revisionCheckIntervalMs: number;
   private readonly environment: AutoSyncEnvironment;
   private readonly rateLimitStore: AutoSyncRateLimitStore;
@@ -117,6 +120,9 @@ export class AutoSyncScheduler {
     options: AutoSyncSchedulerOptions = {},
   ) {
     this.quietIntervalMs = options.quietIntervalMs ?? DEFAULT_QUIET_INTERVAL_MS;
+    this.interactiveQuietIntervalMs =
+      options.interactiveQuietIntervalMs ??
+      DEFAULT_INTERACTIVE_QUIET_INTERVAL_MS;
     this.revisionCheckIntervalMs =
       options.revisionCheckIntervalMs ?? DEFAULT_REVISION_CHECK_INTERVAL_MS;
     if (
@@ -171,8 +177,10 @@ export class AutoSyncScheduler {
         this.requestImmediate('book-change');
       } else if (this.environment.isBackground()) {
         this.requestImmediate('background');
+      } else if (change.kind === 'annotation' || change.kind === 'bookmark') {
+        this.requestQuiet(this.interactiveQuietIntervalMs);
       } else {
-        this.requestQuiet();
+        this.requestQuiet(this.quietIntervalMs);
       }
     });
     this.unsubscribeOnline = this.environment.onOnline(() => {
@@ -318,7 +326,7 @@ export class AutoSyncScheduler {
     );
   }
 
-  requestQuiet(): void {
+  requestQuiet(delay = this.quietIntervalMs): void {
     const provider = this.selection.current();
     if (!this.started || !provider) {
       return;
@@ -340,10 +348,10 @@ export class AutoSyncScheduler {
     }
 
     const providerRetryDelay = this.readProviderRetryDelay(provider);
-    const delay = Math.max(this.quietIntervalMs, providerRetryDelay);
+    const boundedDelay = Math.max(delay, providerRetryDelay);
     this.schedule(
       'reading-quiet',
-      delay,
+      boundedDelay,
       providerRetryDelay > 0 ? PROVIDER_RATE_LIMIT_MESSAGE : undefined,
     );
   }

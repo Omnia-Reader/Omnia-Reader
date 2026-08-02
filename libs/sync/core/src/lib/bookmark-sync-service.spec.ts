@@ -60,6 +60,49 @@ describe('BookmarkSyncService', () => {
     expect(JSON.parse(document?.content ?? '')).toEqual(BOOKMARK);
   });
 
+  it('synchronizes a pending bookmark with one targeted read and no prefix list', async () => {
+    const remote = new MemoryTransport();
+    const pending = operation('bookmark-op', BOOKMARK);
+    const journal = new MemoryJournal([pending]);
+    const service = new BookmarkSyncService(
+      remote,
+      journal,
+      bookmarkRepository(BOOKMARK),
+    );
+
+    await expect(service.synchronizePending([pending])).resolves.toMatchObject({
+      pushed: 1,
+      rejected: 0,
+    });
+
+    expect(remote.listRequests).toBe(0);
+    expect(remote.readRequests).toBe(1);
+    expect(journal.acknowledged).toEqual(['bookmark-op']);
+  });
+
+  it('publishes the latest local bookmark when it changed after the batch snapshot', async () => {
+    const remote = new MemoryTransport();
+    const current = {
+      ...BOOKMARK,
+      label: 'Latest local label',
+      updatedAt: '2026-07-25T08:31:00.000Z',
+    };
+    const pending = operation('bookmark-op', BOOKMARK);
+    const service = new BookmarkSyncService(
+      remote,
+      new MemoryJournal([pending]),
+      bookmarkRepository(current),
+    );
+
+    await service.synchronizePending([pending]);
+
+    expect(
+      JSON.parse(
+        remote.documents.get(bookmarkDocumentPath(current))?.content ?? '',
+      ),
+    ).toEqual(current);
+  });
+
   it('reuses the pulled snapshot and reports no push for an identical bookmark', async () => {
     const remote = new MemoryTransport([
       remoteDocument(BOOKMARK, `${JSON.stringify(BOOKMARK, null, 2)}\n`),
@@ -152,6 +195,7 @@ class MemoryTransport implements LibrarySyncTransport {
   readonly documents = new Map<string, RemoteDocument>();
   conflictsRemaining = 0;
   readRequests = 0;
+  listRequests = 0;
 
   constructor(documents: readonly RemoteDocument[] = []) {
     documents.forEach((document) =>
@@ -160,6 +204,7 @@ class MemoryTransport implements LibrarySyncTransport {
   }
 
   async list(prefix: string): Promise<readonly RemoteDocument[]> {
+    this.listRequests += 1;
     return [...this.documents.values()].filter((document) =>
       document.path.startsWith(prefix),
     );

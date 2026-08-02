@@ -41,6 +41,7 @@ import {
   NotifyingSyncOperationJournal,
   ProgressDocumentRepository,
   ProgressSyncService,
+  ReadingStateSyncCoordinator,
   REMOTE_BOOK_BACKUP_SERVICE,
   RemoteBookBackupService,
   SelectedLibrarySyncTransport,
@@ -97,15 +98,25 @@ function createLibrarySyncService(
   exclusions: BookSyncExclusions,
   selection: SyncProviderSelection,
 ): SyncWorker {
+  const progress = new ProgressSyncService(remote, journal, repository);
+  const bookmarks = new BookmarkSyncService(remote, journal, repository);
+  const annotations = new AnnotationSyncService(remote, journal, repository);
   const coordinator = new LibrarySyncCoordinator({
     schema: new LibrarySyncManifestService(remote),
     logicalBooks: new LogicalBookSyncService(remote, journal, repository),
     books: new BookSyncService(remote, journal, repository, { exclusions }),
-    progress: new ProgressSyncService(remote, journal, repository),
-    bookmarks: new BookmarkSyncService(remote, journal, repository),
-    annotations: new AnnotationSyncService(remote, journal, repository),
+    progress,
+    bookmarks,
+    annotations,
   });
-  return new ChangeAwareSyncWorker(coordinator, remote, journal, selection);
+  return new ChangeAwareSyncWorker(
+    coordinator,
+    remote,
+    journal,
+    selection,
+    undefined,
+    new ReadingStateSyncCoordinator({ progress, bookmarks, annotations }),
+  );
 }
 
 function createRemoteBookBackupService(
