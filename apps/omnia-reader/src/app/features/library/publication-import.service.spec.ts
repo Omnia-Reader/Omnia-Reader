@@ -33,6 +33,7 @@ describe('PublicationImportService', () => {
   };
   const repository = {
     listBooks: vi.fn().mockResolvedValue([]),
+    listLogicalBooks: vi.fn().mockResolvedValue([]),
     importBook: vi.fn().mockResolvedValue(book),
     findLogicalBookByVariant: vi.fn().mockResolvedValue(null),
     removeBook: vi.fn().mockResolvedValue(undefined),
@@ -52,6 +53,7 @@ describe('PublicationImportService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repository.listBooks.mockResolvedValue([]);
+    repository.listLogicalBooks.mockResolvedValue([]);
     repository.importBook.mockResolvedValue(book);
     repository.findLogicalBookByVariant.mockResolvedValue(null);
     repository.removeBook.mockResolvedValue(undefined);
@@ -152,6 +154,7 @@ describe('PublicationImportService', () => {
 
   it('reports an exact-edition re-import as a duplicate', async () => {
     repository.listBooks.mockResolvedValueOnce([book]);
+    repository.listLogicalBooks.mockResolvedValueOnce([logicalBook(book)]);
     const service = TestBed.inject(PublicationImportService);
 
     await expect(service.importPublications([source])).resolves.toEqual({
@@ -162,6 +165,31 @@ describe('PublicationImportService', () => {
     });
 
     expect(repository.removeBook).not.toHaveBeenCalled();
+  });
+
+  it('restores an ownerless retained exact edition as an added book', async () => {
+    repository.listBooks.mockResolvedValueOnce([book]);
+    repository.listLogicalBooks.mockResolvedValueOnce([]);
+    repository.findLogicalBookByVariant.mockResolvedValueOnce(
+      logicalBook(book),
+    );
+    const service = TestBed.inject(PublicationImportService);
+
+    await expect(service.importPublications([source])).resolves.toEqual({
+      books: [book],
+      added: [book],
+      duplicates: [],
+      failures: [],
+    });
+
+    expect(repository.removeBook).not.toHaveBeenCalled();
+    expect(syncExclusions.include).toHaveBeenCalledWith(book.id);
+    expect(journal.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: 'logical-book-change',
+        operation: 'upsert',
+      }),
+    );
   });
 
   it('rolls back a newly stored publication when validation fails', async () => {
@@ -187,6 +215,7 @@ describe('PublicationImportService', () => {
 
   it('never removes an existing duplicate when revalidation fails', async () => {
     repository.listBooks.mockResolvedValueOnce([book]);
+    repository.listLogicalBooks.mockResolvedValueOnce([logicalBook(book)]);
     enrichment.validateAndEnrich.mockRejectedValueOnce(
       new Error('Renderer temporarily unavailable'),
     );
@@ -205,6 +234,25 @@ describe('PublicationImportService', () => {
     });
 
     expect(repository.removeBook).not.toHaveBeenCalled();
+    expect(journal.append).not.toHaveBeenCalled();
+  });
+
+  it('removes a failed repair that was not visible before re-import', async () => {
+    repository.listBooks.mockResolvedValueOnce([book]);
+    repository.listLogicalBooks.mockResolvedValueOnce([]);
+    enrichment.validateAndEnrich.mockRejectedValueOnce(
+      new Error('Renderer temporarily unavailable'),
+    );
+    const service = TestBed.inject(PublicationImportService);
+
+    await expect(service.importPublications([source])).resolves.toMatchObject({
+      books: [],
+      added: [],
+      duplicates: [],
+      failures: [{ message: 'Renderer temporarily unavailable' }],
+    });
+
+    expect(repository.removeBook).toHaveBeenCalledWith(book.id);
     expect(journal.append).not.toHaveBeenCalled();
   });
 
@@ -245,3 +293,16 @@ describe('PublicationImportService', () => {
     expect(journal.append).toHaveBeenCalledTimes(1);
   });
 });
+
+function logicalBook(variant: BookRecord) {
+  return {
+    schemaVersion: 1 as const,
+    id: `logical:sha256:${variant.id.slice('sha256:'.length)}` as const,
+    title: variant.title,
+    authors: variant.authors,
+    importedAt: variant.importedAt,
+    updatedAt: variant.importedAt,
+    coverState: 'pending' as const,
+    variants: { [variant.format]: variant.id },
+  };
+}

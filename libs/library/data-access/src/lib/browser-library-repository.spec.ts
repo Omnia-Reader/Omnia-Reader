@@ -84,6 +84,36 @@ describe('BrowserLibraryRepository logical singleton and availability', () => {
     );
   });
 
+  it('repairs an ownerless retained exact edition without rewriting healthy bytes', async () => {
+    const databaseName = 'ownerless-reimport-repair';
+    const bytes = new Blob(['%PDF-1.4 ownerless retained edition'], {
+      type: 'application/pdf',
+    });
+    const binaryStorage = controlledBinaryStorage('indexeddb', bytes);
+    const repository = new BrowserLibraryRepository(
+      binaryStorage,
+      undefined,
+      databaseName,
+    );
+    const publication = source('retained.pdf', bytes);
+    const imported = await repository.importBook(publication);
+    const logical = await repository.findLogicalBookByVariant(imported.id);
+    await deleteRawLibraryRecord('logicalBooks', logical!.id, databaseName);
+
+    await expect(repository.listBooks()).resolves.toEqual([imported]);
+    await expect(
+      repository.findLogicalBookByVariant(imported.id),
+    ).resolves.toBeNull();
+
+    await expect(repository.importBook(publication)).resolves.toEqual(imported);
+
+    await expect(repository.listBooks()).resolves.toEqual([imported]);
+    await expect(
+      repository.findLogicalBookByVariant(imported.id),
+    ).resolves.toMatchObject({ variants: { pdf: imported.id } });
+    expect(binaryStorage.save).toHaveBeenCalledTimes(1);
+  });
+
   it('distinguishes lightweight checking from authoritative healthy status', async () => {
     const repository = new BrowserLibraryRepository();
     const bytes = new Blob(['%PDF-1.4 health'], { type: 'application/pdf' });
@@ -480,9 +510,11 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
       ),
     ).rejects.toBeTruthy();
     expect(storage.remove).toHaveBeenCalledTimes(1);
-    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject({
-      variants: { pdf: destination.id },
-    });
+    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject(
+      {
+        variants: { pdf: destination.id },
+      },
+    );
 
     await deleteRawLibraryRecord('books', variant.id, databaseName);
     await expect(
@@ -528,9 +560,11 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         mutation('add:quota'),
       ),
     ).rejects.toMatchObject({ name: 'QuotaExceededError' });
-    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject({
-      variants: { pdf: destination.id },
-    });
+    await expect(repository.getLogicalBook(logical!.id)).resolves.toMatchObject(
+      {
+        variants: { pdf: destination.id },
+      },
+    );
     await expect(repository.getBook(variant.id)).resolves.toBeNull();
   });
 });
@@ -1057,11 +1091,16 @@ describe('BrowserLibraryRepository binary recovery', () => {
     };
 
     const imported = await repository.importBook(source);
+    const logical = await repository.findLogicalBookByVariant(imported.id);
+    await deleteRawLibraryRecord('logicalBooks', logical!.id);
     persisted = null;
     const repaired = await repository.importBook(source);
 
     expect(repaired).toEqual(imported);
     expect(binaryStorage.save).toHaveBeenCalledTimes(2);
+    await expect(
+      repository.findLogicalBookByVariant(bookId),
+    ).resolves.toMatchObject({ variants: { pdf: bookId } });
     await expect(repository.getBookSource(bookId)).resolves.toMatchObject({
       size: publication.size,
     });

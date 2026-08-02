@@ -14,6 +14,10 @@ import {
   LogicalMutationIdentity,
   MembershipReconciliationDecision,
 } from '@omnia-reader/reader/domain';
+import {
+  BOOK_SYNC_EXCLUSIONS,
+  BookSyncExclusions,
+} from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 
@@ -39,6 +43,8 @@ export class PublicationAssociationService {
   private readonly repository = inject(LIBRARY_REPOSITORY);
   private readonly enrichment = inject(PublicationEnrichmentService);
   private readonly journal = inject(SYNC_OPERATION_JOURNAL);
+  private readonly syncExclusions =
+    inject<BookSyncExclusions>(BOOK_SYNC_EXCLUSIONS);
 
   async addFormat(
     logicalBookId: LogicalBookId,
@@ -85,18 +91,10 @@ export class PublicationAssociationService {
     );
     if (result.status !== 'added') return result;
 
-    let syncPending = false;
-    try {
-      await this.journal.append({
-        entity: 'logical-book-change',
-        entityId: result.mutation.change.changeId,
-        operation: 'upsert',
-        payload: result.mutation.change,
-      });
-    } catch {
-      syncPending = true;
-    }
-    return { status: 'added', mutation: result.mutation, syncPending };
+    return {
+      status: 'added',
+      ...(await this.afterLocalMutation(result.mutation)),
+    };
   }
 
   async compatibleCandidates(
@@ -157,11 +155,28 @@ export class PublicationAssociationService {
     logicalBookId: LogicalBookId,
     variantId: string | null,
   ): Promise<ManagePublicationResult> {
-    const mutation = await this.repository.deleteVariant(
-      logicalBookId,
-      variantId,
-      createMutationIdentity(),
+    const logicalBook = await this.repository.getLogicalBook(logicalBookId);
+    const targets =
+      variantId === null
+        ? Object.values(logicalBook?.variants ?? {}).filter(
+            (id): id is string => !!id,
+          )
+        : [variantId];
+    const newlyExcluded = targets.filter(
+      (target) => !this.syncExclusions.isExcluded(target),
     );
+    targets.forEach((target) => this.syncExclusions.exclude(target));
+    let mutation: LogicalBookMutationResult;
+    try {
+      mutation = await this.repository.deleteVariant(
+        logicalBookId,
+        variantId,
+        createMutationIdentity(),
+      );
+    } catch (error) {
+      newlyExcluded.forEach((target) => this.syncExclusions.include(target));
+      throw error;
+    }
     return this.afterLocalMutation(mutation);
   }
 
@@ -180,6 +195,12 @@ export class PublicationAssociationService {
   private async afterLocalMutation(
     mutation: LogicalBookMutationResult,
   ): Promise<ManagePublicationResult> {
+    mutation.deletedVariantIds.forEach((variantId) =>
+      this.syncExclusions.exclude(variantId),
+    );
+    mutation.createdVariantIds.forEach((variantId) =>
+      this.syncExclusions.include(variantId),
+    );
     let syncPending = false;
     try {
       await this.journal.append({

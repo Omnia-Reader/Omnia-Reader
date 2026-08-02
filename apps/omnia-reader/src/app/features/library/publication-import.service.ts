@@ -62,26 +62,31 @@ export class PublicationImportService {
     const added: BookRecord[] = [];
     const duplicates: BookRecord[] = [];
     const failures: PublicationImportFailure[] = [];
-    const existingBookIds = new Set(
-      (await this.repository.listBooks()).map((book) => book.id),
+    const visibleBookIds = new Set(
+      (await this.repository.listLogicalBooks()).flatMap((logicalBook) =>
+        Object.values(logicalBook.variants).filter(
+          (bookId): bookId is string => !!bookId,
+        ),
+      ),
     );
     for (const source of sources) {
       let imported: BookRecord | null = null;
+      let wasVisible = false;
       try {
         imported = await this.repository.importBook(source);
-        const isDuplicate = existingBookIds.has(imported.id);
+        wasVisible = visibleBookIds.has(imported.id);
         const book = await this.enrichment.validateAndEnrich(imported);
         this.syncExclusions.include(book.id);
         books.push(book);
-        (isDuplicate ? duplicates : added).push(book);
-        existingBookIds.add(book.id);
+        (wasVisible ? duplicates : added).push(book);
+        visibleBookIds.add(book.id);
         await this.appendJournalEntry({
           entity: 'book',
           entityId: book.id,
           operation: 'upsert',
           payload: createBookSyncManifest(book, new Date().toISOString()),
         });
-        if (!isDuplicate) {
+        if (!wasVisible) {
           const logicalBook = await this.repository.findLogicalBookByVariant(
             book.id,
           );
@@ -117,7 +122,7 @@ export class PublicationImportService {
           }
         }
       } catch (error) {
-        if (imported && !existingBookIds.has(imported.id)) {
+        if (imported && !wasVisible) {
           try {
             await this.repository.removeBook(imported.id);
           } catch {

@@ -1143,6 +1143,9 @@ export class BrowserLibraryRepository
       if (!(await this.getBookSource(id).catch(() => null))) {
         await this.replaceStoredBinary(existing, blob);
       }
+      if (!(await this.findLogicalBookByVariant(id))) {
+        await this.write(LOGICAL_BOOKS_STORE, logicalBookFromVariant(existing));
+      }
       return existing;
     }
 

@@ -4,6 +4,10 @@ import {
   LogicalBookId,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
+import {
+  BOOK_SYNC_EXCLUSIONS,
+  BookSyncExclusions,
+} from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { PublicationAssociationService } from './publication-association.service';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
@@ -23,12 +27,20 @@ describe('PublicationAssociationService', () => {
   const deleteVariant = vi.fn();
   const reconcileMembership = vi.fn();
   const listLogicalBooks = vi.fn();
+  const getLogicalBook = vi.fn();
   const append = vi.fn();
   const validateSource = vi.fn(async (_source, book) => ({ book }));
+  const syncExclusions = {
+    exclude: vi.fn(),
+    include: vi.fn(),
+    isExcluded: vi.fn(),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     append.mockResolvedValue({});
+    getLogicalBook.mockResolvedValue(logicalRecord(LOGICAL_ID, 'pdf', 'c'));
+    syncExclusions.isExcluded.mockReturnValue(false);
     TestBed.configureTestingModule({
       providers: [
         PublicationAssociationService,
@@ -41,6 +53,7 @@ describe('PublicationAssociationService', () => {
             deleteVariant,
             reconcileMembership,
             listLogicalBooks,
+            getLogicalBook,
           },
         },
         {
@@ -50,6 +63,10 @@ describe('PublicationAssociationService', () => {
         {
           provide: SYNC_OPERATION_JOURNAL,
           useValue: { append } as unknown as SyncOperationJournal,
+        },
+        {
+          provide: BOOK_SYNC_EXCLUSIONS,
+          useValue: syncExclusions as unknown as BookSyncExclusions,
         },
       ],
     });
@@ -92,6 +109,9 @@ describe('PublicationAssociationService', () => {
     );
     expect(addVariant.mock.invocationCallOrder[0]).toBeLessThan(
       append.mock.invocationCallOrder[0],
+    );
+    expect(syncExclusions.include).toHaveBeenCalledWith(
+      `sha256:${'c'.repeat(64)}`,
     );
   });
 
@@ -155,10 +175,7 @@ describe('PublicationAssociationService', () => {
   it('journals detach and delete only after their local commits', async () => {
     const mutation = mutationResult('detach');
     detachVariant.mockResolvedValueOnce(mutation);
-    deleteVariant.mockResolvedValueOnce({
-      ...mutation,
-      change: { ...mutation.change, changeId: 'change:test:delete' },
-    });
+    deleteVariant.mockResolvedValueOnce(deletionMutation('c'));
     const service = TestBed.inject(PublicationAssociationService);
 
     await expect(
@@ -171,6 +188,85 @@ describe('PublicationAssociationService', () => {
     );
     expect(deleteVariant.mock.invocationCallOrder[0]).toBeLessThan(
       append.mock.invocationCallOrder[1],
+    );
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(
+      `sha256:${'c'.repeat(64)}`,
+    );
+  });
+
+  it('excludes a variant before deletion and rolls back only a new exclusion on failure', async () => {
+    const variantId = `sha256:${'c'.repeat(64)}`;
+    deleteVariant.mockRejectedValueOnce(new Error('read-only'));
+    const service = TestBed.inject(PublicationAssociationService);
+
+    await expect(service.deleteVariant(LOGICAL_ID, variantId)).rejects.toThrow(
+      'read-only',
+    );
+
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(variantId);
+    expect(syncExclusions.exclude.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteVariant.mock.invocationCallOrder[0],
+    );
+    expect(syncExclusions.include).toHaveBeenCalledWith(variantId);
+    expect(append).not.toHaveBeenCalled();
+  });
+
+  it('preserves a pre-existing exclusion when deletion fails', async () => {
+    const variantId = `sha256:${'c'.repeat(64)}`;
+    syncExclusions.isExcluded.mockReturnValueOnce(true);
+    deleteVariant.mockRejectedValueOnce(new Error('read-only'));
+
+    await expect(
+      TestBed.inject(PublicationAssociationService).deleteVariant(
+        LOGICAL_ID,
+        variantId,
+      ),
+    ).rejects.toThrow('read-only');
+
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(variantId);
+    expect(syncExclusions.include).not.toHaveBeenCalledWith(variantId);
+  });
+
+  it('keeps deletion exclusions when journaling is unavailable', async () => {
+    const variantId = `sha256:${'c'.repeat(64)}`;
+    deleteVariant.mockResolvedValueOnce(deletionMutation('c'));
+    append.mockRejectedValueOnce(new Error('offline'));
+
+    await expect(
+      TestBed.inject(PublicationAssociationService).deleteVariant(
+        LOGICAL_ID,
+        variantId,
+      ),
+    ).resolves.toMatchObject({ syncPending: true });
+
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(variantId);
+    expect(syncExclusions.include).not.toHaveBeenCalledWith(variantId);
+  });
+
+  it('pre-excludes every member when deleting a whole logical book', async () => {
+    const epubId = `sha256:${'a'.repeat(64)}`;
+    const pdfId = `sha256:${'b'.repeat(64)}`;
+    getLogicalBook.mockResolvedValueOnce({
+      ...logicalRecord(LOGICAL_ID, 'epub', 'a'),
+      variants: { epub: epubId, pdf: pdfId },
+    });
+    deleteVariant.mockResolvedValueOnce({
+      ...deletionMutation('a'),
+      deletedVariantIds: [epubId, pdfId],
+    });
+
+    await TestBed.inject(PublicationAssociationService).deleteVariant(
+      LOGICAL_ID,
+      null,
+    );
+
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(epubId);
+    expect(syncExclusions.exclude).toHaveBeenCalledWith(pdfId);
+    expect(syncExclusions.exclude.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteVariant.mock.invocationCallOrder[0],
+    );
+    expect(syncExclusions.exclude.mock.invocationCallOrder[1]).toBeLessThan(
+      deleteVariant.mock.invocationCallOrder[0],
     );
   });
 
@@ -240,6 +336,21 @@ function mutationResult(
     deletedVariantIds: [],
     resultingBooks: [],
     change,
+  };
+}
+
+function deletionMutation(seed: string) {
+  const variantId = `sha256:${seed.repeat(64)}`;
+  const mutation = mutationResult();
+  return {
+    ...mutation,
+    createdVariantIds: [],
+    deletedVariantIds: [variantId],
+    change: {
+      ...mutation.change,
+      changeId: 'change:test:delete',
+      kind: 'delete-variant' as const,
+    },
   };
 }
 
