@@ -68,7 +68,7 @@ describe('AnnotationSyncService', () => {
     expect(JSON.parse(document?.content ?? '')).toEqual(ANNOTATION);
   });
 
-  it('synchronizes a pending annotation with one targeted read and no prefix list', async () => {
+  it('creates a pending annotation without a preflight read or prefix list', async () => {
     const remote = new MemoryTransport();
     const pending = operation('annotation-op', ANNOTATION);
     const journal = new MemoryJournal([pending]);
@@ -84,6 +84,28 @@ describe('AnnotationSyncService', () => {
     });
 
     expect(remote.listRequests).toBe(0);
+    expect(remote.readRequests).toBe(0);
+    expect(journal.acknowledged).toEqual(['annotation-op']);
+  });
+
+  it('falls back to one exact read when a create candidate already exists remotely', async () => {
+    const remote = new MemoryTransport([
+      remoteDocument(ANNOTATION, `${JSON.stringify(ANNOTATION, null, 2)}\n`),
+    ]);
+    const pending = operation('annotation-op', ANNOTATION);
+    const journal = new MemoryJournal([pending]);
+    const service = new AnnotationSyncService(
+      remote,
+      journal,
+      annotationRepository(ANNOTATION),
+    );
+
+    await expect(service.synchronizePending([pending])).resolves.toMatchObject({
+      pushed: 0,
+      conflicts: 1,
+      rejected: 0,
+    });
+
     expect(remote.readRequests).toBe(1);
     expect(journal.acknowledged).toEqual(['annotation-op']);
   });
@@ -225,6 +247,14 @@ class MemoryTransport implements LibrarySyncTransport {
   async write(request: DocumentWriteRequest): Promise<RemoteDocument> {
     if (this.conflictsRemaining > 0) {
       this.conflictsRemaining -= 1;
+      throw new SyncConflictError();
+    }
+    const current = this.documents.get(request.path);
+    if (
+      (request.expectedRevision === undefined && current) ||
+      (request.expectedRevision !== undefined &&
+        request.expectedRevision !== current?.revision)
+    ) {
       throw new SyncConflictError();
     }
     const document: RemoteDocument = {

@@ -19,6 +19,7 @@ export const ANNOTATIONS_ROOT = `${SYNC_ROOT}/annotations`;
 interface PendingAnnotationWrite {
   annotation: PublicationAnnotation;
   operationIds: string[];
+  createCandidate: boolean;
 }
 
 export interface AnnotationSyncOptions {
@@ -74,7 +75,10 @@ export class AnnotationSyncService {
     let conflicts = 0;
     let rejected = annotationOperations.length - writes.acceptedOperationCount;
     for (const write of writes.documents.values()) {
-      const result = await this.pushAnnotation(write);
+      const result = await this.pushAnnotation(
+        write,
+        write.createCandidate ? null : undefined,
+      );
       pushed += result.pushed ? 1 : 0;
       conflicts += result.conflicts;
       rejected += result.rejected;
@@ -264,11 +268,13 @@ function coalesceAnnotationOperations(operations: readonly SyncOperation[]): {
       documents.set(path, {
         annotation: operation.payload,
         operationIds: [operation.id],
+        createCandidate: operation.revision === 1,
       });
       continue;
     }
 
     existing.operationIds.push(operation.id);
+    existing.createCandidate ||= operation.revision === 1;
     if (
       preferredAnnotation(existing.annotation, operation.payload) ===
       operation.payload
@@ -286,7 +292,11 @@ function mergeSnapshot(
   const path = annotationDocumentPath(annotation);
   const existing = documents.get(path);
   if (!existing) {
-    documents.set(path, { annotation, operationIds: [] });
+    documents.set(path, {
+      annotation,
+      operationIds: [],
+      createCandidate: false,
+    });
     return;
   }
   if (preferredAnnotation(existing.annotation, annotation) === annotation) {

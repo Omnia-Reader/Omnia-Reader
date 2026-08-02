@@ -60,7 +60,7 @@ describe('BookmarkSyncService', () => {
     expect(JSON.parse(document?.content ?? '')).toEqual(BOOKMARK);
   });
 
-  it('synchronizes a pending bookmark with one targeted read and no prefix list', async () => {
+  it('creates a pending bookmark without a preflight read or prefix list', async () => {
     const remote = new MemoryTransport();
     const pending = operation('bookmark-op', BOOKMARK);
     const journal = new MemoryJournal([pending]);
@@ -76,6 +76,28 @@ describe('BookmarkSyncService', () => {
     });
 
     expect(remote.listRequests).toBe(0);
+    expect(remote.readRequests).toBe(0);
+    expect(journal.acknowledged).toEqual(['bookmark-op']);
+  });
+
+  it('falls back to one exact read when a create candidate already exists remotely', async () => {
+    const remote = new MemoryTransport([
+      remoteDocument(BOOKMARK, `${JSON.stringify(BOOKMARK, null, 2)}\n`),
+    ]);
+    const pending = operation('bookmark-op', BOOKMARK);
+    const journal = new MemoryJournal([pending]);
+    const service = new BookmarkSyncService(
+      remote,
+      journal,
+      bookmarkRepository(BOOKMARK),
+    );
+
+    await expect(service.synchronizePending([pending])).resolves.toMatchObject({
+      pushed: 0,
+      conflicts: 1,
+      rejected: 0,
+    });
+
     expect(remote.readRequests).toBe(1);
     expect(journal.acknowledged).toEqual(['bookmark-op']);
   });
@@ -218,6 +240,14 @@ class MemoryTransport implements LibrarySyncTransport {
   async write(request: DocumentWriteRequest): Promise<RemoteDocument> {
     if (this.conflictsRemaining > 0) {
       this.conflictsRemaining -= 1;
+      throw new SyncConflictError();
+    }
+    const current = this.documents.get(request.path);
+    if (
+      (request.expectedRevision === undefined && current) ||
+      (request.expectedRevision !== undefined &&
+        request.expectedRevision !== current?.revision)
+    ) {
       throw new SyncConflictError();
     }
     const document: RemoteDocument = {

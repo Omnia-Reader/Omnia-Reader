@@ -80,7 +80,7 @@ describe('AutoSyncScheduler', () => {
     await flushPromises();
 
     activity.notify({ kind: 'annotation', entityId: 'annotation-1' });
-    environment.advance(149);
+    environment.advance(49);
     await flushPromises();
     expect(synchronize).toHaveBeenCalledTimes(1);
 
@@ -580,7 +580,7 @@ function createScheduler(
   return new AutoSyncScheduler({ synchronize }, selection, activity, {
     environment,
     quietIntervalMs: 1_000,
-    interactiveQuietIntervalMs: 150,
+    interactiveQuietIntervalMs: 50,
     revisionCheckIntervalMs: 10_000,
     rateLimitStore,
     historyStore,

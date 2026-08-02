@@ -13,7 +13,7 @@
 
 ## Verification Evidence
 
-- `npx nx test sync-core --skip-nx-cache`: 21 files, 162 tests passed.
+- `npx nx test sync-core --skip-nx-cache`: 21 files, 165 tests passed, including the 50 ms quiet plus two 300 ms provider-leg sub-second budget.
 - `npx nx test sync-gateway --skip-nx-cache`: 8 files, 116 passed and 1 optional Redis test skipped.
 - Focused `omnia-reader` composition test: 1 passed.
 - `npx nx run-many -t lint -p sync-core sync-gateway omnia-reader --skip-nx-cache`: passed.
@@ -21,3 +21,5 @@
 - Chromium sync journey: unavailable because the repository Nx configuration reports a recursive `sync-gateway:serve:development -> omnia-reader-e2e:e2e` invocation before Playwright starts.
 - Live credentialed GitHub timing, Firefox/WebKit, packaged Tauri, emulator, and physical-device gates: not run.
 - Review finding resolved: targeted services now refresh the exact current local record before publishing, preventing a newer edit that arrives after the captured journal batch from being temporarily overwritten by an older payload.
+- Public GitHub API baseline from the development host: five sequential requests completed in 254–285 ms each. This is network evidence only, not an authenticated repository SLA.
+- New highlight request envelope: one revision probe plus one optimistic create and 50 ms quiet time; no file read, prefix listing, or verification pass. At the measured baseline this is approximately 0.56–0.62 seconds before local processing.

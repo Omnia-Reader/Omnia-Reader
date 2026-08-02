@@ -123,6 +123,42 @@ describe('ChangeAwareSyncWorker', () => {
     expect(checkpoints.write).toHaveBeenLastCalledWith('git', null);
   });
 
+  it('keeps a new reading-state mutation under one second with 300 ms provider legs', async () => {
+    const operation = pendingOperation('annotation');
+    const journal = operationJournal([operation]);
+    journal.pending
+      .mockResolvedValueOnce([operation])
+      .mockResolvedValueOnce([]);
+    const remote = revisionTransport('repository:main:a');
+    remote.destinationRevision.mockImplementation(async () => {
+      await delay(300);
+      return 'repository:main:a';
+    });
+    const readingStateWorker = pendingReadingStateWorker({
+      ...EMPTY_RESULT,
+      pushed: 1,
+    });
+    readingStateWorker.synchronizePending.mockImplementation(async () => {
+      await delay(300);
+      return { ...EMPTY_RESULT, pushed: 1 };
+    });
+    const sync = createWorker({
+      delegate: worker(),
+      journal,
+      readingStateWorker,
+      checkpoints: checkpointStore('repository:main:a'),
+      remote,
+    });
+    const startedAt = performance.now();
+
+    await delay(50);
+    await sync.synchronize();
+
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    expect(remote.destinationRevision).toHaveBeenCalledTimes(1);
+    expect(readingStateWorker.synchronizePending).toHaveBeenCalledTimes(1);
+  }, 2_000);
+
   it.each(['book', 'logical-book-change', 'preference'] as const)(
     'keeps %s operations on the complete synchronization path',
     async (entity) => {
@@ -480,6 +516,10 @@ function pendingReadingStateWorker(
   return {
     synchronizePending: vi.fn().mockResolvedValue(result),
   };
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function pendingOperation(

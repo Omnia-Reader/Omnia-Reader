@@ -20,6 +20,7 @@ interface PendingBookmarkWrite {
   bookmark: PublicationBookmark;
   operationIds: string[];
   latestOperation: SyncOperation;
+  createCandidate: boolean;
 }
 
 export interface BookmarkSyncOptions {
@@ -75,7 +76,10 @@ export class BookmarkSyncService {
     let conflicts = 0;
     let rejected = bookmarkOperations.length - writes.acceptedOperationCount;
     for (const write of writes.documents.values()) {
-      const result = await this.pushBookmark(write);
+      const result = await this.pushBookmark(
+        write,
+        write.createCandidate ? null : undefined,
+      );
       pushed += result.pushed ? 1 : 0;
       conflicts += result.conflicts;
       rejected += result.rejected;
@@ -263,11 +267,13 @@ function coalesceBookmarkOperations(operations: readonly SyncOperation[]): {
         bookmark: operation.payload,
         operationIds: [operation.id],
         latestOperation: operation,
+        createCandidate: operation.revision === 1,
       });
       continue;
     }
 
     existing.operationIds.push(operation.id);
+    existing.createCandidate ||= operation.revision === 1;
     if (
       preferredBookmark(existing.bookmark, operation.payload) ===
       operation.payload
@@ -290,6 +296,7 @@ function mergeSnapshot(
       bookmark,
       operationIds: [],
       latestOperation: syntheticBookmarkOperation(bookmark),
+      createCandidate: false,
     });
     return;
   }

@@ -8,12 +8,12 @@ All of the following are required: GitHub is selected; destination revision is s
 
 - Destination revision probes: exactly one before dispatch.
 - Prefix listings: zero.
-- Exact document reads: exactly one.
+- Exact document reads for a new record: zero; an existing/conflicting record may use one.
 - Document writes: at most one, required when merged content differs.
 - Schema, publication, logical-book, and unrelated reading-state workers: zero.
 - Immediate complete verification passes: zero.
 
-At the GitHub provider boundary, the document write performs no content preflight GET. A stale optimistic revision or create-existing race is a conflict.
+At the GitHub provider boundary, the document write performs no content preflight GET. A create candidate is sent directly; a create-existing race falls back to an exact read and deterministic merge.
 
 ## Fallback and reconciliation
 

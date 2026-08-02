@@ -18,7 +18,9 @@ Add a provider-neutral reading-state coordinator in `sync-core`, dispatch it fro
 - `apps/omnia-reader`: compose the full and targeted coordinators from the same state workers.
 - `apps/sync-gateway`: submit optimistic GitHub Contents writes directly; GitHub maps stale or create-existing writes to conflict.
 
-The fast lane is GitHub-only because it relies on the existing authoritative repository revision checkpoint. It requires all pending operations to be progress, bookmark, or annotation work and the probed revision to equal the trusted checkpoint. Services coalesce their supplied operations and read only each exact target document before merge/write. Any push clears the global checkpoint; the existing revision scheduler subsequently performs a complete reconciliation. This avoids falsely checkpointing concurrent changes in unrelated domains.
+The fast lane is GitHub-only because it relies on the existing authoritative repository revision checkpoint. It requires all pending operations to be progress, bookmark, or annotation work and the probed revision to equal the trusted checkpoint. Services coalesce their supplied operations; existing records use only the exact target document before merge/write. Any push clears the global checkpoint; the existing revision scheduler subsequently performs a complete reconciliation. This avoids falsely checkpointing concurrent changes in unrelated domains.
+
+For a first annotation or bookmark operation, the targeted service optimistically creates the UUID-addressed document without a preflight read. A create-existing conflict falls back to the bounded exact-read merge. This reduces the common new-highlight path to two sequential GitHub operations while preserving deterministic collision and recovery behavior.
 
 ## Verification
 
