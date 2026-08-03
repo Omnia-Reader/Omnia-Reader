@@ -27,7 +27,7 @@ const UNCHANGED_RESULT: SyncWorkerResult = {
 };
 
 interface StoredSyncCheckpoint {
-  schemaVersion: 1;
+  schemaVersion: 3;
   git?: string;
   mega?: string;
 }
@@ -86,10 +86,10 @@ export class BrowserSyncCheckpointStore implements SyncCheckpointStore {
   private readStored(): StoredSyncCheckpoint {
     const serialized = this.storage?.getItem(STORAGE_KEY);
     if (!serialized || serialized.length > MAX_STORED_CHECKPOINT_LENGTH) {
-      return { schemaVersion: 1 };
+      return { schemaVersion: 3 };
     }
     const value: unknown = JSON.parse(serialized);
-    return isStoredSyncCheckpoint(value) ? { ...value } : { schemaVersion: 1 };
+    return isStoredSyncCheckpoint(value) ? { ...value } : { schemaVersion: 3 };
   }
 }
 
@@ -296,7 +296,7 @@ function isStoredSyncCheckpoint(value: unknown): value is StoredSyncCheckpoint {
   }
   const candidate = value as Partial<StoredSyncCheckpoint>;
   return (
-    candidate.schemaVersion === 1 &&
+    candidate.schemaVersion === 3 &&
     (candidate.git === undefined || validRevision(candidate.git)) &&
     (candidate.mega === undefined || validRevision(candidate.mega))
   );

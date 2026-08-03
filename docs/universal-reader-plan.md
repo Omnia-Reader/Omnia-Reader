@@ -275,7 +275,7 @@ implemented:
   document observed from any provider, so Git/LFS-to-MEGA migrations and the
   reverse preserve device history while the local resume record remains a
   merged view. Every coordinated synchronization first initializes or validates
-  the canonical `.omnia-reader/v1/manifest.json` application, schema,
+  the canonical `.omnia-reader/manifest.json` application, schema,
   content-identity, and enabled-feature contract; malformed, incomplete, or
   future schemas fail closed before any child document is read or written.
 - Git/Git LFS and MEGA gateway clients implement the same logical sync layout.
@@ -894,7 +894,7 @@ resume remains future work.
 ### 6.3 Provider-neutral layout
 
 ```text
-.omnia-reader/v1/
+.omnia-reader/
 ├── manifest.json
 ├── books/<bookId>/book.json
 ├── books/<bookId>/publication.epub
@@ -968,8 +968,8 @@ first hosted Git service:
 - Keep GitHub tokens out of browser storage.
 - Use ordinary Git blobs/commits for manifests, progress documents, bookmark
   records, and annotation records.
-- Track `.omnia-reader/v1/books/**/*.epub` and
-  `.omnia-reader/v1/books/**/*.pdf` in `.gitattributes` with
+- Track `.omnia-reader/library/**/*.epub` and
+  `.omnia-reader/library/**/*.pdf` in `.gitattributes` with
   `filter=lfs diff=lfs merge=lfs -text`.
 - Generate the canonical Git LFS v1 pointer containing the SHA-256 object ID
   and byte length, transfer the object through the LFS batch API, and publish

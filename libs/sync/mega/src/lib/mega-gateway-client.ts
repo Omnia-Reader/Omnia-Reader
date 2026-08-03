@@ -10,6 +10,8 @@ import {
   ObjectUploadRequest,
   RemoteDocument,
   RemoteObject,
+  RemoteSyncEntry,
+  RemoteSyncEntryDeleteRequest,
   SyncConflictError,
 } from '@omnia-reader/sync/core';
 
@@ -139,6 +141,50 @@ export class MegaGatewayClient implements MegaGateway {
       throw new MegaGatewayProtocolError();
     }
     return value['documents'];
+  }
+
+  async listEntries(prefix: string): Promise<readonly RemoteSyncEntry[]> {
+    const response = await this.request(
+      `/entries?prefix=${encodeURIComponent(prefix)}`,
+    );
+    const value = await responseJson(response);
+    if (
+      !isRecord(value) ||
+      !Array.isArray(value['entries']) ||
+      !value['entries'].every(isRemoteSyncEntry)
+    ) {
+      throw new MegaGatewayProtocolError();
+    }
+    return value['entries'];
+  }
+
+  async deleteEntry(request: RemoteSyncEntryDeleteRequest): Promise<void> {
+    const parameters = new URLSearchParams({
+      path: request.path,
+      expectedRevision: request.expectedRevision,
+    });
+    const response = await this.request(
+      `/entry?${parameters.toString()}`,
+      { method: 'DELETE' },
+      [404, 409],
+    );
+    if (response.status === 409) {
+      throw new SyncConflictError('The remote MEGA sync entry changed');
+    }
+  }
+
+  async deleteEntries(
+    requests: readonly RemoteSyncEntryDeleteRequest[],
+  ): Promise<void> {
+    if (requests.length === 0) return;
+    const response = await this.request(
+      '/entries',
+      { method: 'DELETE', body: JSON.stringify(requests) },
+      [409],
+    );
+    if (response.status === 409) {
+      throw new SyncConflictError('A remote MEGA sync entry changed');
+    }
   }
 
   async read(path: string): Promise<RemoteDocument | null> {
@@ -361,6 +407,15 @@ function isRemoteObject(value: unknown): value is RemoteObject {
     (value['size'] as number) >= 0 &&
     typeof value['sha256'] === 'string' &&
     /^[a-f0-9]{64}$/.test(value['sha256'])
+  );
+}
+
+function isRemoteSyncEntry(value: unknown): value is RemoteSyncEntry {
+  return (
+    isRecord(value) &&
+    isBoundedString(value['path']) &&
+    isBoundedString(value['revision']) &&
+    (value['kind'] === 'document' || value['kind'] === 'object')
   );
 }
 

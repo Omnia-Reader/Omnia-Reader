@@ -26,7 +26,8 @@ export function foldLogicalBookChanges(
       ? -1
       : isAncestor(right.changeId, left.changeId, byId)
         ? 1
-        : left.changeId.localeCompare(right.changeId),
+        : left.createdAt.localeCompare(right.createdAt) ||
+          left.changeId.localeCompare(right.changeId),
   );
   const books = new Map<string, LogicalBookRecord>();
   const preferences = new Map<string, LogicalBookFormatPreference>();

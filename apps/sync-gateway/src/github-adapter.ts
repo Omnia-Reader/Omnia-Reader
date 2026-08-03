@@ -13,6 +13,8 @@ import {
   type RemoteObjectDelete,
   type RemoteObjectDownload,
   type RemoteObjectUpload,
+  type RemoteSyncEntry,
+  type RemoteSyncEntryDelete,
   type SyncGatewayAdapter,
 } from './gateway-contract.js';
 import type { GitHubAuthorizationRevocationStore } from './github-authorization-revocations.js';
@@ -104,10 +106,12 @@ interface LfsObjectResponse {
 }
 
 const GIT_ATTRIBUTES = [
-  '.omnia-reader/v1/library/**/*.epub filter=lfs diff=lfs merge=lfs -text',
-  '.omnia-reader/v1/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
+  '.omnia-reader/library/**/*.epub filter=lfs diff=lfs merge=lfs -text',
+  '.omnia-reader/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
 ];
 const LEGACY_GIT_ATTRIBUTES = [
+  '.omnia-reader/v1/library/**/*.epub filter=lfs diff=lfs merge=lfs -text',
+  '.omnia-reader/v1/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
   '.omnia-reader/v1/books/**/*.epub filter=lfs diff=lfs merge=lfs -text',
   '.omnia-reader/v1/books/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
 ];
@@ -120,6 +124,7 @@ const MAX_TRANSFER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PROVIDER_RETRY_BASE_VALUE_MS = 1_000;
 const MAX_PROVIDER_RETRY_BASE_VALUE_MS = 1_000;
 const MAX_REMOTE_DOCUMENTS = 10_000;
+const MAX_REMOTE_ENTRIES = 10_000;
 const MAX_CONCURRENT_DOCUMENT_READS = 8;
 
 export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
@@ -474,6 +479,180 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
         revision: blob['sha'] as string,
       };
     });
+  }
+
+  async listEntries(
+    sessionId: string,
+    prefix: string,
+  ): Promise<readonly RemoteSyncEntry[]> {
+    const context = await this.repositoryContext(sessionId);
+    const branch = encodeURIComponent(context.repository.defaultBranch);
+    const tree = await this.githubJson<unknown>(
+      `/repos/${encodeFullName(context.repository.fullName)}/git/trees/${branch}?recursive=1`,
+      { token: context.token },
+      [404, 409],
+    );
+    if (tree === null) return [];
+    if (!isRecord(tree) || !Array.isArray(tree['tree'])) {
+      throw providerProtocolError();
+    }
+    const entries = tree['tree'].filter(
+      (entry): entry is Record<string, unknown> =>
+        isRecord(entry) &&
+        entry['type'] === 'blob' &&
+        typeof entry['path'] === 'string' &&
+        (entry['path'] === prefix ||
+          (entry['path'] as string).startsWith(`${prefix}/`)) &&
+        isGitSha(entry['sha']),
+    );
+    if (entries.length > MAX_REMOTE_ENTRIES) {
+      throw new GatewayHttpError(
+        413,
+        'The synchronization entry set is too large',
+      );
+    }
+    return entries
+      .map((entry) => ({
+        path: entry['path'] as string,
+        revision: entry['sha'] as string,
+        kind: isDocumentPath(entry['path'] as string)
+          ? ('document' as const)
+          : ('object' as const),
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  async deleteEntry(
+    sessionId: string,
+    request: RemoteSyncEntryDelete,
+  ): Promise<void> {
+    const context = await this.repositoryContext(sessionId);
+    const current = await this.readFile(
+      context.repository,
+      context.token,
+      request.path,
+    );
+    if (!current) return;
+    if (current.revision !== request.expectedRevision) {
+      throw new GatewayHttpError(409, 'The remote sync entry changed');
+    }
+    await this.deleteFile(
+      context.repository,
+      context.token,
+      request.path,
+      current.revision,
+      `Omnia Reader: remove obsolete sync entry ${request.path}`,
+    );
+    await this.ensureGitAttributes(context.repository, context.token);
+  }
+
+  async deleteEntries(
+    sessionId: string,
+    requests: readonly RemoteSyncEntryDelete[],
+  ): Promise<void> {
+    if (requests.length === 0) return;
+    const context = await this.repositoryContext(sessionId);
+    const repositoryPath = `/repos/${encodeFullName(context.repository.fullName)}`;
+    const branchPath = encodePath(context.repository.defaultBranch);
+    const reference = await this.githubJson<unknown>(
+      `${repositoryPath}/git/ref/heads/${branchPath}`,
+      { token: context.token },
+      [404, 409],
+    );
+    if (reference === null) return;
+    const headSha = gitReferenceSha(reference);
+    const commit = await this.githubJson<unknown>(
+      `${repositoryPath}/git/commits/${headSha}`,
+      { token: context.token },
+    );
+    const treeSha = gitCommitTreeSha(commit);
+    const tree = await this.githubJson<unknown>(
+      `${repositoryPath}/git/trees/${treeSha}?recursive=1`,
+      { token: context.token },
+    );
+    const blobs = gitTreeBlobs(tree);
+    const deletions: Array<Record<string, unknown>> = [];
+    const requestedRevisions = new Map<string, Set<string>>();
+    for (const request of requests) {
+      const revisions = requestedRevisions.get(request.path) ?? new Set();
+      revisions.add(request.expectedRevision);
+      requestedRevisions.set(request.path, revisions);
+    }
+    for (const [path, revisions] of requestedRevisions) {
+      const revision = blobs.get(path);
+      if (revision === undefined) continue;
+      if (revisions.size !== 1 || !revisions.has(revision)) {
+        throw new GatewayHttpError(409, 'A remote sync entry changed');
+      }
+      deletions.push({
+        path,
+        mode: '100644',
+        type: 'blob',
+        sha: null,
+      });
+    }
+    const attributesSha = blobs.get('.gitattributes');
+    const attributesContent = attributesSha
+      ? await this.readBlob(context.repository, context.token, attributesSha)
+      : '';
+    const updatedAttributes = reconciledGitAttributes(attributesContent);
+    if (updatedAttributes !== null) {
+      const blob = await this.githubJson<unknown>(
+        `${repositoryPath}/git/blobs`,
+        {
+          method: 'POST',
+          token: context.token,
+          body: { content: updatedAttributes, encoding: 'utf-8' },
+        },
+      );
+      deletions.push({
+        path: '.gitattributes',
+        mode: '100644',
+        type: 'blob',
+        sha: gitCreatedSha(blob),
+      });
+    }
+    if (deletions.length === 0) return;
+    const createdTree = await this.githubJson<unknown>(
+      `${repositoryPath}/git/trees`,
+      {
+        method: 'POST',
+        token: context.token,
+        body: { base_tree: treeSha, tree: deletions },
+      },
+    );
+    const createdTreeSha = gitCreatedSha(createdTree);
+    const createdCommit = await this.githubJson<unknown>(
+      `${repositoryPath}/git/commits`,
+      {
+        method: 'POST',
+        token: context.token,
+        body: {
+          message: 'Omnia Reader: remove obsolete synchronization root',
+          tree: createdTreeSha,
+          parents: [headSha],
+        },
+      },
+    );
+    const createdCommitSha = gitCreatedSha(createdCommit);
+    try {
+      await this.githubJson<unknown>(
+        `${repositoryPath}/git/refs/heads/${branchPath}`,
+        {
+          method: 'PATCH',
+          token: context.token,
+          body: { sha: createdCommitSha, force: false },
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof GatewayHttpError &&
+        [409, 422].includes(error.statusCode)
+      ) {
+        throw new GatewayHttpError(409, 'The remote repository changed');
+      }
+      throw error;
+    }
   }
 
   async destinationRevision(sessionId: string): Promise<string> {
@@ -1366,31 +1545,14 @@ export class GitHubSyncGatewayAdapter implements SyncGatewayAdapter {
   ): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const current = await this.readFile(repository, token, '.gitattributes');
-      const lines = new Set(
-        (current?.content ?? '')
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean),
-      );
-      let changed = false;
-      for (const line of LEGACY_GIT_ATTRIBUTES) {
-        if (lines.delete(line)) {
-          changed = true;
-        }
-      }
-      for (const line of GIT_ATTRIBUTES) {
-        if (!lines.has(line)) {
-          lines.add(line);
-          changed = true;
-        }
-      }
-      if (!changed) {
+      const content = reconciledGitAttributes(current?.content ?? '');
+      if (content === null) {
         return;
       }
       try {
         await this.writeFile(repository, token, {
           path: '.gitattributes',
-          content: `${[...lines].join('\n')}\n`,
+          content,
           message: 'Omnia Reader: configure Git LFS publications',
           ...(current ? { expectedRevision: current.revision } : {}),
         });
@@ -2029,6 +2191,79 @@ function stripTrailingSlash(value: string): string {
 
 function isGitSha(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{40,64}$/.test(value);
+}
+
+function reconciledGitAttributes(content: string): string | null {
+  const lines = new Set(
+    content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  let changed = false;
+  for (const line of LEGACY_GIT_ATTRIBUTES) {
+    if (lines.delete(line)) changed = true;
+  }
+  for (const line of GIT_ATTRIBUTES) {
+    if (!lines.has(line)) {
+      lines.add(line);
+      changed = true;
+    }
+  }
+  return changed ? `${[...lines].join('\n')}\n` : null;
+}
+
+function gitReferenceSha(value: unknown): string {
+  if (
+    !isRecord(value) ||
+    !isRecord(value['object']) ||
+    !isGitSha(value['object']['sha'])
+  ) {
+    throw providerProtocolError();
+  }
+  return value['object']['sha'];
+}
+
+function gitCommitTreeSha(value: unknown): string {
+  if (
+    !isRecord(value) ||
+    !isRecord(value['tree']) ||
+    !isGitSha(value['tree']['sha'])
+  ) {
+    throw providerProtocolError();
+  }
+  return value['tree']['sha'];
+}
+
+function gitCreatedSha(value: unknown): string {
+  if (!isRecord(value) || !isGitSha(value['sha'])) {
+    throw providerProtocolError();
+  }
+  return value['sha'];
+}
+
+function gitTreeBlobs(value: unknown): ReadonlyMap<string, string> {
+  if (
+    !isRecord(value) ||
+    value['truncated'] === true ||
+    !Array.isArray(value['tree'])
+  ) {
+    throw providerProtocolError(
+      'GitHub returned an incomplete repository tree',
+    );
+  }
+  const blobs = new Map<string, string>();
+  for (const entry of value['tree']) {
+    if (
+      isRecord(entry) &&
+      entry['type'] === 'blob' &&
+      typeof entry['path'] === 'string' &&
+      isGitSha(entry['sha'])
+    ) {
+      blobs.set(entry['path'], entry['sha']);
+    }
+  }
+  return blobs;
 }
 
 async function mapConcurrent<Input, Output>(

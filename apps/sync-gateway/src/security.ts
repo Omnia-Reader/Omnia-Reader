@@ -1,7 +1,7 @@
 import type { FastifyRequest } from 'fastify';
 import { GatewayHttpError } from './gateway-contract.js';
 
-const SYNC_ROOT = '.omnia-reader/v1';
+const SYNC_ROOT = '.omnia-reader';
 const MAX_PATH_LENGTH = 2048;
 
 export function requireSameOriginMutation(request: FastifyRequest): void {

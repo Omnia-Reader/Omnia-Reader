@@ -13,7 +13,7 @@
 namespace omnia::mega_bridge
 {
 
-inline constexpr std::string_view logical_root = ".omnia-reader/v1";
+inline constexpr std::string_view logical_root = ".omnia-reader";
 inline constexpr std::size_t maximum_logical_path_bytes = 2048;
 
 class BridgeError final: public std::runtime_error

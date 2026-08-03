@@ -7,6 +7,7 @@ import {
 } from '@omnia-reader/reader/domain';
 import {
   BOOK_SYNC_EXCLUSIONS,
+  bookObjectPath,
   createBookSyncDeletionTombstone,
   createBookSyncManifest,
 } from '@omnia-reader/sync/core';
@@ -107,9 +108,7 @@ export class PublicationImportService {
                   {
                     operation: 'upsert',
                     variant: book,
-                    objectPath: `.omnia-reader/v1/books/${book.id.slice(
-                      'sha256:'.length,
-                    )}/publication.${book.format}`,
+                    objectPath: bookObjectPath(book),
                   },
                 ],
                 preferenceEffects: [],

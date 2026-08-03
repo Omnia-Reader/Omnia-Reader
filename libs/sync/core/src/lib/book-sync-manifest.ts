@@ -1,7 +1,7 @@
 import { BookRecord, PublicationFormat } from '@omnia-reader/reader/domain';
-import { SYNC_ROOT } from './library-sync-manifest';
+import { PREVIOUS_SYNC_ROOT, SYNC_ROOT } from './library-sync-manifest';
 
-export const LEGACY_BOOKS_ROOT = `${SYNC_ROOT}/books`;
+export const LEGACY_BOOKS_ROOT = `${PREVIOUS_SYNC_ROOT}/books`;
 export const BOOKS_ROOT = `${SYNC_ROOT}/library`;
 export const BOOK_DELETIONS_ROOT = `${SYNC_ROOT}/.deletions/books`;
 

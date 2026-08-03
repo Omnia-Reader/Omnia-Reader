@@ -1,4 +1,5 @@
-export const SYNC_ROOT = '.omnia-reader/v1';
+export const SYNC_ROOT = '.omnia-reader';
+export const PREVIOUS_SYNC_ROOT = '.omnia-reader/v1';
 export const SYNC_MANIFEST_PATH = `${SYNC_ROOT}/manifest.json`;
 
 export const LIBRARY_SYNC_FEATURES = [

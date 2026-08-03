@@ -174,7 +174,7 @@ sufficient authorization by itself.
 ```json
 {
   "handle": "base64url-node-handle",
-  "path": ".omnia-reader/v1/books/ab/book/edition.epub",
+  "path": ".omnia-reader/library/edition--ab/edition.epub",
   "revision": "opaque-handle-and-fingerprint-revision",
   "size": 123456,
   "sha256": "64-lowercase-hex-characters"
@@ -208,7 +208,7 @@ SHA-256 and enforcing `Content-Length`. Call `startUpload` only after the
 declared length and digest match, set `osh`, return the resulting node
 metadata, and securely remove the temporary file in every outcome.
 
-The gateway uploads into `.omnia-reader/v1/.staging/` first. For a small
+The gateway uploads into `.omnia-reader/.staging/` first. For a small
 document it rechecks the current revision, moves the previous node to staging,
 moves the new node into place, verifies the visible result, and then removes
 the backup. Publication objects are immutable: only a missing exact-edition

@@ -17,6 +17,7 @@ import {
 import {
   BOOK_SYNC_EXCLUSIONS,
   BookSyncExclusions,
+  bookObjectPath,
 } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
@@ -86,6 +87,7 @@ export class PublicationAssociationService {
       logicalBookId,
       candidate.book,
       source,
+      bookObjectPath(candidate.book),
       identity,
       candidate.cover,
     );

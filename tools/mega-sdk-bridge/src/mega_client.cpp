@@ -933,8 +933,32 @@ void MegaClient::removeFile(
     {
         throw BridgeError{400, "INVALID_FILE", "The MEGA node is not a file"};
     }
+    auto parentHandle = node->getParentHandle();
     std::unique_ptr<mega::MegaRequest> request{waitForRequest(
         [&](auto* listener) { session.api().remove(node.get(), listener); })};
+    while (parentHandle != root->getHandle())
+    {
+        auto parent = requireNode(session.api(), parentHandle);
+        requireDescendant(session.api(), *root, *parent);
+        if (parent->getType() != mega::MegaNode::TYPE_FOLDER)
+        {
+            break;
+        }
+        if (copyString(parent->getName()) == logical_root)
+        {
+            break;
+        }
+        MegaNodeListPtr children{session.api().getChildren(parent.get())};
+        if (!children || children->size() != 0)
+        {
+            break;
+        }
+        parentHandle = parent->getParentHandle();
+        std::unique_ptr<mega::MegaRequest> removeDirectory{waitForRequest(
+            [&](auto* listener) {
+                session.api().remove(parent.get(), listener);
+            })};
+    }
 }
 
 std::string sha256File(const std::filesystem::path& path)

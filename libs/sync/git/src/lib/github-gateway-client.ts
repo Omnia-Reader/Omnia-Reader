@@ -8,6 +8,8 @@ import {
   ObjectDownloadOptions,
   ObjectUploadRequest,
   RemoteObject,
+  RemoteSyncEntry,
+  RemoteSyncEntryDeleteRequest,
 } from '@omnia-reader/sync/core';
 import {
   GitConflictError,
@@ -244,6 +246,46 @@ export class GitHubGatewayClient implements GitHubGateway {
       throw new GitHubGatewayProtocolError();
     }
     return value['files'];
+  }
+
+  async listEntries(prefix: string): Promise<readonly RemoteSyncEntry[]> {
+    const response = await this.request(
+      `/entries?prefix=${encodeURIComponent(prefix)}`,
+    );
+    const value = await responseJson(response);
+    if (
+      !isRecord(value) ||
+      !Array.isArray(value['entries']) ||
+      !value['entries'].every(isRemoteSyncEntry)
+    ) {
+      throw new GitHubGatewayProtocolError();
+    }
+    return value['entries'];
+  }
+
+  async deleteEntry(request: RemoteSyncEntryDeleteRequest): Promise<void> {
+    const parameters = new URLSearchParams({
+      path: request.path,
+      expectedRevision: request.expectedRevision,
+    });
+    const response = await this.request(
+      `/entry?${parameters.toString()}`,
+      { method: 'DELETE' },
+      [404, 409],
+    );
+    if (response.status === 409) throw new GitConflictError();
+  }
+
+  async deleteEntries(
+    requests: readonly RemoteSyncEntryDeleteRequest[],
+  ): Promise<void> {
+    if (requests.length === 0) return;
+    const response = await this.request(
+      '/entries',
+      { method: 'DELETE', body: JSON.stringify(requests) },
+      [409],
+    );
+    if (response.status === 409) throw new GitConflictError();
   }
 
   async read(path: string): Promise<GitFile | null> {
@@ -636,6 +678,15 @@ function isRemoteObject(value: unknown): value is RemoteObject {
     (value['size'] as number) >= 0 &&
     typeof value['sha256'] === 'string' &&
     /^[a-f0-9]{64}$/.test(value['sha256'])
+  );
+}
+
+function isRemoteSyncEntry(value: unknown): value is RemoteSyncEntry {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value['path']) &&
+    isNonEmptyString(value['revision']) &&
+    (value['kind'] === 'document' || value['kind'] === 'object')
   );
 }
 

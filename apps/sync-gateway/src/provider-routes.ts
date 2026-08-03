@@ -5,6 +5,7 @@ import {
   AuthorizationHttpError,
   GatewayHttpError,
   type DocumentWriteRequest,
+  type RemoteSyncEntryDelete,
   type SyncGatewayAdapter,
   type SyncProviderKind,
   supportsCredentialAuthorization,
@@ -31,6 +32,8 @@ interface ProviderNames {
   selectionPath: string;
   documentListPath: string;
   documentListKey: string;
+  entryListPath: string;
+  entryListKey: string;
   documentPath: string;
   objectPath: string;
 }
@@ -42,6 +45,8 @@ const NAMES: Record<SyncProviderKind, ProviderNames> = {
     selectionPath: '/repository',
     documentListPath: '/files',
     documentListKey: 'files',
+    entryListPath: '/entries',
+    entryListKey: 'entries',
     documentPath: '/file',
     objectPath: '/lfs/object',
   },
@@ -51,6 +56,8 @@ const NAMES: Record<SyncProviderKind, ProviderNames> = {
     selectionPath: '/folder',
     documentListPath: '/documents',
     documentListKey: 'documents',
+    entryListPath: '/entries',
+    entryListKey: 'entries',
     documentPath: '/document',
     objectPath: '/object',
   },
@@ -221,6 +228,43 @@ export async function registerProviderRoutes(
     },
   );
 
+  app.delete<{
+    Querystring: { path?: string; expectedRevision?: string };
+  }>('/entry', async (request, reply) => {
+    requireSameOriginMutation(request);
+    const path = logicalSyncPath(request.query.path);
+    const expectedRevision = requiredRevision(request.query.expectedRevision);
+    const sessionId = session(request, reply, cookieName, options);
+    await options.adapter.deleteEntry(sessionId, { path, expectedRevision });
+    return reply.code(204).send();
+  });
+
+  app.delete(
+    '/entries',
+    { bodyLimit: 32 * 1024 * 1024 },
+    async (request, reply) => {
+      requireSameOriginMutation(request);
+      const entries = remoteSyncEntryDeletes(request.body);
+      const sessionId = session(request, reply, cookieName, options);
+      await options.adapter.deleteEntries(sessionId, entries);
+      return reply.code(204).send();
+    },
+  );
+
+  app.get<{ Querystring: { prefix?: string } }>(
+    names.entryListPath,
+    async (request, reply) => {
+      const prefix = logicalSyncPath(request.query.prefix);
+      const sessionId = session(request, reply, cookieName, options);
+      return {
+        [names.entryListKey]: await options.adapter.listEntries(
+          sessionId,
+          prefix,
+        ),
+      };
+    },
+  );
+
   app.get<{ Querystring: { path?: string; optional?: string } }>(
     names.documentPath,
     async (request, reply) => {
@@ -375,6 +419,33 @@ function optionalRevision(value: string | undefined): string | undefined {
     throw new GatewayHttpError(400, 'The expected object revision is invalid');
   }
   return value;
+}
+
+function requiredRevision(value: string | undefined): string {
+  const revision = optionalRevision(value);
+  if (!revision) {
+    throw new GatewayHttpError(400, 'The expected entry revision is required');
+  }
+  return revision;
+}
+
+function remoteSyncEntryDeletes(
+  value: unknown,
+): readonly RemoteSyncEntryDelete[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10_000) {
+    throw new GatewayHttpError(400, 'Invalid sync entry deletion batch');
+  }
+  return value.map((candidate) => {
+    if (!isRecord(candidate)) {
+      throw new GatewayHttpError(400, 'Invalid sync entry deletion batch');
+    }
+    const path = logicalSyncPath(candidate['path']);
+    const expectedRevision =
+      typeof candidate['expectedRevision'] === 'string'
+        ? requiredRevision(candidate['expectedRevision'])
+        : requiredRevision(undefined);
+    return { path, expectedRevision };
+  });
 }
 
 function optionalLookup(value: string | undefined): boolean {

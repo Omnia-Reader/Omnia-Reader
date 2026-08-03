@@ -111,6 +111,11 @@ describe('MegaSyncGatewayAdapter', () => {
     await expect(
       fixture.adapter.readDocument(sessionId, path),
     ).resolves.toEqual(created);
+    await expect(
+      fixture.adapter.listEntries(sessionId, '.omnia-reader/v1'),
+    ).resolves.toEqual([
+      { path, revision: created.revision, kind: 'document' },
+    ]);
 
     await expect(
       fixture.adapter.writeDocument(sessionId, {
@@ -139,6 +144,48 @@ describe('MegaSyncGatewayAdapter', () => {
     await expect(
       fixture.adapter.readDocument(sessionId, path),
     ).resolves.toBeNull();
+  });
+
+  it('validates duplicate-node revisions before removing a batch from one inventory', async () => {
+    const fixture = createFixture();
+    const sessionId = await authenticatedFolder(fixture);
+    const path = '.omnia-reader/v1/obsolete.json';
+    fixture.bridge.seed(path, '{}', 'obsolete-a');
+    fixture.bridge.seed(path, '{}', 'obsolete-b');
+    const entries = await fixture.adapter.listEntries(
+      sessionId,
+      '.omnia-reader/v1',
+    );
+    const inventoryRequests = fixture.bridge.fileRequests;
+    fixture.bridge.seed(path, '{}', 'obsolete-concurrent');
+
+    await expect(
+      fixture.adapter.deleteEntries(
+        sessionId,
+        entries.map((entry) => ({
+          path: entry.path,
+          expectedRevision: entry.revision,
+        })),
+      ),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(fixture.bridge.fileRequests).toBe(inventoryRequests + 1);
+    expect(fixture.bridge.visibleFiles(path)).toHaveLength(3);
+
+    const refreshed = await fixture.adapter.listEntries(
+      sessionId,
+      '.omnia-reader/v1',
+    );
+    const requestsBeforeRemoval = fixture.bridge.fileRequests;
+    await fixture.adapter.deleteEntries(
+      sessionId,
+      refreshed.map((entry) => ({
+        path: entry.path,
+        expectedRevision: entry.revision,
+      })),
+    );
+
+    expect(fixture.bridge.fileRequests).toBe(requestsBeforeRemoval + 1);
+    expect(fixture.bridge.visibleFiles(path)).toEqual([]);
   });
 
   it('chooses identical duplicates deterministically and rejects divergent ones', async () => {
@@ -379,6 +426,7 @@ class MemoryMegaSdkBridge implements MegaSdkBridge {
   loginCredentials: MegaSdkCredentials | null = null;
   sessionExpired = false;
   failMove = false;
+  fileRequests = 0;
   private sequence = 0;
   private readonly stored = new Map<string, StoredFile>();
 
@@ -405,6 +453,7 @@ class MemoryMegaSdkBridge implements MegaSdkBridge {
     prefix: string,
   ): Promise<readonly MegaSdkFile[]> {
     this.requireSession(session);
+    this.fileRequests += 1;
     expect(rootHandle).toBe(folder.handle);
     return [...this.stored.values()]
       .filter(

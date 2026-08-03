@@ -46,14 +46,14 @@ int main()
     using namespace omnia::mega_bridge;
 
     const auto path =
-        parseLogicalPath(".omnia-reader/v1/books/ab/book/edition.epub");
-    check(path.segments.size() == 6, "logical path segment count");
-    check(path.segments[2] == "books", "logical path preserves segments");
+        parseLogicalPath(".omnia-reader/library/book--ab/edition.epub");
+    check(path.segments.size() == 4, "logical path segment count");
+    check(path.segments[1] == "library", "logical path preserves segments");
 
     for (const auto invalid:
-         {"", "/.omnia-reader/v1/a", ".omnia-reader/v2/a",
-          ".omnia-reader/v1/../secret", ".omnia-reader/v1//a",
-          ".omnia-reader/v1/a\\b", ".omnia-reader/v1/a%2fb"})
+         {"", "/.omnia-reader/a", ".omnia-reader-other/a",
+          ".omnia-reader/../secret", ".omnia-reader//a",
+          ".omnia-reader/a\\b", ".omnia-reader/a%2fb"})
     {
         checkBridgeError(
             [&] { static_cast<void>(parseLogicalPath(invalid)); },

@@ -12,6 +12,8 @@ import {
   type RemoteObjectDelete,
   type RemoteObjectDownload,
   type RemoteObjectUpload,
+  type RemoteSyncEntry,
+  type RemoteSyncEntryDelete,
 } from './gateway-contract.js';
 import type {
   MegaSdkBridge,
@@ -51,7 +53,7 @@ interface ResolvedDocument {
 const MAX_REMOTE_DOCUMENTS = 10_000;
 const MAX_DUPLICATE_CANDIDATES = 16;
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
-const STAGING_ROOT = '.omnia-reader/v1/.staging';
+const STAGING_ROOT = '.omnia-reader/.staging';
 
 export class MegaSyncGatewayAdapter implements CredentialSyncGatewayAdapter {
   private readonly loginUrl: string;
@@ -253,6 +255,109 @@ export class MegaSyncGatewayAdapter implements CredentialSyncGatewayAdapter {
       }
     }
     return documents;
+  }
+
+  async listEntries(
+    sessionId: string,
+    prefix: string,
+  ): Promise<readonly RemoteSyncEntry[]> {
+    const context = await this.context(sessionId);
+    const files = await this.files(sessionId, context, prefix);
+    return files
+      .filter(
+        (file) => file.path === prefix || file.path.startsWith(`${prefix}/`),
+      )
+      .map(
+        (file): RemoteSyncEntry => ({
+          path: file.path,
+          revision: file.revision,
+          kind:
+            file.path.endsWith('.json') || file.path.endsWith('.md')
+              ? 'document'
+              : 'object',
+        }),
+      )
+      .sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  async deleteEntry(
+    sessionId: string,
+    request: RemoteSyncEntryDelete,
+  ): Promise<void> {
+    const context = await this.context(sessionId);
+    const candidates = await this.fileCandidates(
+      sessionId,
+      context,
+      request.path,
+    );
+    if (candidates.length === 0) return;
+    if (
+      !candidates.some(
+        (candidate) => candidate.revision === request.expectedRevision,
+      )
+    ) {
+      throw new GatewayHttpError(409, 'The remote sync entry changed');
+    }
+    for (const candidate of candidates) {
+      await this.authenticatedBridgeCall(sessionId, context.state, () =>
+        this.options.bridge.removeFile(
+          context.sdkSession,
+          context.folder.handle,
+          candidate.handle,
+        ),
+      );
+    }
+  }
+
+  async deleteEntries(
+    sessionId: string,
+    requests: readonly RemoteSyncEntryDelete[],
+  ): Promise<void> {
+    if (requests.length === 0) return;
+    const context = await this.context(sessionId);
+    const files = await this.files(
+      sessionId,
+      context,
+      commonSyncPathPrefix(requests.map((request) => request.path)),
+    );
+    const candidatesByPath = new Map<string, MegaSdkFile[]>();
+    for (const file of files) {
+      const candidates = candidatesByPath.get(file.path) ?? [];
+      candidates.push(file);
+      candidatesByPath.set(file.path, candidates);
+    }
+    const expectedByPath = new Map<string, Set<string>>();
+    for (const request of requests) {
+      const revisions = expectedByPath.get(request.path) ?? new Set();
+      revisions.add(request.expectedRevision);
+      expectedByPath.set(request.path, revisions);
+    }
+    const removals: MegaSdkFile[] = [];
+    for (const [path, expectedRevisions] of expectedByPath) {
+      const candidates = candidatesByPath.get(path) ?? [];
+      if (candidates.length === 0) continue;
+      const currentRevisions = new Set(
+        candidates.map((candidate) => candidate.revision),
+      );
+      if (
+        currentRevisions.size !== expectedRevisions.size ||
+        [...currentRevisions].some(
+          (revision) => !expectedRevisions.has(revision),
+        )
+      ) {
+        throw new GatewayHttpError(409, 'A remote sync entry changed');
+      }
+      removals.push(...candidates);
+    }
+    for (const candidate of removals) {
+      await this.authenticatedBridgeCall(sessionId, context.state, () =>
+        this.options.bridge.removeFile(
+          context.sdkSession,
+          context.folder.handle,
+          candidate.handle,
+        ),
+      );
+    }
   }
 
   async readDocument(
@@ -951,6 +1056,20 @@ function bridgeProtocolError(): GatewayHttpError {
     502,
     'The MEGA SDK bridge returned inconsistent file metadata',
   );
+}
+
+function commonSyncPathPrefix(paths: readonly string[]): string {
+  const common = (paths[0] as string).split('/');
+  for (const path of paths.slice(1)) {
+    const segments = path.split('/');
+    while (
+      common.length > 1 &&
+      common.some((segment, index) => segment !== segments[index])
+    ) {
+      common.pop();
+    }
+  }
+  return common.join('/');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

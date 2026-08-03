@@ -119,6 +119,14 @@ export class SimulatedSyncGateway {
     return this.documents.get(path)?.content ?? null;
   }
 
+  seedDocument(path: string, content: string): void {
+    this.documents.set(path, {
+      path,
+      content,
+      revision: this.nextRevision(),
+    });
+  }
+
   objectPaths(): readonly string[] {
     return [...this.objects.keys()].sort();
   }
@@ -147,7 +155,7 @@ export class SimulatedSyncGateway {
     const path = url.pathname.slice(basePath.length);
     const method = request.method();
     this.requests.push(
-      `${method} ${path}${path === '/files' ? url.search : ''}`,
+      `${method} ${path}${path === '/files' || path === '/entries' ? url.search : ''}`,
     );
 
     if (path === '/session' && method === 'GET') {
@@ -285,6 +293,90 @@ export class SimulatedSyncGateway {
         route,
         this.provider === 'git' ? { files: documents } : { documents },
       );
+      return;
+    }
+
+    if (path === '/entries' && method === 'GET') {
+      const prefix = url.searchParams.get('prefix') ?? '';
+      const entries = [
+        ...[...this.documents.values()].map((entry) => ({
+          path: entry.path,
+          revision: entry.revision,
+          kind: 'document',
+        })),
+        ...[...this.objects.values()].map((entry) => ({
+          path: entry.path,
+          revision: entry.revision,
+          kind: 'object',
+        })),
+      ]
+        .filter(
+          (entry) =>
+            entry.path === prefix || entry.path.startsWith(`${prefix}/`),
+        )
+        .sort((left, right) => left.path.localeCompare(right.path));
+      await this.fulfillJson(route, { entries });
+      return;
+    }
+    if (path === '/entries' && method === 'DELETE') {
+      const value: unknown = request.postDataJSON();
+      if (!Array.isArray(value)) {
+        await this.fulfillJson(
+          route,
+          { message: 'Invalid deletion batch' },
+          400,
+        );
+        return;
+      }
+      for (const candidate of value) {
+        if (
+          !isRecord(candidate) ||
+          typeof candidate['path'] !== 'string' ||
+          typeof candidate['expectedRevision'] !== 'string'
+        ) {
+          await this.fulfillJson(
+            route,
+            { message: 'Invalid deletion batch' },
+            400,
+          );
+          return;
+        }
+        const entry =
+          this.documents.get(candidate['path']) ??
+          this.objects.get(candidate['path']);
+        if (entry && entry.revision !== candidate['expectedRevision']) {
+          await this.fulfillJson(route, { message: 'Revision changed' }, 409);
+          return;
+        }
+      }
+      for (const candidate of value) {
+        const remotePath = (candidate as Record<string, string>)[
+          'path'
+        ] as string;
+        this.documents.delete(remotePath);
+        this.objects.delete(remotePath);
+      }
+      this.nextRevision();
+      await route.fulfill({ status: 204 });
+      return;
+    }
+    if (path === '/entry' && method === 'DELETE') {
+      const remotePath = url.searchParams.get('path') ?? '';
+      const expectedRevision = url.searchParams.get('expectedRevision');
+      const entry =
+        this.documents.get(remotePath) ?? this.objects.get(remotePath);
+      if (!entry) {
+        await route.fulfill({ status: 204 });
+        return;
+      }
+      if (expectedRevision !== entry.revision) {
+        await this.fulfillJson(route, { message: 'Revision changed' }, 409);
+        return;
+      }
+      this.documents.delete(remotePath);
+      this.objects.delete(remotePath);
+      this.nextRevision();
+      await route.fulfill({ status: 204 });
       return;
     }
 

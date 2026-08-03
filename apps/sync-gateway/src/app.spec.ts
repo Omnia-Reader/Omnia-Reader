@@ -14,6 +14,8 @@ import {
   type RemoteObjectDelete,
   type RemoteObjectDownload,
   type RemoteObjectUpload,
+  type RemoteSyncEntry,
+  type RemoteSyncEntryDelete,
   type SyncGatewayAdapter,
   type SyncProviderKind,
 } from './gateway-contract.js';
@@ -602,6 +604,40 @@ describe('sync gateway', () => {
     await app.close();
   });
 
+  it('inventories and revision-deletes raw previous-root entries', async () => {
+    const github = new MemoryGatewayAdapter('github');
+    const mega = new MemoryGatewayAdapter('mega');
+    const app = gateway(github, mega);
+    const path = '.omnia-reader/v1/obsolete.json';
+
+    for (const provider of ['github', 'mega'] as const) {
+      const documentName = provider === 'github' ? 'file' : 'document';
+      const writeResponse = await app.inject({
+        method: 'PUT',
+        url: `/api/sync/${provider}/${documentName}`,
+        headers: { ...MUTATION_HEADERS, 'content-type': 'application/json' },
+        payload: { path, content: '{}\n', message: 'Seed obsolete entry' },
+      });
+      const revision = writeResponse.json().revision as string;
+      const listing = await app.inject({
+        method: 'GET',
+        url: `/api/sync/${provider}/entries?prefix=${encodeURIComponent('.omnia-reader/v1')}`,
+      });
+      expect(listing.json()).toEqual({
+        entries: [{ path, revision, kind: 'document' }],
+      });
+
+      const deletion = await app.inject({
+        method: 'DELETE',
+        url: `/api/sync/${provider}/entries`,
+        headers: { ...MUTATION_HEADERS, 'content-type': 'application/json' },
+        payload: [{ path, expectedRevision: revision }],
+      });
+      expect(deletion.statusCode).toBe(204);
+    }
+    await app.close();
+  });
+
   it('returns quiet cache-disabled absence for optional object probes', async () => {
     const app = gateway();
 
@@ -864,6 +900,50 @@ class MemoryGatewayAdapter implements SyncGatewayAdapter {
     return [...this.documents.values()].filter((document) =>
       document.path.startsWith(prefix),
     );
+  }
+
+  async listEntries(
+    sessionId: string,
+    prefix: string,
+  ): Promise<readonly RemoteSyncEntry[]> {
+    void sessionId;
+    return [
+      ...[...this.documents.values()].map((entry) => ({
+        path: entry.path,
+        revision: entry.revision,
+        kind: 'document' as const,
+      })),
+      ...[...this.objects.values()].map((entry) => ({
+        path: entry.path,
+        revision: entry.revision,
+        kind: 'object' as const,
+      })),
+    ].filter(
+      (entry) => entry.path === prefix || entry.path.startsWith(`${prefix}/`),
+    );
+  }
+
+  async deleteEntry(
+    sessionId: string,
+    request: RemoteSyncEntryDelete,
+  ): Promise<void> {
+    void sessionId;
+    const document = this.documents.get(request.path);
+    const object = this.objects.get(request.path);
+    if ((document?.revision ?? object?.revision) !== request.expectedRevision) {
+      throw new GatewayHttpError(409, 'Remote entry changed');
+    }
+    this.documents.delete(request.path);
+    this.objects.delete(request.path);
+  }
+
+  async deleteEntries(
+    sessionId: string,
+    requests: readonly RemoteSyncEntryDelete[],
+  ): Promise<void> {
+    for (const request of requests) {
+      await this.deleteEntry(sessionId, request);
+    }
   }
 
   async readDocument(

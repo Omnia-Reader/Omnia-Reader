@@ -361,6 +361,7 @@ export class BrowserLibraryRepository
     logicalBookId: LogicalBookId,
     variant: BookRecord,
     source: BookSource,
+    objectPath: string,
     mutationIdentity: LogicalMutationIdentity,
     cover?: Blob,
   ): Promise<AddLogicalBookVariantResult> {
@@ -422,9 +423,7 @@ export class BrowserLibraryRepository
         {
           operation: 'upsert' as const,
           variant,
-          objectPath: `.omnia-reader/v1/books/${variant.id.slice(
-            'sha256:'.length,
-          )}/publication.${variant.format}`,
+          objectPath,
         },
       ],
     };

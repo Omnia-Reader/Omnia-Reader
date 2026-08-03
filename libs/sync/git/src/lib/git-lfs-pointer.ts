@@ -7,8 +7,8 @@ export interface GitLfsPointer {
 }
 
 export const OMNIA_GIT_ATTRIBUTES = [
-  '.omnia-reader/v1/library/**/*.epub filter=lfs diff=lfs merge=lfs -text',
-  '.omnia-reader/v1/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
+  '.omnia-reader/library/**/*.epub filter=lfs diff=lfs merge=lfs -text',
+  '.omnia-reader/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text',
   '',
 ].join('\n');
 

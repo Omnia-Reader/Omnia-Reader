@@ -7,7 +7,7 @@ import {
 
 describe('library sync manifest', () => {
   it('creates the canonical root contract', () => {
-    expect(SYNC_MANIFEST_PATH).toBe('.omnia-reader/v1/manifest.json');
+    expect(SYNC_MANIFEST_PATH).toBe('.omnia-reader/manifest.json');
     expect(createLibrarySyncManifest()).toEqual({
       schemaVersion: 2,
       application: 'omnia-reader',

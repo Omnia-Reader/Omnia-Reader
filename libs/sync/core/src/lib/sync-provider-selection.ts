@@ -6,6 +6,7 @@ import {
   ObjectDownloadOptions,
   ObjectUploadRequest,
   ObjectTransferOptions,
+  RemoteSyncEntryDeleteRequest,
 } from './library-sync-transport';
 
 export type SyncProviderKind = 'git' | 'mega';
@@ -86,6 +87,44 @@ export class SelectedLibrarySyncTransport implements LibrarySyncTransport {
 
   list(prefix: string) {
     return this.active().list(prefix);
+  }
+
+  listEntries(prefix: string) {
+    const active = this.active();
+    if (!active.listEntries) {
+      throw new Error(
+        'The selected synchronization provider cannot inventory remote entries',
+      );
+    }
+    return active.listEntries(prefix);
+  }
+
+  async deleteEntries(
+    requests: readonly RemoteSyncEntryDeleteRequest[],
+  ): Promise<void> {
+    const active = this.active();
+    if (active.deleteEntries) {
+      await active.deleteEntries(requests);
+      return;
+    }
+    if (!active.deleteEntry) {
+      throw new Error(
+        'The selected synchronization provider cannot delete remote entries',
+      );
+    }
+    for (const request of requests) {
+      await active.deleteEntry(request);
+    }
+  }
+
+  deleteEntry(request: RemoteSyncEntryDeleteRequest) {
+    const active = this.active();
+    if (!active.deleteEntry) {
+      throw new Error(
+        'The selected synchronization provider cannot delete remote entries',
+      );
+    }
+    return active.deleteEntry(request);
   }
 
   read(path: string) {

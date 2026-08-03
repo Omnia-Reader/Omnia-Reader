@@ -7,7 +7,6 @@ import {
 import {
   BOOK_DELETIONS_ROOT,
   BOOKS_ROOT,
-  LEGACY_BOOKS_ROOT,
   BookSyncDeletionTombstone,
   BookSyncDocument,
   BookSyncManifest,
@@ -77,8 +76,6 @@ export class BookSyncService {
   private readonly wait: (milliseconds: number) => Promise<void>;
   private readonly exclusions: BookSyncExclusions;
   private activeSync: Promise<BookSyncResult> | null = null;
-  private legacyCleanupPending = false;
-
   constructor(
     private readonly remote: LibrarySyncTransport,
     private readonly journal: SyncOperationJournal,
@@ -325,11 +322,6 @@ export class BookSyncService {
     );
     throwIfSyncAborted(options.signal);
     const pushed = await this.pushFromSnapshot(pending, books, options);
-    this.legacyCleanupPending ||= pulled.pulled > 0 || pushed.pushed > 0;
-    if (this.legacyCleanupPending) {
-      await this.cleanupLegacyRemoteLayout(options.signal);
-      this.legacyCleanupPending = false;
-    }
     await updateBookSyncCatalog(this.remote, {
       maxConflictRetries: this.maxConflictRetries,
       retryDelayMs: this.retryDelayMs,
@@ -674,26 +666,6 @@ export class BookSyncService {
       [...paths].map((path) => this.discardDeletedObject(path)),
     );
     return deleted.some(Boolean);
-  }
-
-  private async cleanupLegacyRemoteLayout(signal?: AbortSignal): Promise<void> {
-    for (const document of await this.remote.list(LEGACY_BOOKS_ROOT)) {
-      throwIfSyncAborted(signal);
-      if (!document.path.endsWith('/book.json')) {
-        continue;
-      }
-      const directory = document.path.slice(0, -'/book.json'.length);
-      for (const format of ['epub', 'pdf'] as const) {
-        throwIfSyncAborted(signal);
-        await this.discardDeletedObject(`${directory}/publication.${format}`);
-      }
-      throwIfSyncAborted(signal);
-      await this.deleteRemoteDocument({
-        path: document.path,
-        expectedRevision: document.revision,
-        message: 'Remove obsolete hash-addressed book record',
-      });
-    }
   }
 }
 

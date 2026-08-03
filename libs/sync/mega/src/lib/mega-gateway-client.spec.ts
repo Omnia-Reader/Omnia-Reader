@@ -97,6 +97,42 @@ describe('MegaGatewayClient', () => {
     expect(headers.get('X-Omnia-CSRF')).toBe('1');
   });
 
+  it('lists provider-neutral document and object entries', async () => {
+    const entries = [
+      { path: '.omnia-reader/manifest.json', revision: 'a', kind: 'document' },
+      {
+        path: '.omnia-reader/library/Book--abc/Book.pdf',
+        revision: 'b',
+        kind: 'object',
+      },
+    ] as const;
+    const fetcher = sequenceFetch(
+      jsonResponse({ entries }),
+      new Response(null, { status: 204 }),
+    );
+    const client = new MegaGatewayClient({ fetcher });
+
+    await expect(client.listEntries('.omnia-reader')).resolves.toEqual(entries);
+    expect(fetcher.mock.calls[0]?.[0]).toContain(
+      '/entries?prefix=.omnia-reader',
+    );
+    await expect(
+      client.deleteEntries([
+        {
+          path: entries[0].path,
+          expectedRevision: entries[0].revision,
+        },
+      ]),
+    ).resolves.toBeUndefined();
+    expect(fetcher.mock.calls[1]?.[0]).toContain('/entries');
+    expect(fetcher.mock.calls[1]?.[1]).toMatchObject({
+      method: 'DELETE',
+      body: JSON.stringify([
+        { path: entries[0].path, expectedRevision: entries[0].revision },
+      ]),
+    });
+  });
+
   it('uses quiet optional lookups for missing documents and objects', async () => {
     const fetcher = sequenceFetch(
       new Response(null, { status: 204 }),

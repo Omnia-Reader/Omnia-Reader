@@ -48,6 +48,7 @@ import {
   SyncActivityNotifier,
   SYNC_PROVIDER_SELECTION,
   SyncProviderSelection,
+  SyncRootReconciliationService,
   SyncWorker,
 } from '@omnia-reader/sync/core';
 import {
@@ -101,13 +102,18 @@ function createLibrarySyncService(
   const progress = new ProgressSyncService(remote, journal, repository);
   const bookmarks = new BookmarkSyncService(remote, journal, repository);
   const annotations = new AnnotationSyncService(remote, journal, repository);
+  const rootReconciliation = new SyncRootReconciliationService(remote);
   const coordinator = new LibrarySyncCoordinator({
+    preflight: {
+      synchronize: (options) => rootReconciliation.prepare(options),
+    },
     schema: new LibrarySyncManifestService(remote),
     logicalBooks: new LogicalBookSyncService(remote, journal, repository),
     books: new BookSyncService(remote, journal, repository, { exclusions }),
     progress,
     bookmarks,
     annotations,
+    cleanup: { synchronize: (options) => rootReconciliation.cleanup(options) },
   });
   return new ChangeAwareSyncWorker(
     coordinator,

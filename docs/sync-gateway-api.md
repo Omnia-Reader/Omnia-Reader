@@ -10,7 +10,7 @@ The PWA cannot safely retain reusable GitHub or MEGA credentials. Omnia
 therefore calls a same-origin gateway with an HttpOnly session cookie. The
 gateway authenticates the provider, scopes access to one selected
 repository/folder, validates all logical paths, and transfers the files in
-`.omnia-reader/v1/`.
+`.omnia-reader/`.
 
 Reading and imports are local-first. A missing or unavailable gateway must not
 prevent normal reader use.
@@ -212,6 +212,12 @@ journal is empty and the revision matches a trusted checkpoint, the shared manua
 and automatic sync worker returns a zero-change success without running document,
 merge, or publication workers.
 
+Checkpoint schema 3 is the first format that trusts the canonical
+`logical-books/state.json` layout. A schema-2 checkpoint is deliberately ignored
+once after upgrade, forcing the complete change/checkpoint migration even when
+the Git tree revision still matches. The verified pass writes schema 3 and
+restores the normal one-request unchanged fast path.
+
 That result carries an internal `unchanged` marker. Status consumers use it to
 retain already-current remote-backup presentation instead of immediately
 re-listing GitHub documents after the fast check. Older stored status history
@@ -370,7 +376,7 @@ SDK bridge contract](mega-sdk-bridge.md).
   validation for every app mutation. The credential form uses strict
   same-origin checks plus its one-time state value because an HTML form cannot
   set the custom header.
-- Accept only paths under `.omnia-reader/v1/`; normalize and reject absolute
+- Accept only paths under `.omnia-reader/`; normalize and reject absolute
   paths, `..`, encoded separators, NULs, and provider-specific aliases.
 - Apply JSON body, publication size, request duration, and concurrency limits.
 - Keep GitHub installation tokens, MEGA passwords, keys, and reusable SDK
@@ -406,10 +412,25 @@ interface RemoteObject {
   size: number;
   sha256: string;
 }
+
+interface RemoteSyncEntry {
+  path: string;
+  revision: string;
+  kind: 'document' | 'object';
+}
 ```
 
 `revision` is an opaque provider revision. The app sends it as
 `expectedRevision` when replacing a document. A mismatch returns `409`.
+
+Both provider route groups expose `GET /entries?prefix=...` for a bounded
+content-free inventory and `DELETE /entries` with a bounded JSON array of
+`{ path, expectedRevision }` records for confined batch reconciliation. The
+compatibility `DELETE /entry?path=...&expectedRevision=...` route remains
+available for one entry. Raw deletion requires the normal same-origin CSRF
+guard and never accepts a repository/folder identifier from the browser. It is
+used to retire malformed legacy files without treating them as valid current
+documents or publications.
 
 Publication object uploads are binary request bodies with:
 
@@ -427,12 +448,13 @@ verified.
 The document/object endpoints expose one provider-neutral logical tree:
 
 ```text
-.omnia-reader/v1/
+.omnia-reader/
 ├── README.md
 ├── manifest.json
 ├── library/<readable-name>--<short-id>/book.json
 ├── library/<readable-name>--<short-id>/<original-name>.epub|pdf
 ├── .deletions/books/<sha256>.json
+├── logical-books/state.json
 ├── progress/<bookId>/<deviceId>.json
 ├── bookmarks/<bookId>/<bookmarkId>.json
 └── annotations/<bookId>/<annotationId>.json
@@ -442,8 +464,46 @@ The readable library directory and generated `README.md` are for human
 browsing. The short suffix prevents ordinary name collisions; the manifest and
 object verification still use the complete SHA-256 edition identity. Removing
 a book commits its deletion marker before deleting the named manifest and
-publication. Synchronization removes the obsolete hash-addressed
-`.omnia-reader/v1/books/` layout.
+publication. New writes never create a `v1` child directory.
+
+`.deletions/books/` is current state, not historical logging. Its small
+tombstones prevent a stale device or delayed provider listing from restoring a
+publication that the user deleted. Removing that directory would make physical
+book resurrection possible.
+
+Logical-library metadata uses one canonical `logical-books/state.json` document.
+It contains current logical books, active publication descriptors, preferences,
+membership reconciliations, compact record clocks, and book/variant/preference
+tombstones. Writes use the document revision and a three-attempt
+read-merge-write retry; the journal is acknowledged only after rereading and
+validating the accepted state. Current clients never write
+`logical-books/changes/` or checkpoints.
+
+During upgrade, exact validated documents under `logical-books/changes/` are
+folded into the canonical state. The client writes and rereads `state.json`,
+checks semantic equivalence, and only then removes the inventoried change files
+as one batch. A failure preserves both the legacy files and local journal for a
+later idempotent retry. Clients that only understand the former append-only
+format must be upgraded before they synchronize a destination where
+`state.json` is authoritative. The same verified batch removes obsolete
+checkpoint entries, leaving `state.json` as the only current entry beneath
+`logical-books/`.
+
+Every full synchronization uses the bounded provider-neutral entry inventory
+to inspect the previous `.omnia-reader/v1/` root. Valid books, manifests,
+reading state, logical history, checkpoints, tombstones, and catalog entries
+are copied to their current paths and embedded owned paths are normalized.
+Document content and publication size plus SHA-256 are verified at the
+destination before the current synchronization workers run. Only after that
+pass succeeds is every exposed `v1` entry removed in one gateway request.
+GitHub validates all inventoried blob revisions against one current tree and
+removes them in one optimistic commit; a concurrent branch update leaves the
+live previous-root tree available for retry. Invalid or unsupported
+files under `v1` are cleanup-only; content outside `.omnia-reader/` is never a
+candidate. A conflict, failed transfer, or failed deletion fails the pass and
+is retried. Git virtual directories disappear with their final entry; the MEGA
+bridge prunes empty ancestors after file deletion without removing the selected
+provider root or the `.omnia-reader` parent folder.
 
 The client initializes `manifest.json` once and validates its application,
 schema version, SHA-256 publication identity, and required feature set before
@@ -492,8 +552,8 @@ S256 challenge and no provider token or verifier.
 The gateway owns `.gitattributes` with:
 
 ```gitattributes
-.omnia-reader/v1/library/**/*.epub filter=lfs diff=lfs merge=lfs -text
-.omnia-reader/v1/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text
+.omnia-reader/library/**/*.epub filter=lfs diff=lfs merge=lfs -text
+.omnia-reader/library/**/*.pdf filter=lfs diff=lfs merge=lfs -text
 ```
 
 For an upload it must:

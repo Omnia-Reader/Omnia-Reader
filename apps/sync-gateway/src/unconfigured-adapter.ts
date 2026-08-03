@@ -6,6 +6,8 @@ import type {
   RemoteObjectDelete,
   RemoteObjectDownload,
   RemoteObjectUpload,
+  RemoteSyncEntry,
+  RemoteSyncEntryDelete,
   SyncGatewayAdapter,
 } from './gateway-contract.js';
 import { GatewayHttpError } from './gateway-contract.js';
@@ -38,6 +40,28 @@ export class UnconfiguredSyncGatewayAdapter implements SyncGatewayAdapter {
   }
 
   async listDocuments(): Promise<readonly RemoteDocument[]> {
+    return this.unavailable();
+  }
+
+  async listEntries(): Promise<readonly RemoteSyncEntry[]> {
+    return this.unavailable();
+  }
+
+  async deleteEntry(
+    sessionId: string,
+    request: RemoteSyncEntryDelete,
+  ): Promise<void> {
+    void sessionId;
+    void request;
+    return this.unavailable();
+  }
+
+  async deleteEntries(
+    sessionId: string,
+    requests: readonly RemoteSyncEntryDelete[],
+  ): Promise<void> {
+    void sessionId;
+    void requests;
     return this.unavailable();
   }
 

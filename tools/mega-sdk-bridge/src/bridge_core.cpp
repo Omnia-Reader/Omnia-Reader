@@ -161,8 +161,7 @@ LogicalPath parseLogicalPath(std::string_view value)
         begin = separator + 1;
     }
 
-    if (segments.size() < 2 || segments[0] != ".omnia-reader" ||
-        segments[1] != "v1")
+    if (segments.empty() || segments[0] != logical_root)
     {
         throw BridgeError{400, "INVALID_PATH", "Invalid logical path"};
     }

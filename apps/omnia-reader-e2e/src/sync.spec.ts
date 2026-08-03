@@ -321,13 +321,50 @@ test('finishes a stable repeated Git sync with only one revision request', async
   page,
 }) => {
   const gateway = new SimulatedSyncGateway('git');
+  gateway.seedDocument('.omnia-reader/v1/obsolete-a.tmp', 'obsolete');
+  gateway.seedDocument('.omnia-reader/v1/obsolete-b.tmp', 'obsolete');
   await gateway.install(context);
+  await context.addInitScript(() =>
+    localStorage.setItem(
+      'omnia-reader.sync-checkpoint',
+      JSON.stringify({ schemaVersion: 2, git: '1:main:e2e-r2' }),
+    ),
+  );
 
   await page.goto('/settings/sync');
   await selectProvider(page, { providerButtonName: /^Git \+ LFS/ });
   const sync = page.getByRole('button', { name: 'Sync books and progress' });
 
   await expect(sync).toBeEnabled({ timeout: 30_000 });
+  await expect
+    .poll(
+      () =>
+        gateway
+          .requestHistory()
+          .filter((request) => request === 'DELETE /entries').length,
+      { timeout: 30_000 },
+    )
+    .toBe(1);
+  expect(
+    gateway
+      .documentPaths()
+      .some((path) => path.startsWith('.omnia-reader/v1/')),
+  ).toBe(false);
+  expect(
+    gateway
+      .documentPaths()
+      .filter((path) => path.startsWith('.omnia-reader/logical-books/')),
+  ).toEqual(['.omnia-reader/logical-books/state.json']);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(
+            localStorage.getItem('omnia-reader.sync-checkpoint') ?? '{}',
+          ).schemaVersion,
+      ),
+    )
+    .toBe(3);
   await page.evaluate(() =>
     localStorage.removeItem('omnia-reader.sync-checkpoint'),
   );
@@ -339,14 +376,14 @@ test('finishes a stable repeated Git sync with only one revision request', async
   const firstSyncRequests = gateway.requestHistory();
   expect(
     firstSyncRequests.some(
-      (request) => request === 'GET /files?prefix=.omnia-reader%2Fv1%2Flibrary',
+      (request) => request === 'GET /files?prefix=.omnia-reader%2Flibrary',
     ),
   ).toBe(true);
   expect(
     firstSyncRequests.filter(
-      (request) => request === 'GET /files?prefix=.omnia-reader%2Fv1%2Fbooks',
+      (request) => request === 'GET /entries?prefix=.omnia-reader%2Fv1',
     ),
-  ).toHaveLength(0);
+  ).toHaveLength(1);
   gateway.clearRequestHistory();
   const completedAt = await gitSyncSuccessTimestamp(page);
   await sync.click();
@@ -559,6 +596,9 @@ test('deletes a synchronized publication locally and remotely', async ({
     .find((path) => path.includes('/library/') && path.endsWith('.pdf'));
   expect(manifestPath).toBeDefined();
   expect(objectPath).toBeDefined();
+  expect(objectPath).toMatch(
+    /^\.omnia-reader\/library\/local-removal--[a-f0-9]{12}\/local-removal\.pdf$/,
+  );
 
   await page.goto('/');
   await page
@@ -712,7 +752,7 @@ for (const scenario of scenarios) {
     );
     test.setTimeout(120_000);
     const evidence = await synchronizeBetweenTwoDevices(browser, scenario);
-    expect(evidence.documentPaths).toContain('.omnia-reader/v1/manifest.json');
+    expect(evidence.documentPaths).toContain('.omnia-reader/manifest.json');
   });
 }
 

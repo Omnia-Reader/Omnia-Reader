@@ -10,6 +10,7 @@ import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import {
   BOOK_SYNC_EXCLUSIONS,
   BookSyncExclusions,
+  bookObjectPath,
 } from '@omnia-reader/sync/core';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 import { PublicationImportService } from './publication-import.service';
@@ -188,6 +189,11 @@ describe('PublicationImportService', () => {
       expect.objectContaining({
         entity: 'logical-book-change',
         operation: 'upsert',
+        payload: expect.objectContaining({
+          variantEffects: [
+            expect.objectContaining({ objectPath: bookObjectPath(book) }),
+          ],
+        }),
       }),
     );
   });

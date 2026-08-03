@@ -278,6 +278,7 @@ export interface LibraryRepository {
     logicalBookId: LogicalBookId,
     variant: BookRecord,
     source: BookSource,
+    objectPath: string,
     mutationIdentity: LogicalMutationIdentity,
     cover?: Blob,
   ): Promise<AddLogicalBookVariantResult>;

@@ -59,6 +59,34 @@ describe('SelectedLibrarySyncTransport', () => {
     selection.select('mega');
     await expect(transport.destinationRevision()).resolves.toBeNull();
   });
+
+  it('forwards confined inventory and raw entry deletion to the selected provider', async () => {
+    const selection = new BrowserSyncProviderSelection(new MemoryStorage());
+    const entry = {
+      path: '.omnia-reader/v1/obsolete.bin',
+      revision: 'revision-1',
+      kind: 'object' as const,
+    };
+    const listEntries = vi.fn().mockResolvedValue([entry]);
+    const deleteEntries = vi.fn().mockResolvedValue(undefined);
+    const transport = new SelectedLibrarySyncTransport(selection, {
+      git: { listEntries, deleteEntries } as unknown as LibrarySyncTransport,
+      mega: {} as LibrarySyncTransport,
+    });
+    selection.select('git');
+
+    await expect(transport.listEntries('.omnia-reader/v1')).resolves.toEqual([
+      entry,
+    ]);
+    await expect(
+      transport.deleteEntries([
+        { path: entry.path, expectedRevision: entry.revision },
+      ]),
+    ).resolves.toBeUndefined();
+    expect(deleteEntries).toHaveBeenCalledWith([
+      { path: entry.path, expectedRevision: entry.revision },
+    ]);
+  });
 });
 
 class MemoryStorage implements Storage {

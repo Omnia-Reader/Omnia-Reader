@@ -59,12 +59,14 @@ export interface LibrarySyncResult extends SyncWorkerResult {
 }
 
 export interface LibrarySyncWorkers {
+  preflight?: SyncWorker;
   schema: SyncWorker;
   logicalBooks?: SyncWorker;
   books: SyncWorker;
   progress: SyncWorker;
   bookmarks?: SyncWorker;
   annotations?: SyncWorker;
+  cleanup?: SyncWorker;
 }
 
 export class LibrarySyncCoordinator implements SyncWorker {
@@ -85,6 +87,10 @@ export class LibrarySyncCoordinator implements SyncWorker {
     options: SyncWorkerOptions,
   ): Promise<LibrarySyncResult> {
     throwIfSyncAborted(options.signal);
+    const preflight = this.workers.preflight
+      ? await this.workers.preflight.synchronize(options)
+      : EMPTY_SYNC_RESULT;
+    throwIfSyncAborted(options.signal);
     const schema = await this.workers.schema.synchronize(options);
     throwIfSyncAborted(options.signal);
     const books = await this.workers.books.synchronize(options);
@@ -103,35 +109,47 @@ export class LibrarySyncCoordinator implements SyncWorker {
         : EMPTY_SYNC_RESULT,
     ]);
     throwIfSyncAborted(options.signal);
+    const cleanup = this.workers.cleanup
+      ? await this.workers.cleanup.synchronize(options)
+      : EMPTY_SYNC_RESULT;
+    throwIfSyncAborted(options.signal);
     return {
       pulled:
+        preflight.pulled +
         schema.pulled +
         logicalBooks.pulled +
         books.pulled +
         progress.pulled +
         bookmarks.pulled +
-        annotations.pulled,
+        annotations.pulled +
+        cleanup.pulled,
       pushed:
+        preflight.pushed +
         schema.pushed +
         logicalBooks.pushed +
         books.pushed +
         progress.pushed +
         bookmarks.pushed +
-        annotations.pushed,
+        annotations.pushed +
+        cleanup.pushed,
       conflicts:
+        preflight.conflicts +
         schema.conflicts +
         logicalBooks.conflicts +
         books.conflicts +
         progress.conflicts +
         bookmarks.conflicts +
-        annotations.conflicts,
+        annotations.conflicts +
+        cleanup.conflicts,
       rejected:
+        preflight.rejected +
         schema.rejected +
         logicalBooks.rejected +
         books.rejected +
         progress.rejected +
         bookmarks.rejected +
-        annotations.rejected,
+        annotations.rejected +
+        cleanup.rejected,
       schemaPulled: schema.pulled,
       schemaPushed: schema.pushed,
       booksPulled: books.pulled,

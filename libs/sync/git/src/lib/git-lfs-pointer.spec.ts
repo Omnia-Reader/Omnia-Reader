@@ -37,10 +37,10 @@ describe('Git LFS pointer', () => {
 
   it('provides LFS tracking rules only for synchronized publications', () => {
     expect(OMNIA_GIT_ATTRIBUTES).toContain(
-      '.omnia-reader/v1/library/**/*.epub filter=lfs',
+      '.omnia-reader/library/**/*.epub filter=lfs',
     );
     expect(OMNIA_GIT_ATTRIBUTES).toContain(
-      '.omnia-reader/v1/library/**/*.pdf filter=lfs',
+      '.omnia-reader/library/**/*.pdf filter=lfs',
     );
     expect(OMNIA_GIT_ATTRIBUTES).not.toContain('*.json');
   });

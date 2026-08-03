@@ -104,6 +104,9 @@ describe('PublicationAssociationService', () => {
       LOGICAL_ID,
       expect.objectContaining({ format: 'pdf', title: 'companion' }),
       expect.objectContaining({ name: source.name }),
+      expect.stringMatching(
+        /^\.omnia-reader\/library\/companion--[a-f0-9]{12}\/companion\.pdf$/,
+      ),
       expect.objectContaining({ changeId: expect.stringMatching(/^change:/) }),
       undefined,
     );

@@ -60,7 +60,7 @@ describe('ChangeAwareSyncWorker', () => {
     await expect(first.synchronize()).resolves.toEqual(EMPTY_RESULT);
     expect(firstDelegate.synchronize).toHaveBeenCalledTimes(1);
     expect(storage.getItem('omnia-reader.sync-checkpoint')).toBe(
-      '{"schemaVersion":1,"git":"repository:main:a"}',
+      '{"schemaVersion":3,"git":"repository:main:a"}',
     );
 
     const restartedDelegate = worker();
@@ -486,13 +486,22 @@ describe('BrowserSyncCheckpointStore', () => {
   it('ignores malformed, unknown, and oversized state', () => {
     const storage = memoryStorage({
       'omnia-reader.sync-checkpoint': JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 1,
         git: 'repository:main:a',
       }),
     });
     const checkpoints = new BrowserSyncCheckpointStore(storage);
 
     expect(checkpoints.read('git')).toBeNull();
+
+    storage.setItem(
+      'omnia-reader.sync-checkpoint',
+      JSON.stringify({
+        schemaVersion: 2,
+        git: 'repository:main:a',
+      }),
+    );
+    expect(new BrowserSyncCheckpointStore(storage).read('git')).toBeNull();
 
     storage.setItem('omnia-reader.sync-checkpoint', 'x'.repeat(2_049));
     expect(new BrowserSyncCheckpointStore(storage).read('git')).toBeNull();

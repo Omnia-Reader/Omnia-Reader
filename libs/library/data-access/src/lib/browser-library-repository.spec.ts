@@ -362,6 +362,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         logical.id,
         variant,
         source('candidate.epub', epub),
+        testObjectPath(variant),
         mutation('add:1'),
       ),
     ).resolves.toMatchObject({
@@ -415,6 +416,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         firstLogical.id,
         bookRecord(first.id, 'pdf', firstPdf, 'first.pdf'),
         source('first.pdf', firstPdf),
+        testObjectPath(bookRecord(first.id, 'pdf', firstPdf, 'first.pdf')),
         mutation('add:duplicate-here'),
       ),
     ).resolves.toEqual({
@@ -426,6 +428,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         firstLogical.id,
         secondVariant,
         source('second.pdf', secondPdf),
+        testObjectPath(secondVariant),
         mutation('add:same-format'),
       ),
     ).resolves.toEqual({
@@ -438,6 +441,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         firstLogical.id,
         epubVariant,
         source('existing.epub', epub),
+        testObjectPath(epubVariant),
         mutation('add:other-owner'),
       ),
     ).resolves.toMatchObject({ status: 'belongs-to-other-book' });
@@ -471,6 +475,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         logical.id,
         variant,
         source('candidate.epub', epub),
+        testObjectPath(variant),
         mutation('add:gone'),
       ),
     ).rejects.toThrow('not found');
@@ -511,6 +516,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         logical.id,
         variant,
         source('candidate.epub', epub),
+        testObjectPath(variant),
         mutation('add:transaction-retry'),
       ),
     ).rejects.toBeTruthy();
@@ -525,9 +531,19 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         logical.id,
         variant,
         source('candidate.epub', epub),
+        testObjectPath(variant),
         mutation('add:transaction-retry'),
       ),
-    ).resolves.toMatchObject({ status: 'added' });
+    ).resolves.toMatchObject({
+      status: 'added',
+      mutation: {
+        change: {
+          variantEffects: [
+            expect.objectContaining({ objectPath: testObjectPath(variant) }),
+          ],
+        },
+      },
+    });
   });
 
   it('leaves membership unchanged when staging fails for quota', async () => {
@@ -561,6 +577,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         logical.id,
         variant,
         source('candidate.epub', epub),
+        testObjectPath(variant),
         mutation('add:quota'),
       ),
     ).rejects.toMatchObject({ name: 'QuotaExceededError' });
@@ -1425,6 +1442,12 @@ function mutation(changeId: string): LogicalMutationIdentity {
     deviceId: 'test-device',
     appVersion: '0.1.0',
   };
+}
+
+function testObjectPath(book: BookRecord): string {
+  const digest = book.id.slice('sha256:'.length);
+  const stem = book.fileName.replace(/\.(epub|pdf)$/i, '');
+  return `.omnia-reader/library/${stem}--${digest.slice(0, 12)}/${book.fileName}`;
 }
 
 function assertPresent<T>(

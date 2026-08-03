@@ -1,4 +1,5 @@
 import {
+  BookRecord,
   isBookRecord,
   isLogicalBookChange,
   isLogicalBookFormatPreference,
@@ -8,6 +9,7 @@ import {
   LogicalPreferenceEffect,
   LogicalVariantEffect,
 } from '@omnia-reader/reader/domain';
+import { bookObjectPath, LEGACY_BOOKS_ROOT } from './book-sync-manifest';
 import { SYNC_ROOT } from './library-sync-manifest';
 
 const CHANGE_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/;
@@ -83,11 +85,7 @@ function isVariantEffect(value: unknown): value is LogicalVariantEffect {
     value['operation'] === 'upsert' &&
     isBookRecord(value['variant']) &&
     typeof value['objectPath'] === 'string' &&
-    isSafeObjectPath(
-      value['objectPath'],
-      value['variant'].id,
-      value['variant'].format,
-    )
+    isSafeObjectPath(value['objectPath'], value['variant'])
   );
 }
 
@@ -101,13 +99,12 @@ function isPreferenceEffect(value: unknown): value is LogicalPreferenceEffect {
   );
 }
 
-function isSafeObjectPath(
-  path: string,
-  variantId: string,
-  format: string,
-): boolean {
-  const digest = variantId.slice('sha256:'.length);
-  return path === `${SYNC_ROOT}/books/${digest}/publication.${format}`;
+function isSafeObjectPath(path: string, variant: BookRecord): boolean {
+  const digest = variant.id.slice('sha256:'.length);
+  return (
+    path === bookObjectPath(variant) ||
+    path === `${LEGACY_BOOKS_ROOT}/${digest}/publication.${variant.format}`
+  );
 }
 
 function containsAvailability(value: unknown): boolean {

@@ -37,10 +37,10 @@ describe('book sync manifest', () => {
     expect(manifest.schemaVersion).toBe(2);
     expect(manifest.objectPath).toBe(bookObjectPath(book));
     expect(manifest.objectPath).toBe(
-      `.omnia-reader/v1/library/A Book--${'a'.repeat(12)}/A Book.epub`,
+      `.omnia-reader/library/A Book--${'a'.repeat(12)}/A Book.epub`,
     );
     expect(bookManifestPath(book)).toBe(
-      `.omnia-reader/v1/library/A Book--${'a'.repeat(12)}/book.json`,
+      `.omnia-reader/library/A Book--${'a'.repeat(12)}/book.json`,
     );
     expect(isBookSyncManifest(manifest)).toBe(true);
     expect(manifestBookRecord(manifest)).toEqual(book);
@@ -81,7 +81,7 @@ describe('book sync manifest', () => {
     expect(isBookSyncManifest(manifest)).toBe(false);
     expect(isBookSyncDeletionTombstone(tombstone)).toBe(false);
     expect(bookDeletionPath(book.id)).toBe(
-      `.omnia-reader/v1/.deletions/books/${'a'.repeat(64)}.json`,
+      `.omnia-reader/.deletions/books/${'a'.repeat(64)}.json`,
     );
   });
 
@@ -92,7 +92,7 @@ describe('book sync manifest', () => {
     });
 
     expect(manifest.objectPath).toBe(
-      `.omnia-reader/v1/library/-A- Book---${'a'.repeat(12)}/-A- Book-.epub`,
+      `.omnia-reader/library/-A- Book---${'a'.repeat(12)}/-A- Book-.epub`,
     );
     expect(isBookSyncManifest(manifest)).toBe(true);
   });

@@ -26,13 +26,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   BOOKS_ROOT,
   BookSyncManifest,
-  LEGACY_BOOKS_ROOT,
   bookDeletionPath,
   bookManifestPath,
   createBookSyncDeletionTombstone,
   createBookSyncManifest,
-  legacyBookManifestPath,
-  legacyBookObjectPath,
 } from './book-sync-manifest';
 import { BookSyncService } from './book-sync-service';
 import { BookSyncExclusions } from './book-sync-exclusions';
@@ -136,11 +133,6 @@ describe('BookSyncService', () => {
     ).toHaveLength(2);
     expect(
       remote.requests.filter(
-        (request) => request === `list:${LEGACY_BOOKS_ROOT}`,
-      ),
-    ).toHaveLength(0);
-    expect(
-      remote.requests.filter(
         (request) => request === `read:${bookManifestPath(fixture.book)}`,
       ),
     ).toHaveLength(0);
@@ -168,60 +160,6 @@ describe('BookSyncService', () => {
 
     expect(remote.documents.has(bookManifestPath(fixture.book))).toBe(true);
     expect(remote.documents.has(bookManifestPath(misplaced))).toBe(true);
-  });
-
-  it('removes the obsolete hash-addressed layout after publishing named files', async () => {
-    const remote = new MemoryTransport();
-    const legacyManifest = legacyBookManifestPath(fixture.book.id);
-    const legacyObject = legacyBookObjectPath(
-      fixture.book.id,
-      fixture.book.format,
-    );
-    remote.documents.set(legacyManifest, {
-      path: legacyManifest,
-      revision: 'legacy-document',
-      content: '{"schemaVersion":1}\n',
-    });
-    remote.objects.set(legacyObject, {
-      path: legacyObject,
-      revision: 'legacy-object',
-      size: fixture.manifest.size,
-      sha256: fixture.manifest.sha256,
-    });
-    const service = new BookSyncService(
-      remote,
-      new MemoryJournal(),
-      new MemoryRepository(fixture.book, fixture.source),
-    );
-
-    await service.synchronize();
-
-    expect(remote.documents.has(legacyManifest)).toBe(false);
-    expect(remote.objects.has(legacyObject)).toBe(false);
-    expect(remote.documents.has(bookManifestPath(fixture.book))).toBe(true);
-    expect(remote.objects.has(fixture.manifest.objectPath)).toBe(true);
-  });
-
-  it('retries legacy cleanup after a failed check and stops after success', async () => {
-    const remote = new MemoryTransport();
-    remote.failNextLegacyList = true;
-    const service = new BookSyncService(
-      remote,
-      new MemoryJournal(),
-      new MemoryRepository(fixture.book, fixture.source),
-    );
-
-    await expect(service.synchronize()).rejects.toThrow(
-      'Legacy layout unavailable',
-    );
-    await expect(service.synchronize()).resolves.toMatchObject({ pushed: 0 });
-    await expect(service.synchronize()).resolves.toMatchObject({ pushed: 0 });
-
-    expect(
-      remote.requests.filter(
-        (request) => request === `list:${LEGACY_BOOKS_ROOT}`,
-      ),
-    ).toHaveLength(2);
   });
 
   it('restores a missing local book only after hash verification', async () => {
@@ -606,9 +544,9 @@ describe('BookSyncService', () => {
     expect(await secondDevice.listBooks()).toHaveLength(2);
     expect(remote.objects.size).toBe(2);
     expect(remote.documents.size).toBe(3);
-    expect(
-      remote.documents.get('.omnia-reader/v1/README.md')?.content,
-    ).toContain('[Fixture](library/Fixture--');
+    expect(remote.documents.get('.omnia-reader/README.md')?.content).toContain(
+      '[Fixture](library/Fixture--',
+    );
   });
 });
 
@@ -620,17 +558,12 @@ class MemoryTransport implements LibrarySyncTransport {
   readonly requests: string[] = [];
   conflictsRemaining = 0;
   failObjectUpload = false;
-  failNextLegacyList = false;
   beforeWrite: (() => void) | undefined;
   onDownload: (() => void) | undefined;
   private revision = 0;
 
   async list(prefix: string): Promise<readonly RemoteDocument[]> {
     this.requests.push(`list:${prefix}`);
-    if (prefix === LEGACY_BOOKS_ROOT && this.failNextLegacyList) {
-      this.failNextLegacyList = false;
-      throw new Error('Legacy layout unavailable');
-    }
     return [...this.documents.values()].filter((document) =>
       document.path.startsWith(prefix),
     );

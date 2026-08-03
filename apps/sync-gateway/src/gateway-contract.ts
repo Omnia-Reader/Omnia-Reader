@@ -28,6 +28,17 @@ export interface RemoteObject {
   sha256: string;
 }
 
+export interface RemoteSyncEntry {
+  path: string;
+  revision: string;
+  kind: 'document' | 'object';
+}
+
+export interface RemoteSyncEntryDelete {
+  path: string;
+  expectedRevision: string;
+}
+
 export interface RemoteObjectDownload {
   metadata: RemoteObject;
   mediaType: 'application/epub+zip' | 'application/pdf';
@@ -71,6 +82,15 @@ export interface SyncGatewayAdapter {
     sessionId: string,
     prefix: string,
   ): Promise<readonly RemoteDocument[]>;
+  listEntries(
+    sessionId: string,
+    prefix: string,
+  ): Promise<readonly RemoteSyncEntry[]>;
+  deleteEntries(
+    sessionId: string,
+    requests: readonly RemoteSyncEntryDelete[],
+  ): Promise<void>;
+  deleteEntry(sessionId: string, request: RemoteSyncEntryDelete): Promise<void>;
   readDocument(sessionId: string, path: string): Promise<RemoteDocument | null>;
   writeDocument(
     sessionId: string,

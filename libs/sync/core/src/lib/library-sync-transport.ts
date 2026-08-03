@@ -24,6 +24,17 @@ export interface RemoteObject {
   sha256: string;
 }
 
+export interface RemoteSyncEntry {
+  path: string;
+  revision: string;
+  kind: 'document' | 'object';
+}
+
+export interface RemoteSyncEntryDeleteRequest {
+  path: string;
+  expectedRevision: string;
+}
+
 export type ObjectTransferDirection = 'download' | 'upload';
 
 export interface ObjectTransferProgress {
@@ -64,6 +75,11 @@ export interface LibrarySyncTransport {
     options?: Pick<ObjectTransferOptions, 'signal'>,
   ): Promise<string | null>;
   list(prefix: string): Promise<readonly RemoteDocument[]>;
+  listEntries?(prefix: string): Promise<readonly RemoteSyncEntry[]>;
+  deleteEntries?(
+    requests: readonly RemoteSyncEntryDeleteRequest[],
+  ): Promise<void>;
+  deleteEntry?(request: RemoteSyncEntryDeleteRequest): Promise<void>;
   read(path: string): Promise<RemoteDocument | null>;
   write(request: DocumentWriteRequest): Promise<RemoteDocument>;
   deleteDocument?(request: DocumentDeleteRequest): Promise<void>;

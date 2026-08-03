@@ -652,6 +652,11 @@ describe('GitHubSyncGatewayAdapter', () => {
     await expect(
       adapter.listDocuments('session', '.omnia-reader/v1/progress'),
     ).resolves.toEqual([created]);
+    await expect(
+      adapter.listEntries('session', '.omnia-reader/v1'),
+    ).resolves.toEqual([
+      { path, revision: created.revision, kind: 'document' },
+    ]);
 
     await expect(
       adapter.writeDocument('session', {
@@ -671,6 +676,68 @@ describe('GitHubSyncGatewayAdapter', () => {
       }),
     ).resolves.toBeUndefined();
     await expect(adapter.readDocument('session', path)).resolves.toBeNull();
+  });
+
+  it('removes every inventoried previous-root entry in one atomic commit', async () => {
+    const provider = new FakeGitHub();
+    const previous = [
+      '.omnia-reader/v1/manifest.json',
+      '.omnia-reader/v1/books/a/book.json',
+      '.omnia-reader/v1/books/a/publication.epub',
+    ];
+    for (const path of previous) {
+      provider.files.set(path, {
+        content: path,
+        sha: createHash('sha1').update(path).digest('hex'),
+      });
+    }
+    provider.files.set('.omnia-reader/manifest.json', {
+      content: 'current',
+      sha: 'f'.repeat(40),
+    });
+    provider.files.set('.gitattributes', {
+      content:
+        '.omnia-reader/v1/books/**/*.epub filter=lfs diff=lfs merge=lfs -text\n',
+      sha: '9'.repeat(40),
+    });
+    const { adapter } = testAdapter(provider);
+    await authorizeAndSelect(adapter);
+
+    await adapter.deleteEntries(
+      'session',
+      previous.map((path) => ({
+        path,
+        expectedRevision: provider.files.get(path)?.sha as string,
+      })),
+    );
+
+    expect(provider.atomicCommitRequests).toBe(1);
+    expect(previous.every((path) => !provider.files.has(path))).toBe(true);
+    expect(provider.files.has('.omnia-reader/manifest.json')).toBe(true);
+    expect(provider.files.get('.gitattributes')?.content).not.toContain(
+      '.omnia-reader/v1/',
+    );
+    expect(provider.files.get('.gitattributes')?.content).toContain(
+      '.omnia-reader/library/**/*.epub',
+    );
+  });
+
+  it('preserves previous-root entries when the branch changes before commit', async () => {
+    const provider = new FakeGitHub();
+    const path = '.omnia-reader/v1/manifest.json';
+    provider.files.set(path, { content: 'old', sha: '1'.repeat(40) });
+    provider.conflictAtomicCommit = true;
+    const { adapter } = testAdapter(provider);
+    await authorizeAndSelect(adapter);
+
+    await expect(
+      adapter.deleteEntries('session', [
+        { path, expectedRevision: '1'.repeat(40) },
+      ]),
+    ).rejects.toMatchObject<Partial<GatewayHttpError>>({ statusCode: 409 });
+
+    expect(provider.atomicCommitRequests).toBe(0);
+    expect(provider.files.has(path)).toBe(true);
   });
 
   it.each([404, 409])(
@@ -781,7 +848,7 @@ describe('GitHubSyncGatewayAdapter', () => {
     expect(provider.lfsUploadContentLength).toBe(String(content.byteLength));
     expect(provider.lfsVerifyAccept).toBe('application/vnd.git-lfs+json');
     expect(provider.files.get('.gitattributes')?.content).toContain(
-      '.omnia-reader/v1/library/**/*.pdf filter=lfs',
+      '.omnia-reader/library/**/*.pdf filter=lfs',
     );
     expect(provider.files.get(path)?.content).toBe(
       `version https://git-lfs.github.com/spec/v1\noid sha256:${sha256}\nsize ${content.byteLength}\n`,
@@ -1178,6 +1245,7 @@ class FakeGitHub {
   contentMutationRequests = 0;
   contentReadRequests = 0;
   treeRequests = 0;
+  atomicCommitRequests = 0;
   blobRequests = 0;
   activeBlobRequests = 0;
   maxConcurrentBlobRequests = 0;
@@ -1210,6 +1278,7 @@ class FakeGitHub {
   userInstallationNextLink: string | null = null;
   installationTokenOutcome: 'success' | 'missing' | 'unauthorized' = 'success';
   treeStatus: 200 | 404 | 409 = 200;
+  conflictAtomicCommit = false;
   deletedFile: {
     path: string;
     sha: string;
@@ -1217,6 +1286,14 @@ class FakeGitHub {
     message: string;
   } | null = null;
   private revision = 0;
+  private headSha = 'c'.repeat(40);
+  private treeSha = 'a'.repeat(40);
+  private pendingAtomicDeletions: string[] = [];
+  private readonly createdBlobs = new Map<string, string>();
+  private readonly pendingAtomicFiles = new Map<
+    string,
+    { content: string; sha: string }
+  >();
   private pendingLfs: { oid: string; size: number } | null = null;
   private readonly repositories: Array<Record<string, unknown>> = [
     {
@@ -1410,13 +1487,63 @@ class FakeGitHub {
     if (url.pathname.includes('/contents/')) {
       return this.contents(url, method, init);
     }
+    if (url.pathname.includes('/git/ref/heads/') && method === 'GET') {
+      return json({ object: { type: 'commit', sha: this.headSha } });
+    }
+    if (url.pathname.includes('/git/refs/heads/') && method === 'PATCH') {
+      if (this.conflictAtomicCommit) {
+        return json({ message: 'Reference update failed' }, 422);
+      }
+      const body = JSON.parse(String(init.body)) as { sha: string };
+      for (const path of this.pendingAtomicDeletions) {
+        this.files.delete(path);
+      }
+      for (const [path, file] of this.pendingAtomicFiles) {
+        this.files.set(path, file);
+      }
+      this.pendingAtomicDeletions = [];
+      this.pendingAtomicFiles.clear();
+      this.headSha = body.sha;
+      this.atomicCommitRequests += 1;
+      return json({ object: { type: 'commit', sha: this.headSha } });
+    }
+    if (url.pathname.includes('/git/commits/') && method === 'GET') {
+      return json({ sha: this.headSha, tree: { sha: this.treeSha } });
+    }
+    if (url.pathname.endsWith('/git/commits') && method === 'POST') {
+      const sha = (++this.revision).toString(16).padStart(40, 'e');
+      return json({ sha });
+    }
+    if (url.pathname.endsWith('/git/trees') && method === 'POST') {
+      const body = JSON.parse(String(init.body)) as {
+        base_tree: string;
+        tree: Array<{ path: string; sha: string | null }>;
+      };
+      if (body.base_tree !== this.treeSha) {
+        return json({ message: 'Tree changed' }, 422);
+      }
+      this.pendingAtomicDeletions = body.tree
+        .filter((entry) => entry.sha === null)
+        .map((entry) => entry.path);
+      for (const entry of body.tree) {
+        if (entry.sha !== null) {
+          this.pendingAtomicFiles.set(entry.path, {
+            content: this.createdBlobs.get(entry.sha) ?? '',
+            sha: entry.sha,
+          });
+        }
+      }
+      this.treeSha = (++this.revision).toString(16).padStart(40, 'd');
+      return json({ sha: this.treeSha });
+    }
     if (url.pathname.includes('/git/trees/')) {
       this.treeRequests += 1;
       if (this.treeStatus !== 200) {
         return json({ message: 'Git Repository is empty.' }, this.treeStatus);
       }
       return json({
-        sha: 'a'.repeat(40),
+        sha: this.treeSha,
+        truncated: false,
         tree: [...this.files.entries()].map(([path, file]) => ({
           path,
           type: 'blob',
@@ -1447,6 +1574,12 @@ class FakeGitHub {
       } finally {
         this.activeBlobRequests -= 1;
       }
+    }
+    if (url.pathname.endsWith('/git/blobs') && method === 'POST') {
+      const body = JSON.parse(String(init.body)) as { content: string };
+      const sha = createHash('sha1').update(body.content).digest('hex');
+      this.createdBlobs.set(sha, body.content);
+      return json({ sha });
     }
     if (url.pathname.endsWith('/info/lfs/objects/batch')) {
       const request = JSON.parse(String(init.body)) as {
