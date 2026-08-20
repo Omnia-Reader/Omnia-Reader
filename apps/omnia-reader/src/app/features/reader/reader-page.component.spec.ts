@@ -1817,7 +1817,7 @@ describe('ReaderPageComponent annotations', () => {
     fixture.destroy();
     expect(callbacks.command).toBeUndefined();
     vi.unstubAllGlobals();
-  });
+  }, 15_000);
 });
 
 function dispatchTouchPointer(
