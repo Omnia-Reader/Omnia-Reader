@@ -400,7 +400,7 @@ npm audit --omit=dev                                     PASS (0 vulnerabilities
 Runtime dependency contract                              PASS (2/2; PDF.js 6.2.108, fast-uri 3.1.5 + 4.1.2)
 Chromium/WebKit PDF security compatibility               PASS (3/3 per browser)
 npx nx run omnia-reader-e2e:performance                  PASS (3/3)
-npx nx run omnia-reader-e2e:performance-evidence-test    PASS (41/41; management/evidence contracts)
+npx nx run omnia-reader-e2e:performance-evidence-test    PASS (43/43; management/evidence contracts)
 Desktop management branch smoke                          PASS (1 active Chromium journey; 3 expected mode skips)
 npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)

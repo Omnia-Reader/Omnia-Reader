@@ -68,7 +68,7 @@ discarded warm-ups plus 200 measured samples. Setup is outside timed intervals.
 Only evaluator-valid `PASS` or `FAIL` evidence is atomically promoted beneath
 `specs/001-multi-format-books/performance/results/`.
 
-Verified on 2026-08-20: the evidence contracts passed 41/41, the focused
+Verified on 2026-08-20: the evidence contracts passed 43/43, the focused
 library suite passed 36/36, both affected lint targets passed, and the complete
 branch smoke passed its one active Chromium journey with three expected mode
 skips. The clean current host returned `UNVERIFIED` before Playwright because

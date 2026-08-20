@@ -10,7 +10,7 @@ import {
   MANAGEMENT_DISTRIBUTIONS,
 } from '../performance/management-branches.mjs';
 import {
-  PageMeasurementError,
+  isPageMeasurementError,
   measurePageAction,
 } from '../performance/page-measurement.mjs';
 import {
@@ -414,7 +414,7 @@ test('writes the complete qualified desktop management result', async ({
     try {
       return await operation();
     } catch (error) {
-      const missingAcknowledgement = error instanceof PageMeasurementError;
+      const missingAcknowledgement = isPageMeasurementError(error);
       missingAcknowledgements += Number(missingAcknowledgement);
       wrongResults += Number(!missingAcknowledgement);
       throw error;

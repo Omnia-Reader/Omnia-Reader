@@ -6,6 +6,7 @@ import { chromium } from '@playwright/test';
 import {
   PageMeasurementError,
   assertPageMeasurementSpec,
+  isPageMeasurementError,
   measurePageAction,
 } from './page-measurement.mjs';
 
@@ -263,6 +264,24 @@ test('rejects unsafe, unknown, or out-of-bound measurement specs', () => {
   ]) {
     assert.throws(() => assertPageMeasurementSpec(candidate));
   }
+});
+
+test('recognizes page measurement failures through bounded diagnostic causes', () => {
+  const failure = new PageMeasurementError('missing acknowledgement');
+  assert.equal(isPageMeasurementError(failure), true);
+  assert.equal(
+    isPageMeasurementError(
+      new Error('branch diagnostic', {
+        cause: new Error('adapter diagnostic', { cause: failure }),
+      }),
+    ),
+    true,
+  );
+  assert.equal(isPageMeasurementError(new Error('wrong result')), false);
+
+  const cyclic = new Error('cyclic diagnostic');
+  cyclic.cause = cyclic;
+  assert.equal(isPageMeasurementError(cyclic), false);
 });
 
 function measurementSpec() {

@@ -16,6 +16,20 @@ export class PageMeasurementError extends Error {
   }
 }
 
+export function isPageMeasurementError(value) {
+  const seen = new Set();
+  let current = value;
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (current instanceof PageMeasurementError) return true;
+    if (!current || typeof current !== 'object' || seen.has(current)) {
+      return false;
+    }
+    seen.add(current);
+    current = current.cause;
+  }
+  return false;
+}
+
 export function assertPageMeasurementSpec(value) {
   assertRecord(value, 'pageMeasurement');
   assertExactKeys(

@@ -4,11 +4,13 @@ import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
 import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, test } from 'node:test';
 import {
   DesktopQualificationError,
   MeasurementProcessError,
+  parseDesktopWebCliArguments,
   runDesktopMeasurementProcess,
   runQualifiedDesktopMeasurement,
 } from './run-desktop-web.mjs';
@@ -29,6 +31,41 @@ afterEach(async () => {
     ),
   );
   ownedDirectories.clear();
+});
+
+test('confines CLI profile and result roots to the committed evidence contract', () => {
+  const defaults = parseDesktopWebCliArguments([]);
+  const repositoryRoot = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../..',
+  );
+  assert.equal(
+    defaults.profilePath,
+    join(
+      repositoryRoot,
+      'specs/001-multi-format-books/performance/profiles-v1.json',
+    ),
+  );
+  assert.equal(
+    defaults.resultsRoot,
+    join(repositoryRoot, 'specs/001-multi-format-books/performance/results'),
+  );
+  assert.throws(
+    () =>
+      parseDesktopWebCliArguments([
+        '--profile',
+        '/tmp/forged-performance-profile.json',
+      ]),
+    /usage: run-desktop-web\.mjs/,
+  );
+  assert.throws(
+    () =>
+      parseDesktopWebCliArguments([
+        '--results-root',
+        '/tmp/unapproved-performance-results',
+      ]),
+    /usage: run-desktop-web\.mjs/,
+  );
 });
 
 test('refuses non-READY profiles before invoking the measurement runtime', async () => {

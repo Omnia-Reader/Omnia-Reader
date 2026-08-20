@@ -231,7 +231,7 @@ profile measurements.
 - `npx nx lint omnia-reader --skip-nx-cache` and
   `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS.
 - `npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache`:
-  PASS, 41 tests.
+  PASS, 43 tests.
 - Focused library reconciliation verification: PASS, 35 tests. The full
   `omnia-reader` suite passed 173/174 but its unrelated reader annotation test
   exceeded the existing five-second timeout; that reader spec passed 2/2 in
@@ -291,3 +291,33 @@ profile measurements.
 
 - `npx nx run omnia-reader-e2e:performance --skip-nx-cache`: PASS, 3 Chromium
   tests, including the dependent production build.
+
+## Phase 5: Convergence
+
+- [x] T030 Add failing CLI tests and confine the production desktop driver to
+      the committed immutable profile set, removing any path that can redefine
+      frozen v1 qualification requirements per FR-008 and FR-009 (contradicts)
+- [x] T031 Add failing CLI tests and confine final desktop evidence to
+      `specs/001-multi-format-books/performance/results/`, while retaining
+      injectable temporary roots only below the internal test API, per FR-014
+      and US3/AC3 (contradicts)
+- [x] T032 Add failing classification tests and preserve nested
+      `PageMeasurementError` identity through diagnostic wrappers so missing
+      acknowledgements and wrong results remain independent counters per FR-011
+      (partial)
+
+**Convergence evidence (2026-08-20)**:
+
+- Initial red state: the focused Node run failed because neither the confined
+  CLI parser nor nested page-measurement classifier was exported.
+- `node --test apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs
+apps/omnia-reader-e2e/performance/page-measurement.spec.mjs`: PASS, 18 tests.
+- `npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache`:
+  PASS, 43 tests, 0 failures.
+- `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS, 0 errors.
+- `npx nx run omnia-reader-e2e:performance-management-branch-smoke
+--skip-nx-cache --outputStyle=stream`: PASS, one active Chromium journey,
+  three expected mode skips, and the dependent production build.
+- The production CLI now always loads the committed profile set and always
+  promotes final evidence beneath the approved repository results directory.
+  Programmatic test APIs retain injectable roots without widening the CLI.

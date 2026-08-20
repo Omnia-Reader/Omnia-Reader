@@ -209,7 +209,7 @@ export async function runDesktopMeasurementProcess(options) {
 }
 
 export async function runDesktopWebCli(arguments_) {
-  const options = parseCliArguments(arguments_);
+  const options = parseDesktopWebCliArguments(arguments_);
   const profileSet = await readJsonFile(options.profilePath);
   const environment = options.environmentPath
     ? await readJsonFile(options.environmentPath)
@@ -381,33 +381,25 @@ async function writeCanonicalFile(path, value) {
   });
 }
 
-function parseCliArguments(arguments_) {
-  let profilePath = DEFAULT_PROFILE_PATH;
+export function parseDesktopWebCliArguments(arguments_) {
+  const profilePath = DEFAULT_PROFILE_PATH;
   let environmentPath = null;
-  let resultsRoot = DEFAULT_RESULTS_ROOT;
+  const resultsRoot = DEFAULT_RESULTS_ROOT;
   let outputName = 'desktop-web-v1.json';
   let timeoutMs = DEFAULT_PROCESS_TIMEOUT_MS;
   for (let index = 0; index < arguments_.length; index += 1) {
     const option = arguments_[index];
     const value = arguments_[index + 1];
     if (
-      ![
-        '--profile',
-        '--environment',
-        '--results-root',
-        '--output',
-        '--timeout-ms',
-      ].includes(option) ||
+      !['--environment', '--output', '--timeout-ms'].includes(option) ||
       value === undefined
     ) {
       throw new EvidenceValidationError(
-        'usage: run-desktop-web.mjs [--profile <profile-set.json>] [--environment <environment.json>] [--results-root <directory>] [--output <name.json>] [--timeout-ms <milliseconds>]',
+        'usage: run-desktop-web.mjs [--environment <environment.json>] [--output <name.json>] [--timeout-ms <milliseconds>]',
         'arguments',
       );
     }
-    if (option === '--profile') profilePath = resolve(value);
     if (option === '--environment') environmentPath = resolve(value);
-    if (option === '--results-root') resultsRoot = resolve(value);
     if (option === '--output') outputName = value;
     if (option === '--timeout-ms') timeoutMs = Number(value);
     index += 1;

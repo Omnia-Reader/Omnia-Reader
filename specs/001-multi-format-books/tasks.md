@@ -373,7 +373,7 @@ after the badge-only checkpoint passes.
 ### Performance Evidence-Core Verification (2026-08-20)
 
 - `npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache`:
-  PASS, 41 tests, 0 failures. This includes deterministic workload and dataset,
+  PASS, 43 tests, 0 failures. This includes deterministic workload and dataset,
   page timing, primary cardinality, sampling identity, evaluator, and owned
   launcher lifecycle contracts.
 - `npx nx lint omnia-reader --skip-nx-cache` and
