@@ -25,12 +25,12 @@
 - [x] T005 Implement the backward-compatible profile-set descriptor registry in `apps/omnia-reader-e2e/performance/performance-contract.mjs`
 - [x] T006 Add failing existing-destination, symlink, traversal, and concurrent-promotion tests in `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
 - [x] T007 Implement bounded atomic no-replace evidence promotion while preserving the existing writer contract in `apps/omnia-reader-e2e/performance/performance-contract.mjs`
-- [ ] T008 Add failing lifecycle transition, drift, timeout, signal, diagnostic-bound, and owned-cleanup tests in `apps/omnia-reader-e2e/performance/platform-lifecycle.spec.mjs`
-- [ ] T009 Implement the platform-neutral qualification/evaluation lifecycle in `apps/omnia-reader-e2e/performance/platform-lifecycle.mjs`
-- [ ] T010 Add failing artifact/provenance schema, debug substitution, size/digest drift, and TOCTOU tests in `apps/omnia-reader-e2e/performance/artifact-identity.spec.mjs`
-- [ ] T011 Implement bounded release artifact and provenance validation/copying in `apps/omnia-reader-e2e/performance/artifact-identity.mjs`
-- [ ] T012 Refactor the desktop driver to consume shared lifecycle primitives without changing CLI/result semantics in `apps/omnia-reader-e2e/performance/run-desktop-web.mjs`
-- [ ] T013 Reconcile shared contract commands and exact v1 compatibility evidence in `specs/014-cross-platform-performance/quickstart.md`
+- [x] T008 Add failing lifecycle transition, drift, timeout, signal, diagnostic-bound, and owned-cleanup tests in `apps/omnia-reader-e2e/performance/platform-lifecycle.spec.mjs`
+- [x] T009 Implement the platform-neutral qualification/evaluation lifecycle in `apps/omnia-reader-e2e/performance/platform-lifecycle.mjs`
+- [x] T010 Add failing artifact/provenance schema, debug substitution, size/digest drift, and TOCTOU tests in `apps/omnia-reader-e2e/performance/artifact-identity.spec.mjs`
+- [x] T011 Implement bounded release artifact and provenance validation/copying in `apps/omnia-reader-e2e/performance/artifact-identity.mjs`
+- [x] T012 Refactor the desktop driver to consume shared lifecycle primitives without changing CLI/result semantics in `apps/omnia-reader-e2e/performance/run-desktop-web.mjs`
+- [x] T013 Reconcile shared contract commands and exact v1 compatibility evidence in `specs/014-cross-platform-performance/quickstart.md`
 
 **Checkpoint**: Existing desktop-web contracts pass unchanged and common hostile-input/lifecycle behavior is reusable.
 

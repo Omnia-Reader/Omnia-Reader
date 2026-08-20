@@ -11,12 +11,19 @@ return `UNVERIFIED` before sampling.
 
 ```sh
 npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache
-node --test apps/omnia-reader-e2e/performance/*platform*.spec.mjs
+node --test \
+  apps/omnia-reader-e2e/performance/platform-lifecycle.spec.mjs \
+  apps/omnia-reader-e2e/performance/artifact-identity.spec.mjs
 ```
 
 Expected: v1 remains compatible; v2 rejects unknown/missing/mismatched
 identities; lifecycle failures clean only owned resources; evidence cannot
 escape or replace an existing result.
+
+The shared foundation accepts only a clean, non-debuggable release provenance
+record and copies exact regular-file bytes into owned storage with size, digest,
+source-identity, and exclusive-destination checks. Platform adapters add their
+package-format, signer, installed/running-byte, and runtime checks.
 
 ## Mobile-web smoke and primary run
 
