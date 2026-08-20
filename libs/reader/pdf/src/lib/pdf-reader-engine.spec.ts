@@ -19,8 +19,10 @@ describe('PdfReaderEngine', () => {
       destroy: vi.fn().mockResolvedValue(undefined),
       onPassword: null,
     };
+    const getDocument = vi.fn(() => loadingTask);
+    const runtime = createRuntime(getDocument);
     const engine = new PdfReaderEngine(
-      async () => createRuntime(() => loadingTask),
+      async () => runtime,
       async () => undefined,
     );
 
@@ -29,6 +31,12 @@ describe('PdfReaderEngine', () => {
       authors: ['Fixture author'],
       identifier: 'fixture-fingerprint',
     });
+    expect(getDocument).toHaveBeenCalledWith({
+      data: expect.any(Uint8Array),
+    });
+    expect(runtime.core.GlobalWorkerOptions.workerSrc).toBe(
+      'http://localhost:3000/assets/pdfjs/pdf.worker.min.mjs',
+    );
     expect(engine.pageNavigation()?.pageCount).toBe(2);
     expect(engine.pageStatus()).toEqual({
       current: 1,

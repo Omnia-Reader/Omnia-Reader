@@ -18,7 +18,7 @@ export function requireSameOriginFormSubmission(request: FastifyRequest): void {
 function requireSameOrigin(request: FastifyRequest): void {
   const origin = request.headers.origin;
   const host = request.headers.host;
-  if (!origin || !host) {
+  if (!origin || !host || origin.includes('\\')) {
     throw new GatewayHttpError(403, 'A same-origin request is required');
   }
 

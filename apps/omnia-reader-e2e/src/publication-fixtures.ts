@@ -405,6 +405,15 @@ export function createMalformedPdfFixture(): Buffer {
   return Buffer.from('%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n');
 }
 
+export function createScriptActionPdfFixture(): Buffer {
+  return buildPdfFixture(
+    ['BT /F1 18 Tf 72 720 Td (Omnia Script Action PDF Fixture) Tj ET'],
+    'Omnia Script Action PDF Fixture',
+    false,
+    true,
+  );
+}
+
 export function createEncryptedPdfFixture(): Buffer {
   return Buffer.from(
     [
@@ -459,6 +468,7 @@ function buildPdfFixture(
   pages: readonly string[],
   title: string,
   interactive = false,
+  documentJavaScript = false,
 ): Buffer {
   if (interactive && pages.length < 2) {
     throw new RangeError('Interactive PDF fixtures require at least two pages');
@@ -476,7 +486,7 @@ function buildPdfFixture(
     ? ` /Annots [${externalLinkObject} 0 R ${internalLinkObject} 0 R ${formWidgetObject} 0 R]`
     : '';
   const objects = [
-    `<< /Type /Catalog /Pages 2 0 R${interactive ? ` /AcroForm ${acroFormObject} 0 R` : ''} >>`,
+    `<< /Type /Catalog /Pages 2 0 R${interactive ? ` /AcroForm ${acroFormObject} 0 R` : ''}${documentJavaScript ? ' /OpenAction << /S /JavaScript /JS (globalThis.__omniaPdfScriptExecuted=true) >>' : ''} >>`,
     `<< /Type /Pages /Kids [${pages
       .map((_, index) => `${pageObjectStart + index} 0 R`)
       .join(' ')}] /Count ${pages.length} >>`,

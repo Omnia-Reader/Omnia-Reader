@@ -509,6 +509,27 @@ describe('sync gateway', () => {
     await app.close();
   });
 
+  it('rejects backslash-authority origins even when they normalize to the request host', async () => {
+    const app = gateway();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/sync/mega/document',
+      headers: {
+        ...MUTATION_HEADERS,
+        origin: `http:\\\\${HOST}`,
+        'content-type': 'application/json',
+      },
+      payload: documentWrite(),
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      message: 'A same-origin request is required',
+    });
+    await app.close();
+  });
+
   it('rejects paths that escape the versioned synchronization root', async () => {
     const app = gateway();
 
@@ -524,7 +545,7 @@ describe('sync gateway', () => {
     await app.close();
   });
 
-  it('accepts encoded IDs while rejecting encoded path separators', async () => {
+  it('accepts encoded IDs while rejecting raw and encoded path separators', async () => {
     const app = gateway();
     const encodedBookPath = `.omnia-reader/v1/books/sha256%3A${'a'.repeat(64)}/book.json`;
 
@@ -534,7 +555,13 @@ describe('sync gateway', () => {
     });
     expect(safeResponse.statusCode).toBe(404);
 
-    for (const unsafeSegment of ['book%2Fsecret', 'book%252Fsecret']) {
+    for (const unsafeSegment of [
+      'book%2Fsecret',
+      'book%252Fsecret',
+      'book\\secret',
+      'book%5Csecret',
+      'book%255Csecret',
+    ]) {
       const unsafePath = `.omnia-reader/v1/books/${unsafeSegment}/book.json`;
       const response = await app.inject({
         method: 'GET',
