@@ -52,7 +52,7 @@
 
 - [x] T017 [US1] Implement exact serial-scoped disposable AVD ownership in `apps/omnia-reader-e2e/performance/android-emulator-controller.mjs`
 - [x] T018 [US1] Implement live mobile Chrome/environment capture and CDP agreement in `apps/omnia-reader-e2e/performance/mobile-web-environment.mjs`
-- [ ] T019 [US1] Extract the reusable page workload runner from `apps/omnia-reader-e2e/src/performance-management.spec.ts` into `apps/omnia-reader-e2e/src/performance-management-runner.ts`
+- [x] T019 [US1] Extract the reusable page workload runner from `apps/omnia-reader-e2e/src/performance-management.spec.ts` into `apps/omnia-reader-e2e/src/performance-management-runner.ts`
 - [ ] T020 [US1] Implement the fail-closed CDP mobile-web driver in `apps/omnia-reader-e2e/performance/run-mobile-web.mjs`
 - [ ] T021 [US1] Wire mobile-web contract/smoke/primary targets in `apps/omnia-reader-e2e/project.json`
 - [ ] T022 [US1] Record reviewed real AVD/Chrome identity in `specs/001-multi-format-books/performance/profiles-v2.json` only when qualification artifacts exist
