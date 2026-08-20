@@ -400,6 +400,7 @@ npm audit --omit=dev                                     PASS (0 vulnerabilities
 Runtime dependency contract                              PASS (2/2; PDF.js 6.2.108, fast-uri 3.1.5 + 4.1.2)
 Chromium/WebKit PDF security compatibility               PASS (3/3 per browser)
 npx nx run omnia-reader-e2e:performance                  PASS (3/3)
+npx nx run omnia-reader-e2e:performance-evidence-test    PASS (12/12; fail-closed contract only)
 npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
@@ -566,6 +567,12 @@ The following release requirements remain open:
 - Packaged desktop, Android emulator, and physical-device compatibility gates
   plus the remaining manual assistive-technology, security, performance, and
   release audits.
+- The fail-closed multi-format performance evidence core now validates
+  canonical profile identity, bounded environment input, raw unpooled
+  statistics, dispositions, atomic result paths, and all-four-profile
+  aggregation. The current desktop preflight is `SUPPLEMENTAL`; mobile-web and
+  Android identities remain unresolved, and no desktop-web, mobile-web,
+  packaged-desktop, Android, or aggregate SC-004 measurement is claimed.
 
 ## 2. Initial Repository Assessment
 

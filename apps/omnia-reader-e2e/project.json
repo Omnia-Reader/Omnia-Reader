@@ -33,6 +33,13 @@
         "command": "PERFORMANCE_E2E=1 playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 performance.spec.ts"
       }
     },
+    "performance-evidence-test": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "options": {
+        "command": "node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs"
+      }
+    },
     "native": {
       "executor": "nx:run-commands",
       "parallelism": false,

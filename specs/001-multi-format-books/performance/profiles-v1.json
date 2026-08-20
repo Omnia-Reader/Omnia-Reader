@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "profileSetId": "multi-format-performance-v1",
+  "profileSetDigest": "sha256:9f4fecb53eb983fad1a1e4ddfe8b239cd1f610f1e45573b7ed5095323ff92962",
+  "dataset": {
+    "recipeId": "multi-format-management-v1",
+    "seed": "omnia-reader-multi-format-v1",
+    "logicalBooks": 1000,
+    "exactVariants": 2000,
+    "formats": ["epub", "pdf"],
+    "logicalChangeHistory": 500,
+    "recipeDigest": "sha256:0894f7a3c2ba59242b79447ca3e87836036135e489a8830aa4c6b52e8c76c7ae"
+  },
+  "measurement": {
+    "acknowledgementThresholdMs": 1000,
+    "finalThresholdMs": 2000,
+    "minimumAcknowledgementSamples": 20,
+    "warmupSamples": 20,
+    "minimumFinalSamples": 200,
+    "maximumSamplesPerCollection": 10000,
+    "minimumWithinTargetRatio": 0.95,
+    "branchIds": [
+      "add-local-success",
+      "add-local-failure",
+      "associate-success",
+      "associate-failure",
+      "detach-success",
+      "detach-failure",
+      "delete-success",
+      "delete-failure",
+      "reconcile-success",
+      "reconcile-failure",
+      "replace-success",
+      "replace-failure",
+      "restore-success",
+      "restore-failure"
+    ],
+    "distributionIds": [
+      "filter",
+      "open-epub",
+      "open-pdf",
+      "switch-epub-to-pdf",
+      "switch-pdf-to-epub"
+    ],
+    "zeroToleranceCounters": [
+      "consoleErrors",
+      "missingAcknowledgements",
+      "overlappingEngines",
+      "wrongResults"
+    ]
+  },
+  "profiles": [
+    {
+      "id": "desktop-web-v1",
+      "platform": "desktop-web",
+      "driver": "run-desktop-web",
+      "qualification": "complete",
+      "unresolvedRequirements": [],
+      "requirements": {
+        "dataset.recipeDigest": "sha256:0894f7a3c2ba59242b79447ca3e87836036135e489a8830aa4c6b52e8c76c7ae",
+        "environment.arch": "x64",
+        "environment.constraintScope": "systemd-cgroup",
+        "environment.cpuModel": "Intel(R) Core(TM) i7-10610U CPU @ 1.80GHz",
+        "environment.cpuQuota": 2,
+        "environment.deviceScaleFactor": 1,
+        "environment.kernelRelease": "7.0.0-29-generic",
+        "environment.memoryLimitBytes": 8589934592,
+        "environment.osRelease": "26.04",
+        "environment.platform": "linux",
+        "environment.powerMode": "balanced-ac",
+        "environment.viewport": "1366x768",
+        "runtime.browserName": "chromium",
+        "runtime.browserVersion": "149.0.7827.55",
+        "runtime.playwrightVersion": "1.61.1",
+        "source.nodeVersion": "v26.5.0",
+        "source.packageLockSha256": "sha256:f2e8589150b4b2e6fd8ce1ea83fd983bde10fac555c4045784f49b7255112e30"
+      }
+    },
+    {
+      "id": "mobile-web-v1",
+      "platform": "mobile-web",
+      "driver": "run-mobile-web",
+      "qualification": "unresolved",
+      "unresolvedRequirements": [
+        "environment.avdSnapshotSha256",
+        "runtime.chromeVersion"
+      ],
+      "requirements": {
+        "dataset.recipeDigest": "sha256:0894f7a3c2ba59242b79447ca3e87836036135e489a8830aa4c6b52e8c76c7ae",
+        "environment.arch": "x86_64",
+        "environment.avdImage": "android-36.1-playstore-x86_64-r4",
+        "environment.avdSnapshotSha256": null,
+        "environment.battery": "simulated-75-percent",
+        "environment.batterySaver": false,
+        "environment.cpuQuota": 2,
+        "environment.device": "pixel-4a-class",
+        "environment.memoryLimitBytes": 4294967296,
+        "runtime.chromePackage": "com.android.chrome",
+        "runtime.chromeVersion": null,
+        "source.nodeVersion": "v26.5.0",
+        "source.packageLockSha256": "sha256:f2e8589150b4b2e6fd8ce1ea83fd983bde10fac555c4045784f49b7255112e30"
+      }
+    },
+    {
+      "id": "packaged-desktop-v1",
+      "platform": "packaged-desktop",
+      "driver": "run-packaged-desktop",
+      "qualification": "complete",
+      "unresolvedRequirements": [],
+      "requirements": {
+        "artifact.kind": "release",
+        "artifact.sha256": { "format": "sha256" },
+        "dataset.recipeDigest": "sha256:0894f7a3c2ba59242b79447ca3e87836036135e489a8830aa4c6b52e8c76c7ae",
+        "environment.arch": "x64",
+        "environment.constraintScope": "systemd-cgroup",
+        "environment.cpuModel": "Intel(R) Core(TM) i7-10610U CPU @ 1.80GHz",
+        "environment.cpuQuota": 2,
+        "environment.kernelRelease": "7.0.0-29-generic",
+        "environment.memoryLimitBytes": 8589934592,
+        "environment.osRelease": "26.04",
+        "environment.platform": "linux",
+        "environment.powerMode": "balanced-ac",
+        "environment.viewport": "1366x768",
+        "runtime.tauriCliVersion": "2.11.4",
+        "runtime.webKitGtkVersion": "2.52.3",
+        "source.nodeVersion": "v26.5.0",
+        "source.packageLockSha256": "sha256:f2e8589150b4b2e6fd8ce1ea83fd983bde10fac555c4045784f49b7255112e30"
+      }
+    },
+    {
+      "id": "android-v1",
+      "platform": "android",
+      "driver": "run-android",
+      "qualification": "unresolved",
+      "unresolvedRequirements": [
+        "environment.avdSnapshotSha256",
+        "runtime.webViewVersion"
+      ],
+      "requirements": {
+        "artifact.kind": "release-apk",
+        "artifact.sha256": { "format": "sha256" },
+        "dataset.recipeDigest": "sha256:0894f7a3c2ba59242b79447ca3e87836036135e489a8830aa4c6b52e8c76c7ae",
+        "environment.arch": "x86_64",
+        "environment.avdImage": "android-36.1-x86_64-r4",
+        "environment.avdSnapshotSha256": null,
+        "environment.battery": "simulated-75-percent",
+        "environment.batterySaver": false,
+        "environment.cpuQuota": 2,
+        "environment.device": "pixel-4a-class",
+        "environment.memoryLimitBytes": 4294967296,
+        "runtime.webViewPackage": "com.google.android.webview",
+        "runtime.webViewVersion": null,
+        "source.nodeVersion": "v26.5.0",
+        "source.packageLockSha256": "sha256:f2e8589150b4b2e6fd8ce1ea83fd983bde10fac555c4045784f49b7255112e30"
+      }
+    }
+  ]
+}

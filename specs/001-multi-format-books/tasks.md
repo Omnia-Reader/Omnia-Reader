@@ -344,17 +344,18 @@ after the badge-only checkpoint passes.
 
 - [ ] T095 [P] Add the fixed 48-case canonical before/after recovery matrix, including exact-source replacement and synchronized-download retry outcomes, across `apps/omnia-reader-e2e/src/storage.spec.ts`, `apps/omnia-reader-e2e/src/offline.spec.ts`, and `apps/omnia-reader-e2e/src/sync.spec.ts`
 - [ ] T096 Add the fixed 14-row migration/backup/sync compatibility matrix across `libs/library/data-access/src/lib/browser-library-repository.migration.spec.ts`, `libs/library/data-access/src/lib/library-backup.service.spec.ts`, and `apps/omnia-reader-e2e/src/sync.spec.ts`
-- [ ] T097 [P] Add failing Node tests for lockfile-derived profile identity, clean-install and release-artifact preconditions, profile-set immutability, environment/fixture drift, profile-specific driver selection, primary versus supplemental classification, raw-result validation, and all-four-profile SC-004 aggregation in `apps/omnia-reader-e2e/performance/validate-profile.spec.mjs` and `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
+- [x] T097 [P] Add failing Node tests for lockfile-derived profile identity, clean-install and release-artifact preconditions, profile-set immutability, environment/fixture drift, profile-specific driver selection, primary versus supplemental classification, raw-result validation, and all-four-profile SC-004 aggregation in `apps/omnia-reader-e2e/performance/validate-profile.spec.mjs` and `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
 - [ ] T098 [P] Add failing performance cases for the exact 14-branch acknowledgement matrix, deterministic 1,000-logical-book/2,000-variant dataset, separate filter/EPUB-open/PDF-open/EPUB-to-PDF/PDF-to-EPUB distributions, and zero wrong-result/console-error/overlapping-engine conditions in `apps/omnia-reader-e2e/src/performance.spec.ts` and `apps/omnia-reader-e2e/performance/management-branches.mjs`
 - [ ] T099 After clean `npm ci`, create immutable `multi-format-performance-v1` profile and fixture identities from `package-lock.json`, installed browser/WebView metadata, pinned AVD snapshots, and release toolchains for `desktop-web-v1`, `mobile-web-v1`, `packaged-desktop-v1`, and `android-v1` in `specs/001-multi-format-books/performance/profiles-v1.json`
-- [ ] T100 Implement fail-closed profile preflight and raw-result schema/aggregation with `PASS`, `FAIL`, `UNVERIFIED`, and `SUPPLEMENTAL` dispositions in `apps/omnia-reader-e2e/performance/validate-profile.mjs` and `apps/omnia-reader-e2e/performance/performance-evidence.mjs`
+- [x] T100 Implement fail-closed profile preflight and raw-result schema/aggregation with `PASS`, `FAIL`, `UNVERIFIED`, and `SUPPLEMENTAL` dispositions in `apps/omnia-reader-e2e/performance/validate-profile.mjs` and `apps/omnia-reader-e2e/performance/performance-evidence.mjs`
 - [ ] T101 Implement the closed management matrix, page-side monotonic activation, post-animation-frame acknowledgement, action-specific final-result timing, 20 warm-ups, required acknowledgement samples, 200-sample unpooled distributions, deterministic fixture setup, raw result writing, and separate desktop-web/mobile-web/packaged-desktop/Android drivers in `apps/omnia-reader-e2e/src/performance.spec.ts`, `apps/omnia-reader-e2e/performance/management-branches.mjs`, `apps/omnia-reader-e2e/performance/run-desktop-web.mjs`, `apps/omnia-reader-e2e/performance/run-mobile-web.mjs`, `apps/omnia-reader-e2e/performance/run-packaged-desktop.mjs`, `apps/omnia-reader-e2e/performance/run-android.mjs`, and `apps/omnia-reader-e2e/project.json`
-- [ ] T102 Run `node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`, recording exact harness results in `specs/001-multi-format-books/tasks.md`
+- [x] T102 Run `node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`, recording exact harness results in `specs/001-multi-format-books/tasks.md`
 - [ ] T103 Run `npx nx run omnia-reader-e2e:performance-desktop-web`, which preflights `desktop-web-v1` and uses only lockfile-installed Playwright Chromium, recording the primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result
 - [ ] T104 Run `npx nx run omnia-reader-e2e:performance-mobile-web`, which preflights `mobile-web-v1` and drives the pinned AVD Chrome snapshot, recording the primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result
 - [ ] T105 Run `npx nx run omnia-reader-e2e:performance-packaged-desktop`, which builds the release Tauri package before preflight and drives that exact artifact for `packaged-desktop-v1`, recording its digest and primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result
 - [ ] T106 Run `npx nx run omnia-reader-e2e:performance-android`, which builds and installs a release APK before preflight and drives that exact artifact on the pinned AVD for `android-v1`, recording its digest and primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result; leave SC-004 incomplete unless T103–T106 are all `PASS`
 - [ ] T107 Run `npx nx test library-data-access`, `npx nx test sync-core`, and `npx nx run omnia-reader-e2e:e2e -- --project=chromium src/storage.spec.ts src/offline.spec.ts src/sync.spec.ts` for the 48-case recovery and 14-row compatibility matrices, recording every row and canonical inventory result in `specs/001-multi-format-books/tasks.md`
+
 - [x] T108 Run `npx nx run-many -t test -p reader-domain library-data-access sync-core sync-git sync-mega omnia-reader --skip-nx-cache`, recording exact broad test evidence in `specs/001-multi-format-books/tasks.md`
 - [x] T109 Run `npx nx run-many -t lint -p reader-domain library-data-access sync-core sync-git sync-mega omnia-reader omnia-reader-e2e --skip-nx-cache`, recording exact broad lint evidence in `specs/001-multi-format-books/tasks.md`
 - [x] T110 Run `npx nx build omnia-reader --configuration production`, recording service-worker, lazy-engine, and bundle-budget evidence in `specs/001-multi-format-books/tasks.md`
@@ -368,6 +369,18 @@ after the badge-only checkpoint passes.
 - [ ] T118 Reconcile completed behavior and discoveries across `specs/001-multi-format-books/spec.md`, `specs/001-multi-format-books/plan.md`, `specs/001-multi-format-books/research.md`, `specs/001-multi-format-books/data-model.md`, `specs/001-multi-format-books/contracts/`, `specs/001-multi-format-books/checklists/review.md`, `specs/001-multi-format-books/checklists/accessibility.md`, `specs/001-multi-format-books/checklists/health-performance.md`, `specs/001-multi-format-books/checklists/badge-ux.md`, and `specs/001-multi-format-books/tasks.md`
 - [ ] T119 Update `docs/universal-reader-plan.md` only if verified product scope, architecture decisions, release gates, or implementation status materially changed
 - [ ] T120 Run `npx nx format:check` and `git diff --check`, recording the final formatting and whitespace results in `specs/001-multi-format-books/tasks.md`
+
+### Performance Evidence-Core Verification (2026-08-20)
+
+- `npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache`:
+  PASS, 12 tests, 0 failures.
+- `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS, 0 errors.
+- Current `desktop-web-v1` preflight: `SUPPLEMENTAL`, because the feature
+  worktree was dirty and the required constrained CPU/memory, power, viewport,
+  and Chromium runtime values were not captured. This is not SC-004 evidence.
+- T099 and T101, all four profile runs T103-T106, and aggregate SC-004
+  acceptance remain incomplete. Mobile-web and Android profile identity stays
+  explicitly unresolved pending exact AVD snapshot and Chrome/WebView values.
 
 **Cross-cutting evidence (2026-07-31)**:
 

@@ -2,10 +2,10 @@
 
 ## Versioned Profile Set
 
-Implementation creates immutable
+The fail-closed evidence core creates
 `specs/001-multi-format-books/performance/profiles-v1.json` with schema version
 1 and profile set `multi-format-performance-v1`. The file freezes dataset
-hashes, thresholds, environment identity, and these primary profiles:
+hashes, thresholds, available environment identity, and these primary profiles:
 
 | Profile ID            | Minimum CPU and memory                                                                                   | OS and runtime                                                                                                              | Power and display                |
 | --------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
@@ -22,6 +22,12 @@ and captures the exact installed Chromium/Chrome/WebView package versions and
 revisions. A dirty or lock-drifted installation cannot create primary evidence.
 Once committed, any environment/runtime/fixture change requires
 `profiles-v2.json`; v1 is never edited in place.
+
+The mobile-web and Android entries intentionally remain `unresolved`: their
+exact AVD snapshot digests and Chrome/WebView versions were unavailable when v1
+was created. Preflight therefore classifies them as `UNVERIFIED` even if every
+other field matches. They cannot produce primary evidence until those values
+are captured in a new immutable profile-set version.
 
 An unconstrained run, viewport-only emulation, CDP throttling alone, or hardware
 faster than the primary profile is `SUPPLEMENTAL`. It cannot establish SC-004.
