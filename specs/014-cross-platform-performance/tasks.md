@@ -69,13 +69,13 @@
 
 ### Tests for User Story 2
 
-- [ ] T023 [US2] Add failing debug package, archive/link attack, stale endpoint, duplicate instance, process-scope drift, crash, hang, and cleanup tests in `apps/omnia-reader-e2e/performance/packaged-desktop-environment.spec.mjs`
+- [x] T023 [US2] Add failing debug package, archive/link attack, stale endpoint, duplicate instance, process-scope drift, crash, hang, and cleanup tests in `apps/omnia-reader-e2e/performance/packaged-desktop-environment.spec.mjs`
 - [x] T024 [US2] Add an exact-artifact external WebDriver spike test in `apps/omnia-reader-e2e/performance/packaged-desktop-spike.spec.mjs`
 - [ ] T025 [US2] Add failing primary driver result/cardinality/evaluator/no-promotion tests in `apps/omnia-reader-e2e/performance/run-packaged-desktop.spec.mjs`
 
 ### Implementation for User Story 2
 
-- [ ] T026 [US2] Implement release package extraction/runtime/process attestation in `apps/omnia-reader-e2e/performance/packaged-desktop-environment.mjs`
+- [x] T026 [US2] Implement release package extraction/runtime/process attestation in `apps/omnia-reader-e2e/performance/packaged-desktop-environment.mjs`
 - [ ] T027 [US2] Implement a bounded protocol-neutral semantic automation adapter in `apps/omnia-reader-e2e/performance/management-automation.mjs`
 - [ ] T028 [US2] Implement the fail-closed external-Tauri packaged driver in `apps/omnia-reader-e2e/performance/run-packaged-desktop.mjs`
 - [ ] T029 [US2] Generate bounded native package provenance and checksums in `tools/release/write-native-provenance.mjs`
