@@ -27,6 +27,19 @@ package-format, signer, installed/running-byte, and runtime checks.
 
 ## Mobile-web smoke and primary run
 
+The emulator and runtime identity contracts run without a configured AVD:
+
+```sh
+node --test \
+  apps/omnia-reader-e2e/performance/android-emulator-controller.spec.mjs \
+  apps/omnia-reader-e2e/performance/mobile-web-environment.spec.mjs
+```
+
+Expected: canonical AVD copying, exact serial selection, owned ADB cleanup,
+Chrome package/CDP agreement, viewport, battery, offline guest networking,
+host constraints, and before/after sampling identity checks pass against
+deterministic fixtures.
+
 ```sh
 npx nx run omnia-reader-e2e:performance-mobile-web-smoke --skip-nx-cache
 npx nx run omnia-reader-e2e:performance-mobile-web --skip-nx-cache

@@ -44,14 +44,14 @@
 
 ### Tests for User Story 1
 
-- [ ] T014 [US1] Add failing canonical AVD-tree, serial selection, device-collision, snapshot-drift, and owned-cleanup tests in `apps/omnia-reader-e2e/performance/android-emulator-controller.spec.mjs`
-- [ ] T015 [US1] Add failing Chrome package/CDP mismatch, viewport, battery, network, cgroup, and sampling-recapture tests in `apps/omnia-reader-e2e/performance/mobile-web-environment.spec.mjs`
+- [x] T014 [US1] Add failing canonical AVD-tree, serial selection, device-collision, snapshot-drift, and owned-cleanup tests in `apps/omnia-reader-e2e/performance/android-emulator-controller.spec.mjs`
+- [x] T015 [US1] Add failing Chrome package/CDP mismatch, viewport, battery, network, cgroup, and sampling-recapture tests in `apps/omnia-reader-e2e/performance/mobile-web-environment.spec.mjs`
 - [ ] T016 [US1] Add failing driver crash, disconnect, timeout, signal, invalid-result, and no-promotion tests in `apps/omnia-reader-e2e/performance/run-mobile-web.spec.mjs`
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] Implement exact serial-scoped disposable AVD ownership in `apps/omnia-reader-e2e/performance/android-emulator-controller.mjs`
-- [ ] T018 [US1] Implement live mobile Chrome/environment capture and CDP agreement in `apps/omnia-reader-e2e/performance/mobile-web-environment.mjs`
+- [x] T017 [US1] Implement exact serial-scoped disposable AVD ownership in `apps/omnia-reader-e2e/performance/android-emulator-controller.mjs`
+- [x] T018 [US1] Implement live mobile Chrome/environment capture and CDP agreement in `apps/omnia-reader-e2e/performance/mobile-web-environment.mjs`
 - [ ] T019 [US1] Extract the reusable page workload runner from `apps/omnia-reader-e2e/src/performance-management.spec.ts` into `apps/omnia-reader-e2e/src/performance-management-runner.ts`
 - [ ] T020 [US1] Implement the fail-closed CDP mobile-web driver in `apps/omnia-reader-e2e/performance/run-mobile-web.mjs`
 - [ ] T021 [US1] Wire mobile-web contract/smoke/primary targets in `apps/omnia-reader-e2e/project.json`
