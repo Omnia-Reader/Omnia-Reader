@@ -8,9 +8,11 @@ import {
 } from '@playwright/test';
 import { createEpubFixture, createPdfFixture } from './publication-fixtures';
 import {
+  canonicalInventoryFields,
   recoveryMatrixRows,
   rowsOwnedBy,
 } from './recovery-compatibility-matrix';
+import { canonicalRecoveryInventory } from './canonical-recovery-inventory';
 
 interface OfflineScenario {
   profileName: string;
@@ -129,6 +131,10 @@ async function verifyColdOfflineRestore(
     await importPublication(page, scenario);
     await openScenarioFormat(page, scenario);
     await scenario.navigateAndAwaitDurableProgress(page);
+    const inventoryBeforeRestart = await canonicalRecoveryInventory(page);
+    expect(Object.keys(inventoryBeforeRestart).sort()).toEqual(
+      [...canonicalInventoryFields].sort(),
+    );
 
     await context.close();
     context = null;
@@ -144,6 +150,8 @@ async function verifyColdOfflineRestore(
     await expect(
       offlinePage.getByText(scenario.title, { exact: true }),
     ).toBeVisible();
+    const inventoryAfterRestart = await canonicalRecoveryInventory(offlinePage);
+    expect(inventoryAfterRestart).toEqual(inventoryBeforeRestart);
 
     await openScenarioFormat(offlinePage, scenario);
     await scenario.expectRestoredPosition(offlinePage);

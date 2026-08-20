@@ -77,17 +77,17 @@ export class PublicationImportService {
         imported = await this.repository.importBook(source);
         wasVisible = visibleBookIds.has(imported.id);
         const book = await this.enrichment.validateAndEnrich(imported);
-        this.syncExclusions.include(book.id);
         books.push(book);
         (wasVisible ? duplicates : added).push(book);
         visibleBookIds.add(book.id);
-        await this.appendJournalEntry({
-          entity: 'book',
-          entityId: book.id,
-          operation: 'upsert',
-          payload: createBookSyncManifest(book, new Date().toISOString()),
-        });
         if (!wasVisible) {
+          this.syncExclusions.include(book.id);
+          await this.appendJournalEntry({
+            entity: 'book',
+            entityId: book.id,
+            operation: 'upsert',
+            payload: createBookSyncManifest(book, new Date().toISOString()),
+          });
           const logicalBook = await this.repository.findLogicalBookByVariant(
             book.id,
           );

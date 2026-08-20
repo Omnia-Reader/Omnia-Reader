@@ -166,6 +166,8 @@ describe('PublicationImportService', () => {
     });
 
     expect(repository.removeBook).not.toHaveBeenCalled();
+    expect(syncExclusions.include).not.toHaveBeenCalled();
+    expect(journal.append).not.toHaveBeenCalled();
   });
 
   it('restores an ownerless retained exact edition as an added book', async () => {

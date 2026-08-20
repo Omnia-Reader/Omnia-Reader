@@ -8,6 +8,7 @@ import {
 import { createEpubFixture, createPdfFixture } from './publication-fixtures';
 import {
   assertClosedMatrix,
+  canonicalInventoryFields,
   compatibilityMatrixRows,
   recoveryMatrixRows,
   rowsOwnedBy,
@@ -20,6 +21,11 @@ import {
   createEpubHighlight,
   createPdfHighlight,
 } from './reader-state-helpers';
+import {
+  canonicalRecoveryInventory,
+  clearStoredPublicationBinaries,
+  inventoryWithoutAvailability,
+} from './canonical-recovery-inventory';
 
 // Browser routing is the provider boundary in this suite. A production service
 // worker must not satisfy `/api/sync/**` before the simulated gateway sees it.
@@ -590,13 +596,46 @@ test('cancels an automatic publication upload without losing queued local work',
   }
 });
 
-test('recovers an unavailable local source from the exact synchronized object', async ({
+test('retries an interrupted exact synchronized-source recovery without losing local state', async ({
   context,
   page,
 }) => {
+  const objectDownloads = await verifySynchronizedRecoveryRetry(context, page, {
+    interruptFirstObjectDownload: true,
+    expectedError: 'Simulated interrupted publication download',
+  });
+  expect(objectDownloads).toBe(2);
+});
+
+test('rejects a corrupted synchronized source and restores exact bytes on retry', async ({
+  context,
+  page,
+}) => {
+  const objectDownloads = await verifySynchronizedRecoveryRetry(context, page, {
+    corruptFirstObjectDownload: true,
+    expectedError: 'Replacement publication failed exact-source validation',
+  });
+  expect(objectDownloads).toBe(2);
+});
+
+async function verifySynchronizedRecoveryRetry(
+  context: BrowserContext,
+  page: Page,
+  failure: {
+    interruptFirstObjectDownload?: boolean;
+    corruptFirstObjectDownload?: boolean;
+    expectedError: string;
+  },
+): Promise<number> {
   const publication = await createPdfFixture();
   const gateway = new SimulatedSyncGateway('mega', {
     expectedPublication: publication,
+    ...(failure.interruptFirstObjectDownload
+      ? { interruptFirstObjectDownload: true }
+      : {}),
+    ...(failure.corruptFirstObjectDownload
+      ? { corruptFirstObjectDownload: true }
+      : {}),
   });
   await gateway.install(context);
 
@@ -623,12 +662,41 @@ test('recovers an unavailable local source from the exact synchronized object', 
     name: 'Download synchronized PDF for Omnia PDF Fixture',
   });
   await expect(recovery).toBeVisible();
+  const inventoryBeforeFailure = await canonicalRecoveryInventory(page);
+  await recovery.click();
+  await expect(page.getByRole('alert')).toContainText(failure.expectedError);
+  await expect(recovery).toBeVisible();
+  await expect(recovery).toBeEnabled();
+  await expect(
+    page.getByTestId('library-book').filter({ hasText: 'Omnia PDF Fixture' }),
+  ).toBeVisible();
+  const inventoryAfterFailure = await canonicalRecoveryInventory(page);
+  expect(Object.keys(inventoryBeforeFailure).sort()).toEqual(
+    [...canonicalInventoryFields].sort(),
+  );
+  expect(inventoryAfterFailure).toEqual(inventoryBeforeFailure);
+
   await recovery.click();
   await expect(
     page.getByRole('status').filter({
       hasText: 'PDF for “Omnia PDF Fixture” was restored from synchronization.',
     }),
   ).toBeVisible();
+  const inventoryAfterRecovery = await canonicalRecoveryInventory(page);
+  expect(inventoryWithoutAvailability(inventoryAfterRecovery)).toEqual(
+    inventoryWithoutAvailability(inventoryBeforeFailure),
+  );
+  expect(inventoryBeforeFailure['availability']).toEqual([]);
+  const exactPublications = inventoryBeforeFailure[
+    'exactHashesAndSizes'
+  ] as readonly { id?: unknown }[];
+  expect(exactPublications).toHaveLength(1);
+  expect(inventoryAfterRecovery['availability']).toEqual([
+    expect.objectContaining({
+      bookId: exactPublications[0]?.id,
+      storage: expect.stringMatching(/^(indexeddb|opfs)$/),
+    }),
+  ]);
   await page
     .getByTestId('library-book')
     .filter({ hasText: 'Omnia PDF Fixture' })
@@ -637,7 +705,9 @@ test('recovers an unavailable local source from the exact synchronized object', 
   await expect(
     page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
   ).toBeVisible();
-});
+  return gateway.requestHistory().filter((request) => request === 'GET /object')
+    .length;
+}
 
 test('deletes a synchronized publication locally and remotely', async ({
   context,
@@ -1221,23 +1291,6 @@ async function expectExcludedBook(page: Page, bookId: string): Promise<void> {
       }),
     )
     .toContain(bookId);
-}
-
-async function clearStoredPublicationBinaries(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('omnia-reader');
-      request.addEventListener('success', () => resolve(request.result));
-      request.addEventListener('error', () => reject(request.error));
-    });
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction('binaries', 'readwrite');
-      transaction.objectStore('binaries').clear();
-      transaction.addEventListener('complete', () => resolve());
-      transaction.addEventListener('error', () => reject(transaction.error));
-    });
-    database.close();
-  });
 }
 
 async function storedProgressHref(page: Page): Promise<string | null> {

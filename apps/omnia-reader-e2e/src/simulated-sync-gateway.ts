@@ -32,6 +32,8 @@ interface SimulatedSyncGatewayOptions {
   forbidRepositoryCreation?: boolean;
   rateLimitGitHubRepositories?: boolean;
   interruptFirstObjectUpload?: boolean;
+  interruptFirstObjectDownload?: boolean;
+  corruptFirstObjectDownload?: boolean;
   conflictFirstBookManifestWrite?: boolean;
   holdFirstObjectUpload?: boolean;
   expectedPublication?: Buffer;
@@ -49,6 +51,8 @@ export class SimulatedSyncGateway {
   private readonly objects = new Map<string, SimulatedObject>();
   private revisionSequence = 0;
   private interruptNextObjectUpload: boolean;
+  private interruptNextObjectDownload: boolean;
+  private corruptNextObjectDownload: boolean;
   private conflictNextBookManifestWrite: boolean;
   private holdNextObjectUpload: boolean;
   private authenticated: boolean;
@@ -80,6 +84,10 @@ export class SimulatedSyncGateway {
     this.forbidRepositoryCreation = options.forbidRepositoryCreation ?? false;
     this.interruptNextObjectUpload =
       options.interruptFirstObjectUpload ?? false;
+    this.interruptNextObjectDownload =
+      options.interruptFirstObjectDownload ?? false;
+    this.corruptNextObjectDownload =
+      options.corruptFirstObjectDownload ?? false;
     this.conflictNextBookManifestWrite =
       options.conflictFirstBookManifestWrite ?? false;
     this.holdNextObjectUpload = options.holdFirstObjectUpload ?? false;
@@ -450,6 +458,28 @@ export class SimulatedSyncGateway {
       const object = this.objects.get(remotePath);
       if (!object) {
         await this.fulfillJson(route, { message: 'Not found' }, 404);
+        return;
+      }
+      if (this.interruptNextObjectDownload) {
+        this.interruptNextObjectDownload = false;
+        await this.fulfillJson(
+          route,
+          { message: 'Simulated interrupted publication download' },
+          503,
+        );
+        return;
+      }
+      if (this.corruptNextObjectDownload) {
+        this.corruptNextObjectDownload = false;
+        const corrupted = Buffer.from(object.content);
+        if (corrupted.length > 0) {
+          corrupted[corrupted.length - 1] = (corrupted.at(-1) ?? 0) ^ 0xff;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: object.mediaType,
+          body: corrupted,
+        });
         return;
       }
       await route.fulfill({

@@ -356,6 +356,70 @@ after the badge-only checkpoint passes.
 - [ ] T106 Run `npx nx run omnia-reader-e2e:performance-android`, which builds and installs a release APK before preflight and drives that exact artifact on the pinned AVD for `android-v1`, recording its digest and primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result; leave SC-004 incomplete unless T103–T106 are all `PASS`
 - [ ] T107 Run `npx nx test library-data-access`, `npx nx test sync-core`, and `npx nx run omnia-reader-e2e:e2e -- --project=chromium src/storage.spec.ts src/offline.spec.ts src/sync.spec.ts` for the 48-case recovery and 14-row compatibility matrices, recording every row and canonical inventory result in `specs/001-multi-format-books/tasks.md`
 
+**T095 partial evidence (2026-08-20)**:
+
+- Added a real interrupted synchronized-object download and retry journey at the
+  MEGA HTTP boundary. The first download returns `503`, the exact logical-book
+  card and recovery control remain available, the second download restores and
+  opens the PDF, and exactly two object downloads are observed.
+- Initial red run: the focused Chromium journey failed waiting for the missing
+  interruption alert. After adding the one-shot simulated download failure,
+  `npx nx run omnia-reader-e2e:e2e -- --project=chromium src/sync.spec.ts --grep
+"retries an interrupted exact synchronized-source recovery"` passed 1/1.
+- Added a same-length corrupted synchronized-object response after valid remote
+  metadata. The initial focused Chromium run failed waiting for the absent
+  exact-source validation alert; after adding the one-shot byte mutation, the
+  journey rejected the corrupt bytes, retained the card and recovery action,
+  retried the clean object, opened the PDF, and passed 1/1.
+- Combined focused Chromium verification passed 2/2; uncached
+  `npx nx lint omnia-reader-e2e --skip-nx-cache` and `git diff --check` passed.
+- Both failure journeys now compare all twelve canonical inventory fields before
+  and after the rejected download, including v9 membership/catalog stores,
+  exact IDs and sizes, binary availability, reading state and tombstones,
+  exclusions, covers, and pending operations from the separate sync journal.
+- After the clean retry, the same comparison proves the only canonical change is
+  one availability record whose book ID matches the existing exact SHA-256
+  catalog entry; IndexedDB-owned payloads include their normalized digest, and
+  the other eleven fields remain unchanged before the PDF opens. The snapshot
+  helper is reusable by the remaining storage and offline matrix journeys.
+- `REC-add-offline-restart` now has executable PDF and EPUB evidence. With
+  `PWA_E2E=1`, the production service-worker journey closed each persistent
+  context, cold-started fully offline, proved all twelve canonical inventory
+  fields unchanged, and restored the durable page/chapter; `offline.spec.ts`
+  passed 2/2. The other five operation-specific offline rows remain metadata
+  only.
+- `REC-replace-source-cancelled` now uses the real Chromium file chooser after
+  making an imported PDF unavailable. An empty replacement selection returned
+  the control to its enabled state and preserved all twelve canonical inventory
+  fields; the focused journey passed 1/1.
+- `REC-validation-replacement-identity-mismatch` now submits a PDF with the same
+  format and byte length but a different SHA-256 through the real replacement
+  picker. Exact-source validation rejected it, re-enabled recovery, and left all
+  twelve canonical fields unchanged; the focused Chromium journey passed 1/1.
+- `REC-validation-replacement-format-mismatch` now submits valid EPUB bytes with
+  a PDF filename and MIME type through the same real picker. Content-based
+  detection rejected the disguised format, re-enabled recovery, and preserved
+  the twelve-field inventory; the focused Chromium journey passed 1/1.
+- `REC-validation-unsupported` now submits a `.txt` file through the real import
+  picker. The app reported the exact unsupported name/type, rendered no card,
+  and preserved all twelve canonical fields; the snapshot also treats a truly
+  absent sync journal as empty without creating it. The focused Chromium
+  journey passed 1/1.
+- `REC-validation-corrupt` now imports the established malformed-PDF fixture in
+  isolation. Parser validation reported the named invalid PDF, rollback removed
+  the staged catalog/binary state, no card remained, and all twelve canonical
+  fields matched the empty pre-import snapshot; the focused journey passed 1/1
+  and the then-complete `storage.spec.ts` passed 7/7.
+- `REC-validation-duplicate-here` now re-imports the exact healthy source through
+  the real picker and compares all twelve canonical fields. Its initial red run
+  found one redundant revision-2 `book` upsert in the pending journal. After
+  preventing duplicate-only exclusion and journal writes, the focused app unit
+  suite passed 22 files / 175 tests, the focused Chromium journey passed 1/1,
+  and the complete `storage.spec.ts` passed 8/8 with identical before/after
+  inventory.
+- T095 remains incomplete until the other fixed recovery rows have executable
+  outcomes rather than matrix-cardinality assertions alone.
+
 - [x] T108 Run `npx nx run-many -t test -p reader-domain library-data-access sync-core sync-git sync-mega omnia-reader --skip-nx-cache`, recording exact broad test evidence in `specs/001-multi-format-books/tasks.md`
 - [x] T109 Run `npx nx run-many -t lint -p reader-domain library-data-access sync-core sync-git sync-mega omnia-reader omnia-reader-e2e --skip-nx-cache`, recording exact broad lint evidence in `specs/001-multi-format-books/tasks.md`
 - [x] T110 Run `npx nx build omnia-reader --configuration production`, recording service-worker, lazy-engine, and bundle-budget evidence in `specs/001-multi-format-books/tasks.md`
