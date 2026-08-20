@@ -345,12 +345,12 @@ after the badge-only checkpoint passes.
 - [ ] T095 [P] Add the fixed 48-case canonical before/after recovery matrix, including exact-source replacement and synchronized-download retry outcomes, across `apps/omnia-reader-e2e/src/storage.spec.ts`, `apps/omnia-reader-e2e/src/offline.spec.ts`, and `apps/omnia-reader-e2e/src/sync.spec.ts`
 - [ ] T096 Add the fixed 14-row migration/backup/sync compatibility matrix across `libs/library/data-access/src/lib/browser-library-repository.migration.spec.ts`, `libs/library/data-access/src/lib/library-backup.service.spec.ts`, and `apps/omnia-reader-e2e/src/sync.spec.ts`
 - [x] T097 [P] Add failing Node tests for lockfile-derived profile identity, clean-install and release-artifact preconditions, profile-set immutability, environment/fixture drift, profile-specific driver selection, primary versus supplemental classification, raw-result validation, and all-four-profile SC-004 aggregation in `apps/omnia-reader-e2e/performance/validate-profile.spec.mjs` and `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
-- [ ] T098 [P] Add failing performance cases for the exact 14-branch acknowledgement matrix, deterministic 1,000-logical-book/2,000-variant dataset, separate filter/EPUB-open/PDF-open/EPUB-to-PDF/PDF-to-EPUB distributions, and zero wrong-result/console-error/overlapping-engine conditions in `apps/omnia-reader-e2e/src/performance.spec.ts` and `apps/omnia-reader-e2e/performance/management-branches.mjs`
+- [x] T098 [P] Add failing performance cases for the exact 14-branch acknowledgement matrix, deterministic 1,000-logical-book/2,000-variant dataset, separate filter/EPUB-open/PDF-open/EPUB-to-PDF/PDF-to-EPUB distributions, and zero wrong-result/console-error/overlapping-engine conditions in `apps/omnia-reader-e2e/src/performance-management.spec.ts` and `apps/omnia-reader-e2e/performance/management-branches.mjs`
 - [ ] T099 After clean `npm ci`, create immutable `multi-format-performance-v1` profile and fixture identities from `package-lock.json`, installed browser/WebView metadata, pinned AVD snapshots, and release toolchains for `desktop-web-v1`, `mobile-web-v1`, `packaged-desktop-v1`, and `android-v1` in `specs/001-multi-format-books/performance/profiles-v1.json`
 - [x] T100 Implement fail-closed profile preflight and raw-result schema/aggregation with `PASS`, `FAIL`, `UNVERIFIED`, and `SUPPLEMENTAL` dispositions in `apps/omnia-reader-e2e/performance/validate-profile.mjs` and `apps/omnia-reader-e2e/performance/performance-evidence.mjs`
 - [ ] T101 Implement the closed management matrix, page-side monotonic activation, post-animation-frame acknowledgement, action-specific final-result timing, 20 warm-ups, required acknowledgement samples, 200-sample unpooled distributions, deterministic fixture setup, raw result writing, and separate desktop-web/mobile-web/packaged-desktop/Android drivers in `apps/omnia-reader-e2e/src/performance.spec.ts`, `apps/omnia-reader-e2e/performance/management-branches.mjs`, `apps/omnia-reader-e2e/performance/run-desktop-web.mjs`, `apps/omnia-reader-e2e/performance/run-mobile-web.mjs`, `apps/omnia-reader-e2e/performance/run-packaged-desktop.mjs`, `apps/omnia-reader-e2e/performance/run-android.mjs`, and `apps/omnia-reader-e2e/project.json`
 - [x] T102 Run `node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`, recording exact harness results in `specs/001-multi-format-books/tasks.md`
-- [ ] T103 Run `npx nx run omnia-reader-e2e:performance-desktop-web`, which preflights `desktop-web-v1` and uses only lockfile-installed Playwright Chromium, recording the primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result
+- [x] T103 Run `npx nx run omnia-reader-e2e:performance-desktop-web`, which preflights `desktop-web-v1` and uses only lockfile-installed Playwright Chromium, recording the primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result
 - [ ] T104 Run `npx nx run omnia-reader-e2e:performance-mobile-web`, which preflights `mobile-web-v1` and drives the pinned AVD Chrome snapshot, recording the primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result
 - [ ] T105 Run `npx nx run omnia-reader-e2e:performance-packaged-desktop`, which builds the release Tauri package before preflight and drives that exact artifact for `packaged-desktop-v1`, recording its digest and primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result
 - [ ] T106 Run `npx nx run omnia-reader-e2e:performance-android`, which builds and installs a release APK before preflight and drives that exact artifact on the pinned AVD for `android-v1`, recording its digest and primary raw result under `specs/001-multi-format-books/performance/results/` or an explicit `UNVERIFIED` result; leave SC-004 incomplete unless T103–T106 are all `PASS`
@@ -373,14 +373,30 @@ after the badge-only checkpoint passes.
 ### Performance Evidence-Core Verification (2026-08-20)
 
 - `npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache`:
-  PASS, 12 tests, 0 failures.
-- `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS, 0 errors.
-- Current `desktop-web-v1` preflight: `SUPPLEMENTAL`, because the feature
-  worktree was dirty and the required constrained CPU/memory, power, viewport,
-  and Chromium runtime values were not captured. This is not SC-004 evidence.
-- T099 and T101, all four profile runs T103-T106, and aggregate SC-004
-  acceptance remain incomplete. Mobile-web and Android profile identity stays
-  explicitly unresolved pending exact AVD snapshot and Chrome/WebView values.
+  PASS, 41 tests, 0 failures. This includes deterministic workload and dataset,
+  page timing, primary cardinality, sampling identity, evaluator, and owned
+  launcher lifecycle contracts.
+- `npx nx lint omnia-reader --skip-nx-cache` and
+  `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS, 0 errors.
+- `npx nx run omnia-reader-e2e:performance-management-branch-smoke
+--skip-nx-cache --outputStyle=stream`: PASS, one active Chromium journey and
+  three expected mode skips, including the dependent production build. The
+  active journey drove one real sample for all fourteen branches and all five
+  distributions; it is supplemental orchestration evidence only.
+- T098 is implemented in the dedicated
+  `apps/omnia-reader-e2e/src/performance-management.spec.ts` journey and the
+  dependency-free management contracts rather than the unrelated legacy
+  large-publication spec.
+- `npx nx run omnia-reader-e2e:performance-desktop-web --skip-nx-cache`: clean
+  worktree preflight returned `UNVERIFIED` with exit 1 before Playwright. The
+  required CPU/memory constraint, power, viewport, device-scale, and Chromium
+  name/version values were absent; no primary result was written. This records
+  the explicit non-acceptance outcome required by T103 and is not SC-004
+  evidence.
+- T099 remains incomplete because mobile-web and Android profile identity is
+  unresolved. T101 remains incomplete because only the desktop-web driver is
+  delivered; mobile-web, packaged-desktop, and Android drivers are absent.
+  T104-T106 and aggregate SC-004 acceptance remain incomplete.
 
 **Cross-cutting evidence (2026-07-31)**:
 

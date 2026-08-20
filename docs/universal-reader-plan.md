@@ -400,7 +400,8 @@ npm audit --omit=dev                                     PASS (0 vulnerabilities
 Runtime dependency contract                              PASS (2/2; PDF.js 6.2.108, fast-uri 3.1.5 + 4.1.2)
 Chromium/WebKit PDF security compatibility               PASS (3/3 per browser)
 npx nx run omnia-reader-e2e:performance                  PASS (3/3)
-npx nx run omnia-reader-e2e:performance-evidence-test    PASS (12/12; fail-closed contract only)
+npx nx run omnia-reader-e2e:performance-evidence-test    PASS (41/41; management/evidence contracts)
+Desktop management branch smoke                          PASS (1 active Chromium journey; 3 expected mode skips)
 npm run release:test                                    PASS (8/8)
 npm run release:verify                                  PASS (122 files; 33 npm + 483 Rust + 4 bridge inputs + 4 CI actions)
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
@@ -570,9 +571,15 @@ The following release requirements remain open:
 - The fail-closed multi-format performance evidence core now validates
   canonical profile identity, bounded environment input, raw unpooled
   statistics, dispositions, atomic result paths, and all-four-profile
-  aggregation. The current desktop preflight is `SUPPLEMENTAL`; mobile-web and
-  Android identities remain unresolved, and no desktop-web, mobile-web,
-  packaged-desktop, Android, or aggregate SC-004 measurement is claimed.
+  aggregation. The desktop-web driver now builds the deterministic
+  1,000-logical-book/2,000-variant dataset, drives all fourteen management
+  branches and five separate distributions through product controls, captures
+  page-owned paint-eligible timings, and fails closed on environment or
+  sampling-identity drift. The clean current-host preflight is `UNVERIFIED`
+  because the frozen cgroup, power, display, and Chromium values were not
+  supplied, so no desktop acceptance result is claimed. Mobile-web and Android
+  identities remain unresolved; mobile-web, packaged-desktop, Android, and
+  aggregate SC-004 measurements remain open release gates.
 
 ## 2. Initial Repository Assessment
 

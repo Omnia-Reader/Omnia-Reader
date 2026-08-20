@@ -217,10 +217,10 @@ profile measurements.
 - [x] T027 Apply `$verify-omnia-reader` and `$review-omnia-reader`, resolve
       actionable performance, hostile-input, accessibility, lifecycle, path,
       and missing-test findings, and record exact evidence here
-- [ ] T028 Reconcile T098-T103 status in
+- [x] T028 Reconcile T098-T103 status in
       `specs/001-multi-format-books/tasks.md` without marking mobile, packaged,
       Android, or aggregate SC-004 gates complete
-- [ ] T029 Update `apps/omnia-reader-e2e/performance/README.md` and
+- [x] T029 Update `apps/omnia-reader-e2e/performance/README.md` and
       `docs/universal-reader-plan.md` only with verified commands, status, and
       explicit residual platform gates
 
@@ -231,7 +231,7 @@ profile measurements.
 - `npx nx lint omnia-reader --skip-nx-cache` and
   `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS.
 - `npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache`:
-  PASS, 35 tests.
+  PASS, 41 tests.
 - Focused library reconciliation verification: PASS, 35 tests. The full
   `omnia-reader` suite passed 173/174 but its unrelated reader annotation test
   exceeded the existing five-second timeout; that reader spec passed 2/2 in
@@ -239,6 +239,26 @@ profile measurements.
 - Repository-specific self-review found no remaining actionable correctness,
   accessibility, hostile-input, lifecycle, path-confinement, or missing-test
   defect in this slice.
+- Focused library verification after availability-priority refinement: PASS,
+  36 tests.
+- `npx nx run omnia-reader-e2e:performance-management-branch-smoke
+--skip-nx-cache --outputStyle=stream`: PASS, one active Chromium journey and
+  three expected mode skips, including the production build. It drove one real
+  sample for all fourteen branches and five distributions, including stale
+  association and reconciliation failures.
+- Full-cardinality orchestration is implemented for fourteen times twenty
+  acknowledgement samples and five independent distributions with twenty
+  discarded warm-ups plus 200 samples each. T015 remains open until an exact
+  qualified host proves that path can write structurally complete raw primary
+  evidence.
+- `npx nx run omnia-reader-e2e:performance-desktop-web --skip-nx-cache` on the
+  clean current worktree: expected `UNVERIFIED` exit 1 before Playwright because
+  required constrained-host, power, viewport/device-scale, and Chromium values
+  were absent. No primary result was written.
+- Parent tasks T098 and T103 are reconciled complete for implementation and the
+  explicit `UNVERIFIED` desktop run respectively. T099 and the all-platform
+  T101 remain incomplete; mobile-web, packaged-desktop, Android, and aggregate
+  SC-004 gates remain open.
 
 ## Dependencies and Execution Order
 
