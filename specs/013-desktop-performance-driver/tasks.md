@@ -111,7 +111,7 @@ starts for non-READY preflight.
 
 - [x] T014 [US2] Implement page-owned paint-eligible timing primitives in
       `apps/omnia-reader-e2e/performance/page-measurement.mjs`
-- [ ] T015 [US2] Implement reduced smoke and full cardinality orchestration in
+- [x] T015 [US2] Implement reduced smoke and full cardinality orchestration in
       `apps/omnia-reader-e2e/src/performance-management.spec.ts`, including the
       real labelled reconciliation controls
 - [x] T016 [US2] Implement strict preflight-first desktop launcher and evaluator
@@ -140,9 +140,9 @@ distinct and cannot be confused.
 - `npx nx run omnia-reader-e2e:performance-management-smoke --skip-nx-cache`:
   PASS, 1 Chromium test, including the dependent production build.
 - `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS.
-- Full-cardinality orchestration and primary desktop evidence remain pending
-  under T015; the launcher therefore cannot produce primary evidence on any
-  host yet.
+- Full-cardinality orchestration is implemented under T015 and its exact
+  cardinality is covered by the primary-run contract. Primary desktop evidence
+  remains a separate exact-host acceptance gate.
 - `npx nx run omnia-reader-e2e:performance-desktop-web --skip-nx-cache`:
   honest `SUPPLEMENTAL` refusal with exit 1 before Nx, the application build,
   or Playwright started. The current host is dirty and differs from the frozen
@@ -248,9 +248,9 @@ profile measurements.
   association and reconciliation failures.
 - Full-cardinality orchestration is implemented for fourteen times twenty
   acknowledgement samples and five independent distributions with twenty
-  discarded warm-ups plus 200 samples each. T015 remains open until an exact
-  qualified host proves that path can write structurally complete raw primary
-  evidence.
+  discarded warm-ups plus 200 samples each. T015 is complete for
+  implementation; exact qualified-host primary evidence remains explicitly
+  unavailable on the current host.
 - `npx nx run omnia-reader-e2e:performance-desktop-web --skip-nx-cache` on the
   clean current worktree: expected `UNVERIFIED` exit 1 before Playwright because
   required constrained-host, power, viewport/device-scale, and Chromium values
