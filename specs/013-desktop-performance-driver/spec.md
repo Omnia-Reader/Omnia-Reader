@@ -183,6 +183,10 @@ partial result, and emits a bounded reason.
   artifacts that it owns on success, failure, signal, or timeout.
 - **FR-016**: The legacy large-publication lifecycle/backup gate MUST remain
   independently runnable and MUST not count as this management acceptance run.
+- **FR-017**: Open synchronized membership conflicts MUST be exposed through a
+  labelled library control that opens the existing reconciliation dialog,
+  preserves the conflict after a failed decision, and reports the outcome in a
+  visible status or alert region.
 
 ### Key Entities and Durable State _(include when data changes)_
 
@@ -286,6 +290,9 @@ partial result, and emits a bounded reason.
 - The committed `multi-format-performance-v1` evidence core, thresholds,
   profile identity, status vocabulary, and raw-result schema remain unchanged.
 - Existing product controls and deterministic EPUB/PDF fixture builders can
-  express the required management journeys without product behavior changes.
+  express most required management journeys. The reconciliation dialog and
+  service existed without a reachable library entry point, so this feature
+  exposes that existing decision path without changing persistence or merge
+  semantics.
 - The acceptance workload may be expensive and opt-in; reduced fixtures can
   prove orchestration correctness but cannot establish primary performance.

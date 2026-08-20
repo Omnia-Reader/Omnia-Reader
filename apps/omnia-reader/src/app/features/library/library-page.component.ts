@@ -17,6 +17,8 @@ import {
   BookRecord,
   LogicalBookFormatPreference,
   LogicalBookRecord,
+  MembershipReconciliation,
+  MembershipReconciliationDecision,
   PublicationFormat,
   VariantAvailability,
 } from '@omnia-reader/reader/domain';
@@ -47,6 +49,7 @@ import { RemovePublicationDialogComponent } from './remove-publication-dialog.co
 import { AssociatePublicationDialogComponent } from './associate-publication-dialog.component';
 import { DetachPublicationDialogComponent } from './detach-publication-dialog.component';
 import { PublicationRecoveryService } from './publication-recovery.service';
+import { ReconcileMembershipDialogComponent } from './reconcile-membership-dialog.component';
 
 type FormatAction =
   | 'export'
@@ -124,7 +127,9 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   removingBookId: string | null = null;
   addingLogicalBookId: string | null = null;
   recoveringVariantId: string | null = null;
+  reconcilingConflictId: string | null = null;
   refreshing = false;
+  openReconciliations: readonly MembershipReconciliation[] = [];
   readonly synchronizedRecoveryVariantIds = new Set<string>();
   readonly recoveryProgressPercentByVariant = new Map<string, number>();
   errorMessage: string | null = null;
@@ -621,15 +626,57 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     }
   }
 
+  async reviewMembershipReconciliation(
+    conflict: MembershipReconciliation,
+  ): Promise<void> {
+    if (this.reconcilingConflictId) return;
+    const decision = await firstValueFrom(
+      this.dialog
+        .open<
+          ReconcileMembershipDialogComponent,
+          MembershipReconciliation,
+          MembershipReconciliationDecision | null
+        >(ReconcileMembershipDialogComponent, {
+          data: conflict,
+          autoFocus: 'first-tabbable',
+          restoreFocus: true,
+          width: 'min(42rem, calc(100vw - 2rem))',
+        })
+        .afterClosed(),
+    );
+    if (!decision) return;
+    this.reconcilingConflictId = conflict.conflictId;
+    this.errorMessage = null;
+    this.statusMessage = null;
+    this.changeDetector.markForCheck();
+    try {
+      const result = await this.associations.reconcile(
+        conflict.conflictId,
+        decision,
+      );
+      await this.reload();
+      this.statusMessage = `Format grouping conflict resolved${
+        result.syncPending ? '; synchronization remains pending.' : '.'
+      }`;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown error';
+      this.errorMessage = `Unable to resolve format grouping: ${detail}`;
+    } finally {
+      this.reconcilingConflictId = null;
+      this.changeDetector.markForCheck();
+    }
+  }
+
   private async reload(): Promise<void> {
     const initialLoad = this.logicalBooks.length === 0;
     this.loading = initialLoad;
     this.refreshing = !initialLoad;
     this.changeDetector.markForCheck();
     try {
-      const [books, logicalBooks] = await Promise.all([
+      const [books, logicalBooks, openReconciliations] = await Promise.all([
         this.repository.listBooks(),
         this.repository.listLogicalBooks(),
+        this.repository.listOpenMembershipReconciliations(),
       ]);
       const variantIds = logicalBooks.flatMap((logicalBook) =>
         Object.values(logicalBook.variants).filter((id): id is string => !!id),
@@ -658,6 +705,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
       }
       this.books = books;
       this.logicalBooks = logicalBooks;
+      this.openReconciliations = openReconciliations;
       this.availability = availability;
       this.preferences = preferences.filter(
         (preference): preference is LogicalBookFormatPreference => !!preference,

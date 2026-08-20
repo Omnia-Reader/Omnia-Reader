@@ -40,7 +40,8 @@ paint-eligible semantic states, zero wrong/missing/console/overlap counters,
 
 **Scope**: `apps/omnia-reader-e2e` performance contract, fixture recipe,
 Playwright management measurement, driver scripts, Nx targets, and Spec Kit
-evidence; no application or library behavior change is planned
+evidence, plus the narrow library UI repair required to expose the existing
+membership-reconciliation decision path
 
 ## Constitution Check
 
@@ -57,9 +58,10 @@ _GATE: Passed before research and re-checked after design._
 - [x] Product exclusions remain unchanged, or the approved scope change is
       documented.
 
-No exception is required. The design adds test/measurement infrastructure only,
-uses public UI behavior for timed actions, and keeps unavailable platform gates
-explicit.
+No exception is required. The design adds test/measurement infrastructure and
+one accessible application entry point for an existing reconciliation service;
+it uses public UI behavior for timed actions and keeps unavailable platform
+gates explicit.
 
 ## Impact and Ownership
 
@@ -67,16 +69,17 @@ explicit.
 
 - **Entry points/symbols**: existing `performance.spec.ts` large-publication
   tests and helpers; `LibraryPageComponent.addFormat`, `readFormat`,
-  `requestVariantDetach`, and the reader's `switchReadingFormat` are observed
-  through roles/test IDs, not called directly. The committed
+  `requestVariantDetach`, `reviewMembershipReconciliation`, and the reader's
+  `switchReadingFormat` are observed through roles/test IDs, not called
+  directly. The committed
   `evaluatePreflight`, `evaluateRawResult`, and `atomicWriteEvidence` contracts
   own qualification and output validation.
-- **Owning project(s)**: `omnia-reader-e2e` only.
-- **Affected consumers**: new Nx performance targets and release documentation;
-  no exported application/library API changes.
-- **Unchanged boundaries**: application UI, reader engines, persistence schema,
-  backup schema, synchronization providers/gateway, Tauri hosts, CSP, and
-  dependencies.
+- **Owning project(s)**: `omnia-reader-e2e` and the `omnia-reader` library
+  feature UI.
+- **Affected consumers**: new Nx performance targets, the library page, and
+  release documentation; no exported application/library API changes.
+- **Unchanged boundaries**: reader engines, persistence schema, backup schema,
+  synchronization providers/gateway, Tauri hosts, CSP, and dependencies.
 
 ### Repository Paths
 
@@ -84,6 +87,7 @@ explicit.
 apps/omnia-reader-e2e/performance/                # workload, matrix, driver, Node tests
 apps/omnia-reader-e2e/src/performance-management.spec.ts # browser orchestration
 apps/omnia-reader-e2e/project.json                # focused smoke/desktop targets
+apps/omnia-reader/src/app/features/library/       # reconciliation entry point
 specs/001-multi-format-books/                     # parent-task reconciliation
 specs/013-desktop-performance-driver/             # intent, design, tasks, evidence
 docs/universal-reader-plan.md                     # verified release-gate status only
@@ -111,6 +115,9 @@ docs/universal-reader-plan.md                     # verified release-gate status
 - Timed interactions use labelled product controls, file input change, dialog
   confirmation, visible status/alert regions, library inventory, and rendered
   EPUB/PDF content.
+- The library lists open membership reconciliations and routes each labelled
+  review control through the existing dialog and association service. A stale
+  or failed decision remains visible for retry.
 - The harness does not call Angular component instances, alter focus, replace
   accessible names, or suppress announcements.
 - Reduced smoke fixtures prove orchestration correctness; they are always

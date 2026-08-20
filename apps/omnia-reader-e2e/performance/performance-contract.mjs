@@ -270,18 +270,7 @@ export function stableReasons(reasons) {
 }
 
 export async function atomicWriteEvidence(root, relativeName, value) {
-  assertString(relativeName, 1, 240, 'output');
-  if (
-    basename(relativeName) !== relativeName ||
-    !relativeName.endsWith('.json') ||
-    relativeName.includes('\\') ||
-    relativeName.includes('\0')
-  ) {
-    throw new EvidenceValidationError(
-      'output must stay inside the performance results directory',
-      'output',
-    );
-  }
+  assertEvidenceOutputName(relativeName);
   await mkdir(root, { recursive: true });
   const canonicalRoot = await realpath(root);
   const destination = resolve(canonicalRoot, relativeName);
@@ -324,6 +313,22 @@ export async function atomicWriteEvidence(root, relativeName, value) {
     throw error;
   }
   return destination;
+}
+
+export function assertEvidenceOutputName(relativeName) {
+  assertString(relativeName, 1, 240, 'output');
+  if (
+    basename(relativeName) !== relativeName ||
+    !relativeName.endsWith('.json') ||
+    relativeName.includes('\\') ||
+    relativeName.includes('\0')
+  ) {
+    throw new EvidenceValidationError(
+      'output must stay inside the performance results directory',
+      'output',
+    );
+  }
+  return relativeName;
 }
 
 export function assertRecord(value, path) {

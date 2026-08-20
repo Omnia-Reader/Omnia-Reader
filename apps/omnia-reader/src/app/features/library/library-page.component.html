@@ -45,6 +45,43 @@
     </p>
   }
 
+  @if (openReconciliations.length > 0) {
+    <section
+      class="mx-auto mb-7 max-w-3xl rounded-2xl border border-amber-300 bg-amber-50 p-5"
+      aria-labelledby="membership-reconciliation-heading"
+    >
+      <h2
+        id="membership-reconciliation-heading"
+        class="mt-0 text-xl font-semibold text-stone-950"
+      >
+        Format groupings need review
+      </h2>
+      <p class="text-stone-700">
+        Synchronized changes disagree about which formats belong together.
+        Review each grouping before synchronization can finish.
+      </p>
+      <div class="flex flex-wrap gap-3">
+        @for (
+          conflict of openReconciliations;
+          track conflict.conflictId;
+          let conflictIndex = $index
+        ) {
+          <button
+            mat-stroked-button
+            type="button"
+            [disabled]="reconcilingConflictId !== null"
+            [attr.aria-label]="
+              'Review format grouping conflict ' + (conflictIndex + 1)
+            "
+            (click)="reviewMembershipReconciliation(conflict)"
+          >
+            Review grouping {{ conflictIndex + 1 }}
+          </button>
+        }
+      </div>
+    </section>
+  }
+
   @if (refreshing) {
     <p class="sr-only" role="status" aria-live="polite">
       Updating library… Existing reading progress remains available.

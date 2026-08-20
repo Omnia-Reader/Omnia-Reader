@@ -112,18 +112,19 @@ starts for non-READY preflight.
 - [x] T014 [US2] Implement page-owned paint-eligible timing primitives in
       `apps/omnia-reader-e2e/performance/page-measurement.mjs`
 - [ ] T015 [US2] Implement reduced smoke and full cardinality orchestration in
-      `apps/omnia-reader-e2e/src/performance-management.spec.ts`
-- [ ] T016 [US2] Implement strict preflight-first desktop launcher and evaluator
+      `apps/omnia-reader-e2e/src/performance-management.spec.ts`, including the
+      real labelled reconciliation controls
+- [x] T016 [US2] Implement strict preflight-first desktop launcher and evaluator
       integration in
       `apps/omnia-reader-e2e/performance/run-desktop-web.mjs`
-- [ ] T017 [US2] Add serial `performance-management-smoke` and
+- [x] T017 [US2] Add serial `performance-management-smoke` and
       `performance-desktop-web` targets in `apps/omnia-reader-e2e/project.json`
 
 ### Verification for User Story 2
 
 - [x] T018 [US2] Run Node page/driver contracts and
       `npx nx run omnia-reader-e2e:performance-management-smoke --skip-nx-cache`
-- [ ] T019 [US2] Run the primary desktop target; record `PASS`/`FAIL` only on an
+- [x] T019 [US2] Run the primary desktop target; record `PASS`/`FAIL` only on an
       exact qualified host or the honest preflight refusal in
       `specs/013-desktop-performance-driver/tasks.md`
 
@@ -139,8 +140,25 @@ distinct and cannot be confused.
 - `npx nx run omnia-reader-e2e:performance-management-smoke --skip-nx-cache`:
   PASS, 1 Chromium test, including the dependent production build.
 - `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS.
-- Full-cardinality orchestration, the production launcher/target, and primary
-  desktop evidence remain pending under T015-T017 and T019.
+- Full-cardinality orchestration and primary desktop evidence remain pending
+  under T015; the launcher therefore cannot produce primary evidence on any
+  host yet.
+- `npx nx run omnia-reader-e2e:performance-desktop-web --skip-nx-cache`:
+  honest `SUPPLEMENTAL` refusal with exit 1 before Nx, the application build,
+  or Playwright started. The current host is dirty and differs from the frozen
+  profile in nine environment/browser fields; no result file was written.
+- Deterministic dataset contracts: PASS, 2 tests, including exact schema-v9
+  counts for 1,000 logical books, 2,000 unique byte-backed EPUB/PDF variants,
+  and 500 logical-change journal entries.
+- `npx nx run omnia-reader-e2e:performance-management-dataset-smoke
+--skip-nx-cache`: PASS, 1 Chromium test and 1 expected mode skip, including
+  the dependent production build. The real repository validated the exact
+  inventory and opened EPUB then PDF without overlapping engines. This remains
+  setup/integration evidence, not primary sampled evidence.
+- The existing membership-reconciliation dialog and service had no reachable
+  library control. The library now lists open conflicts, opens the existing
+  decision dialog, removes resolved conflicts after reload, and preserves
+  failed conflicts with an alert. Focused component verification passes 35/35.
 
 ---
 
@@ -155,24 +173,33 @@ no final evidence promotion.
 
 ### Tests for User Story 3
 
-- [ ] T020 [US3] Add initially failing child crash, timeout, SIGINT/SIGTERM,
+- [x] T020 [US3] Add initially failing child crash, timeout, SIGINT/SIGTERM,
       invalid JSON, evaluator rejection, traversal, and temporary cleanup tests
       in `apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs`
 
 ### Implementation for User Story 3
 
-- [ ] T021 [US3] Implement abort-aware child lifecycle and bounded diagnostics
+- [x] T021 [US3] Implement abort-aware child lifecycle and bounded diagnostics
       in `apps/omnia-reader-e2e/performance/run-desktop-web.mjs`
-- [ ] T022 [US3] Integrate confined atomic final promotion through
+- [x] T022 [US3] Integrate confined atomic final promotion through
       `apps/omnia-reader-e2e/performance/performance-contract.mjs`
 
 ### Verification for User Story 3
 
-- [ ] T023 [US3] Run
+- [x] T023 [US3] Run
       `node --test apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs`
       and verify no owned test process/temp artifact remains
 
 **Checkpoint**: Infrastructure failure cannot publish acceptance evidence.
+
+**Evidence (2026-08-20)**:
+
+- Initial red state: `run-desktop-web.mjs` did not export the required owned
+  process lifecycle API.
+- `node --test apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs`:
+  PASS, 8 tests, 0 failures. Covered child PASS, crash, bounded diagnostics,
+  timeout, SIGINT/SIGTERM-style abort, invalid JSON, forged evaluator output,
+  traversal refusal, atomic promotion, and owned temporary cleanup.
 
 ---
 
@@ -184,10 +211,10 @@ profile measurements.
 - [x] T024 Run the unchanged legacy gate with
       `npx nx run omnia-reader-e2e:performance --skip-nx-cache` and record its
       independent 3/3 result or exact unavailable browser boundary here
-- [ ] T025 Run Prettier for every changed MJS/TS/JSON/Markdown path and
+- [x] T025 Run Prettier for every changed MJS/TS/JSON/Markdown path and
       `npx nx lint omnia-reader-e2e --skip-nx-cache`
-- [ ] T026 Run `git diff --check`
-- [ ] T027 Apply `$verify-omnia-reader` and `$review-omnia-reader`, resolve
+- [x] T026 Run `git diff --check`
+- [x] T027 Apply `$verify-omnia-reader` and `$review-omnia-reader`, resolve
       actionable performance, hostile-input, accessibility, lifecycle, path,
       and missing-test findings, and record exact evidence here
 - [ ] T028 Reconcile T098-T103 status in
@@ -196,6 +223,22 @@ profile measurements.
 - [ ] T029 Update `apps/omnia-reader-e2e/performance/README.md` and
       `docs/universal-reader-plan.md` only with verified commands, status, and
       explicit residual platform gates
+
+**Cross-cutting evidence (2026-08-20)**:
+
+- Prettier completed for every changed source, test, project, and feature
+  artifact; `git diff --check` passed.
+- `npx nx lint omnia-reader --skip-nx-cache` and
+  `npx nx lint omnia-reader-e2e --skip-nx-cache`: PASS.
+- `npx nx run omnia-reader-e2e:performance-evidence-test --skip-nx-cache`:
+  PASS, 35 tests.
+- Focused library reconciliation verification: PASS, 35 tests. The full
+  `omnia-reader` suite passed 173/174 but its unrelated reader annotation test
+  exceeded the existing five-second timeout; that reader spec passed 2/2 in
+  isolation.
+- Repository-specific self-review found no remaining actionable correctness,
+  accessibility, hostile-input, lifecycle, path-confinement, or missing-test
+  defect in this slice.
 
 ## Dependencies and Execution Order
 

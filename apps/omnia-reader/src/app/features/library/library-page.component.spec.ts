@@ -6,6 +6,7 @@ import {
   BookRecord,
   LibraryRepository,
   logicalBookFromVariant,
+  MembershipReconciliation,
   PlatformPort,
   ReadingProgress,
 } from '@omnia-reader/reader/domain';
@@ -126,6 +127,10 @@ describe('LibraryPageComponent', () => {
     associations.detach.mockResolvedValue({ mutation: {}, syncPending: false });
     associations.compatibleCandidates.mockResolvedValue([]);
     associations.associate.mockResolvedValue({
+      mutation: {},
+      syncPending: false,
+    });
+    associations.reconcile.mockResolvedValue({
       mutation: {},
       syncPending: false,
     });
@@ -829,6 +834,85 @@ describe('LibraryPageComponent', () => {
     expect(associations.deleteVariant).not.toHaveBeenCalled();
   });
 
+  it('surfaces and resolves synchronized format grouping conflicts', async () => {
+    const conflict = membershipConflict();
+    repository.listOpenMembershipReconciliations
+      .mockResolvedValueOnce([conflict])
+      .mockResolvedValueOnce([]);
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain(
+        'Format groupings need review',
+      );
+    });
+
+    const review = fixture.nativeElement.querySelector(
+      'button[aria-label="Review format grouping conflict 1"]',
+    ) as HTMLButtonElement;
+    expect(review).toBeTruthy();
+    review.click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="dialog"]')).toBeTruthy(),
+    );
+    const keepCurrent = Array.from(document.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent?.trim() === 'Keep current grouping',
+    ) as HTMLButtonElement;
+    keepCurrent.click();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(associations.reconcile).toHaveBeenCalledWith(conflict.conflictId, {
+        kind: 'keep-accepted',
+      });
+      expect(fixture.nativeElement.textContent).toContain(
+        'Format grouping conflict resolved',
+      );
+    });
+  });
+
+  it('keeps a reconciliation visible after a failed decision', async () => {
+    const conflict = membershipConflict();
+    repository.listOpenMembershipReconciliations.mockResolvedValue([conflict]);
+    associations.reconcile.mockRejectedValueOnce(new Error('stale head'));
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector(
+          'button[aria-label="Review format grouping conflict 1"]',
+        ),
+      ).toBeTruthy();
+    });
+
+    (
+      fixture.nativeElement.querySelector(
+        'button[aria-label="Review format grouping conflict 1"]',
+      ) as HTMLButtonElement
+    ).click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="dialog"]')).toBeTruthy(),
+    );
+    const keepCurrent = Array.from(document.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent?.trim() === 'Keep current grouping',
+    ) as HTMLButtonElement;
+    keepCurrent.click();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain(
+        'Unable to resolve format grouping: stale head',
+      );
+      expect(
+        fixture.nativeElement.querySelector(
+          'button[aria-label="Review format grouping conflict 1"]',
+        ),
+      ).toBeTruthy();
+    });
+  });
+
   it.each([
     [{ status: 'checking' }, 'Checking'],
     [{ status: 'healthy' }, '(open)'],
@@ -1134,3 +1218,31 @@ describe('LibraryPageComponent', () => {
     ).toContain('Could not import “damaged.pdf”: Invalid PDF structure');
   });
 });
+
+function membershipConflict(): MembershipReconciliation {
+  return {
+    schemaVersion: 1,
+    conflictId: 'conflict:test',
+    status: 'open',
+    conflictingChangeIds: ['change:a', 'change:b'],
+    affectedVariantIds: [
+      `sha256:${'b'.repeat(64)}`,
+      `sha256:${'c'.repeat(64)}`,
+    ],
+    acceptedMembership: [
+      {
+        logicalBookId: `logical:sha256:${'b'.repeat(64)}`,
+        format: 'epub',
+        variantId: `sha256:${'b'.repeat(64)}`,
+      },
+    ],
+    rejectedMembership: [
+      {
+        logicalBookId: `logical:sha256:${'c'.repeat(64)}`,
+        format: 'pdf',
+        variantId: `sha256:${'c'.repeat(64)}`,
+      },
+    ],
+    detectedAt: '2026-08-20T00:00:00.000Z',
+  };
+}
