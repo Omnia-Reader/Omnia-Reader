@@ -18,6 +18,7 @@ import { PLATFORM_PORT, providePlatform } from '@omnia-reader/platform';
 import { ReaderEngineRegistry } from '@omnia-reader/reader/core';
 import {
   LibraryRepository,
+  LogicalBookChangeOutbox,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import {
@@ -35,6 +36,7 @@ import {
   LibrarySyncCoordinator,
   LibrarySyncManifestService,
   LogicalBookStateRepository,
+  LogicalBookOutboxJournal,
   LogicalBookSyncService,
   LibrarySyncTransport,
   LIBRARY_SYNC_SERVICE,
@@ -157,10 +159,20 @@ function createSelectedSyncTransport(
 
 function createSyncJournal(
   activity: SyncActivityNotifier,
+  outbox: LogicalBookChangeOutbox,
 ): SyncOperationJournal {
   return new NotifyingSyncOperationJournal(
-    new IndexedDbOperationJournal(),
+    new LogicalBookOutboxJournal(new IndexedDbOperationJournal(), outbox),
     activity,
+  );
+}
+
+function createLocalOnlySyncJournal(
+  outbox: LogicalBookChangeOutbox,
+): SyncOperationJournal {
+  return new LogicalBookOutboxJournal(
+    new LocalOnlySyncOperationJournal(),
+    outbox,
   );
 }
 
@@ -271,7 +283,7 @@ export const appConfig: ApplicationConfig = {
           {
             provide: SYNC_OPERATION_JOURNAL,
             useFactory: createSyncJournal,
-            deps: [SyncActivityNotifier],
+            deps: [SyncActivityNotifier, LIBRARY_REPOSITORY],
           },
           {
             provide: GITHUB_GATEWAY,
@@ -329,7 +341,8 @@ export const appConfig: ApplicationConfig = {
       : [
           {
             provide: SYNC_OPERATION_JOURNAL,
-            useFactory: () => new LocalOnlySyncOperationJournal(),
+            useFactory: createLocalOnlySyncJournal,
+            deps: [LIBRARY_REPOSITORY],
           },
           provideAppInitializer(clearUnavailableRemoteSyncSelection),
         ]),

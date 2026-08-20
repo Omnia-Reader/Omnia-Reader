@@ -145,9 +145,13 @@ One locally committed aggregate mutation and the atomic unit of optional sync.
 | `resolvesConflictIds`                 | bounded sorted conflict ID array                                                                                                     | Present only for explicit reconciliation                               |
 | `createdAt`, `deviceId`, `appVersion` | bounded audit fields                                                                                                                 | Never determine merge authority                                        |
 
-The local journal adds the change only after the corresponding repository
-transaction commits. The same complete change is validated and applied in one
-transaction on pull.
+The corresponding repository transaction stores the change in the local v10
+outbox atomically with the logical after-state. The normal sync journal accepts
+it only after commit; successful handoff removes the outbox copy, while a
+failed or interrupted handoff remains exposed as pending work across restart.
+Duplicate outbox/journal views are safe because immutable `changeId` identity
+is deduplicated by the canonical fold. The same complete change is validated
+and applied in one transaction on pull.
 
 A preference-only change has no logical snapshots, removals, or variant
 effects. Its parents include the observed preference heads. Descendants win;
@@ -217,7 +221,8 @@ MembershipReconciliation n ── concerns ── 1..n PublicationVariant
 ### Import standalone
 
 `no variant` → validate/hash/stage source → commit variant + binary metadata +
-singleton logical book → append optional sync change.
+singleton logical book. Standalone import keeps its existing book-sync path;
+later logical mutations use the outbox below.
 
 Failure before commit removes staged bytes. Failure after local commit only
 leaves synchronization pending.
@@ -225,8 +230,8 @@ leaves synchronization pending.
 ### Add format
 
 `singleton or one-format logical book` → validate different-format source →
-reject duplicate/conflict or stage → commit variant + membership atomically →
-append change.
+reject duplicate/conflict or stage → commit variant + membership + outbox
+change atomically → hand the change to the normal journal.
 
 ### Associate existing books
 

@@ -64,7 +64,7 @@ test('generates deterministic unique valid publication bytes and records', async
   assert.match(pdf.toString('utf8'), /%%EOF\n$/);
 });
 
-test('seeds the exact schema-v9 inventory and 500-change history', async () => {
+test('seeds the exact schema-v10 inventory and 500-change history', async () => {
   await page.route('http://omnia.test/**', (route) =>
     route.fulfill({
       contentType: 'text/html',
@@ -90,6 +90,7 @@ test('seeds the exact schema-v9 inventory and 500-change history', async () => {
     binaries: 2_000,
     logicalBooks: 1_000,
     reconciliations: 0,
+    logicalChangeOutbox: 0,
     operations: 500,
     revisions: 500,
   });
@@ -157,6 +158,7 @@ test('prepares twenty isolated fixtures for every management branch in one trans
     binaries: 1_920,
     logicalBooks: 1_040,
     reconciliations: 40,
+    logicalChangeOutbox: 0,
     operations: 500,
     revisions: 500,
   });
@@ -166,7 +168,7 @@ test('prepares twenty isolated fixtures for every management branch in one trans
 async function initializeTestDatabases(targetPage) {
   await targetPage.evaluate(async () => {
     await new Promise((resolve, reject) => {
-      const request = indexedDB.open('omnia-reader', 9);
+      const request = indexedDB.open('omnia-reader', 10);
       request.addEventListener('upgradeneeded', () => {
         const database = request.result;
         database.createObjectStore('books', { keyPath: 'id' });
@@ -182,6 +184,9 @@ async function initializeTestDatabases(targetPage) {
         });
         database.createObjectStore('logicalBookReconciliations', {
           keyPath: 'conflictId',
+        });
+        database.createObjectStore('logicalBookChangeOutbox', {
+          keyPath: 'changeId',
         });
       });
       request.addEventListener('success', () => {
@@ -224,7 +229,7 @@ async function databaseCounts(targetPage) {
         request.addEventListener('success', () => resolve(request.result));
         request.addEventListener('error', () => reject(request.error));
       });
-    const library = await open('omnia-reader', 9);
+    const library = await open('omnia-reader', 10);
     const sync = await open('omnia-reader-sync', 1);
     try {
       const [
@@ -232,6 +237,7 @@ async function databaseCounts(targetPage) {
         binaries,
         logicalBooks,
         reconciliations,
+        logicalChangeOutbox,
         operations,
         revisions,
       ] = await Promise.all([
@@ -239,6 +245,7 @@ async function databaseCounts(targetPage) {
         count(library, 'binaries'),
         count(library, 'logicalBooks'),
         count(library, 'logicalBookReconciliations'),
+        count(library, 'logicalBookChangeOutbox'),
         count(sync, 'operations'),
         count(sync, 'revisions'),
       ]);
@@ -247,6 +254,7 @@ async function databaseCounts(targetPage) {
         binaries,
         logicalBooks,
         reconciliations,
+        logicalChangeOutbox,
         operations,
         revisions,
       };
@@ -260,7 +268,7 @@ async function databaseCounts(targetPage) {
 async function storedBinaryPresence(targetPage, bookIds) {
   return targetPage.evaluate(async (ids) => {
     const database = await new Promise((resolve, reject) => {
-      const request = indexedDB.open('omnia-reader', 9);
+      const request = indexedDB.open('omnia-reader', 10);
       request.addEventListener('success', () => resolve(request.result));
       request.addEventListener('error', () => reject(request.error));
     });
@@ -289,7 +297,7 @@ async function storedBinaryPresence(targetPage, bookIds) {
 async function storedBinaryKeys(targetPage) {
   return targetPage.evaluate(async () => {
     const database = await new Promise((resolve, reject) => {
-      const request = indexedDB.open('omnia-reader', 9);
+      const request = indexedDB.open('omnia-reader', 10);
       request.addEventListener('success', () => resolve(request.result));
       request.addEventListener('error', () => reject(request.error));
     });

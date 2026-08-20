@@ -13,6 +13,7 @@ export * from './lib/logical-book-change';
 export * from './lib/logical-book-merge';
 export * from './lib/logical-book-state';
 export * from './lib/logical-book-sync-service';
+export * from './lib/logical-book-outbox-journal';
 export * from './lib/library-sync-manifest-service';
 export * from './lib/library-sync-transport';
 export * from './lib/progress-document-repository';

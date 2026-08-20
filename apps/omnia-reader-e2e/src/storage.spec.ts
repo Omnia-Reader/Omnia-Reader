@@ -75,6 +75,141 @@ test('closes all 30 local, cancellation, and validation recovery rows', async ()
   ).toHaveLength(6);
 });
 
+test('REC-add-post-commit-pre-journal keeps durable outbox work across reload', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await importPublication(page, {
+    name: 'post-commit-add.epub',
+    mimeType: 'application/epub+zip',
+    buffer: await createEpubFixture(),
+  });
+  await interruptNextLogicalJournalHandoff(page);
+  const chooser = page.waitForEvent('filechooser');
+  await page
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'post-commit-add.pdf',
+    mimeType: 'application/pdf',
+    buffer: await createPdfFixture(),
+  });
+  await expect(page.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+  await expectDurableOutboxChange(page, 'add-variant');
+});
+
+test('REC-associate-post-commit-pre-journal keeps durable outbox work across reload', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await importPublication(page, {
+    name: 'post-commit-associate.epub',
+    mimeType: 'application/epub+zip',
+    buffer: await createEpubFixture(),
+  });
+  const pdf = await createPdfFixture();
+  await importPublication(page, {
+    name: 'post-commit-associate.pdf',
+    mimeType: 'application/pdf',
+    buffer: pdf,
+  });
+  const epubCard = page
+    .getByTestId('library-book')
+    .filter({ hasText: 'Omnia EPUB Fixture' });
+  const chooser = page.waitForEvent('filechooser');
+  await epubCard
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'post-commit-associate-copy.pdf',
+    mimeType: 'application/pdf',
+    buffer: pdf,
+  });
+  const dialog = page.getByRole('dialog', {
+    name: 'Associate an existing book',
+  });
+  await dialog.getByRole('radio').check();
+  await interruptNextLogicalJournalHandoff(page);
+  await dialog.getByRole('button', { name: 'Associate books' }).click();
+  await expect(page.getByTestId('library-book')).toHaveCount(1);
+  await expectDurableOutboxChange(page, 'associate');
+});
+
+test('REC-detach-post-commit-pre-journal keeps durable outbox work across reload', async ({
+  page,
+}) => {
+  const card = await prepareTwoFormatBook(page);
+  await card
+    .getByRole('button', { name: 'Separate PDF from Omnia EPUB Fixture' })
+    .click();
+  await interruptNextLogicalJournalHandoff(page);
+  await page
+    .getByRole('dialog', { name: 'Separate the PDF version?' })
+    .getByRole('button', { name: 'Separate format' })
+    .click();
+  await expect(page.getByTestId('library-book')).toHaveCount(2);
+  await expectDurableOutboxChange(page, 'detach');
+});
+
+test('REC-delete-non-last-post-commit-pre-journal keeps durable outbox work across reload', async ({
+  page,
+}) => {
+  const card = await prepareTwoFormatBook(page);
+  await card
+    .getByRole('button', { name: 'Remove PDF for Omnia EPUB Fixture' })
+    .click();
+  await interruptNextLogicalJournalHandoff(page);
+  await page
+    .getByRole('dialog', {
+      name: 'Remove the PDF version of “Omnia PDF Fixture”?',
+    })
+    .getByRole('button', { name: 'Remove book' })
+    .click();
+  await expect(page.getByTestId('library-status')).toContainText(
+    '“Omnia PDF Fixture” removed',
+  );
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toHaveCount(0);
+  await expectDurableOutboxChange(page, 'delete-variant');
+});
+
+test('REC-preference-change-post-commit-pre-journal keeps durable outbox work across reload', async ({
+  page,
+}) => {
+  const card = await prepareTwoFormatBook(page);
+  await interruptNextLogicalJournalHandoff(page);
+  await card.getByRole('button', { name: /^PDF\b/ }).click();
+  await expect(
+    page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
+  ).toBeVisible();
+  await expectDurableOutboxChange(page, 'preference');
+});
+
+test('REC-exact-source-replacement-post-commit-pre-journal commits without logical outbox work', async ({
+  page,
+}) => {
+  const { replace } = await prepareUnavailablePdf(page);
+  const before = await logicalOutbox(page);
+  const chooser = page.waitForEvent('filechooser');
+  await replace.click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'replacement-source.pdf',
+    mimeType: 'application/pdf',
+    buffer: await createPdfFixture(),
+  });
+  await expect(page.getByRole('status')).toContainText(
+    'restored from this device',
+  );
+  expect(await logicalOutbox(page)).toEqual(before);
+  await page.reload();
+  expect(await logicalOutbox(page)).toEqual(before);
+});
+
 test('rejects an unsupported text import without changing canonical inventory', async ({
   page,
 }) => {
@@ -490,4 +625,57 @@ async function importPublication(
   const chooser = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Import books' }).click();
   await (await chooser).setFiles(file);
+}
+
+async function interruptNextLogicalJournalHandoff(page: Page): Promise<void> {
+  await page.addInitScript(blockLogicalOutboxAcknowledgement);
+  await page.evaluate(blockLogicalOutboxAcknowledgement);
+}
+
+function blockLogicalOutboxAcknowledgement(): void {
+  const state = window as unknown as Record<string, unknown>;
+  if (state['__omniaOutboxDeleteBlocked']) return;
+  const prototype = IDBObjectStore.prototype;
+  const original = prototype.delete;
+  state['__omniaOutboxDeleteBlocked'] = true;
+  state['__omniaOutboxDeleteIntercepted'] = false;
+  prototype.delete = function (
+    this: IDBObjectStore,
+    query: IDBValidKey | IDBKeyRange,
+  ): IDBRequest<undefined> {
+    const request = original.call(this, query);
+    if (this.name === 'logicalBookChangeOutbox') {
+      state['__omniaOutboxDeleteIntercepted'] = true;
+      this.transaction.abort();
+    }
+    return request;
+  };
+}
+
+async function expectDurableOutboxChange(
+  page: Page,
+  kind: string,
+): Promise<void> {
+  const beforeReload = await logicalOutbox(page);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as Record<string, unknown>)[
+          '__omniaOutboxDeleteIntercepted'
+        ],
+    ),
+  ).toBe(true);
+  expect(beforeReload).toEqual([
+    expect.objectContaining({ kind, changeId: expect.any(String) }),
+  ]);
+  await page.reload();
+  expect(await logicalOutbox(page)).toEqual(beforeReload);
+}
+
+async function logicalOutbox(page: Page): Promise<unknown[]> {
+  const inventory = await canonicalRecoveryInventory(page);
+  const pending = inventory['pendingJournalOperations'] as {
+    logicalChangeOutbox?: unknown[];
+  };
+  return pending.logicalChangeOutbox ?? [];
 }

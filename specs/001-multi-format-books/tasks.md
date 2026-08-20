@@ -488,6 +488,11 @@ after the badge-only checkpoint passes.
   compares the complete logical snapshot and verifies the applicable catalog,
   source, preference, or reading state remains intact. The same uncached
   data-access run passed 6 files / 72 tests.
+- All six `post-commit-pre-journal` rows now have executable Chromium evidence.
+  The five logical mutations retain their immutable v10 outbox record while
+  journal handoff acknowledgement is unavailable and across reload; exact-source
+  replacement remains outbox-free. The focused run passed 6/6 and the complete
+  Chromium storage journey passed 19/19.
 - T095 remains incomplete until the other fixed recovery rows have executable
   outcomes rather than matrix-cardinality assertions alone.
 
@@ -765,13 +770,16 @@ gates remain explicit rather than being treated as implementation gaps.
 - Changed files pass Prettier and `git diff --check`. Repository-wide
   `npx nx format:check` remains non-clean because it lists pre-existing files
   outside this feature diff; those unrelated files were not rewritten.
-- T132 — PASS. The test-only closed inventory contains exactly 48 unique
-  recovery rows and 14 unique compatibility rows. Every row requires comparison
+- T132 — PASS for closed inventory cardinality and the recorded executable
+  suites; it was not, by itself, per-row behavioral proof. The test-only closed
+  inventory contains exactly 48 unique recovery rows and 14 unique compatibility
+  rows. Every row requires comparison
   of membership, exact hash/size, availability, preferred format, progress,
   per-device progress, bookmarks, annotations, tombstones, exclusions, and
   pending journal operations, plus covers/catalog ownership. `npx nx test
-library-data-access` passes 6 files / 63 tests; `npx nx test sync-core` passes
-  23 files / 188 tests. The exact Chromium matrix command from T107 passes 18 active tests;
+library-data-access` passes 6 files / 74 tests; `npx nx test sync-core` passes
+  24 files / 191 tests. Phase 10 adds direct behavioral coverage for all six
+  `post-commit-pre-journal` rows. The Chromium storage journey passes 19/19;
   the production-service-worker cold start and two credentialed two-device
   cases are skipped by their existing explicit gates. The separately executed
   production PWA cold-start journey remains PASS as recorded above.
@@ -869,3 +877,26 @@ the simulated Git and MEGA transport suites as the browser boundary.
 | COMP-sync-legacy-sync-read                        |   PASS |
 | COMP-sync-unsupported-newer-mixed-refusal         |   PASS |
 | COMP-sync-membership-deletion-tombstone-exclusion |   PASS |
+
+---
+
+## Phase 10: Crash-Durable Post-Commit Journal Handoff
+
+**Purpose**: Replace the recovery matrix's cardinality-only
+`post-commit-pre-journal` claim with an atomic, restart-discoverable handoff for
+every logical mutation.
+
+- [x] T137 Reconcile the v9 repository and separate sync-journal crash gap in `specs/001-multi-format-books/plan.md`, `specs/001-multi-format-books/research.md`, `specs/001-multi-format-books/data-model.md`, `specs/001-multi-format-books/contracts/sync-v2.md`, and `specs/001-multi-format-books/quickstart.md`, selecting an additive IndexedDB v10 logical-change outbox instead of retry-only or localStorage fallback behavior
+- [x] T138 Add the v9→v10 migration, atomic add/associate/detach/delete/preference outbox writes, exact-source no-op evidence, outbox-backed journal adapter, application composition, and executable six-row `post-commit-pre-journal` tests across `reader-domain`, `library-data-access`, `sync-core`, `omnia-reader`, and the performance fixtures
+- [x] T139 Run focused unit/lint/format gates plus the canonical Chromium storage recovery journey, record exact evidence, and reconcile the historical T095/T132 matrix claims without weakening unavailable external release gates
+
+**Phase 10 evidence (2026-08-20)**:
+
+- Unit tests: reader-domain 5 files / 37 tests, library-data-access 6 files / 74
+  tests, sync-core 24 files / 191 tests, and omnia-reader 22 files / 176 tests.
+- Lint passed for reader-domain, library-data-access, sync-core, omnia-reader,
+  and omnia-reader-e2e. The production application build passed its bundle gates.
+- Direct Playwright Chromium passed the six interruption rows 6/6 and the full
+  storage journey 19/19. External usability, credentialed-provider,
+  packaged-native, Android/device, and manual assistive-technology gates remain
+  explicitly `UNVERIFIED` under T135.

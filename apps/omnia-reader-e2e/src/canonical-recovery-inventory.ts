@@ -130,6 +130,7 @@ export async function canonicalRecoveryInventory(
       'logicalBooks',
       'logicalBookCovers',
       'logicalBookPreferences',
+      'logicalBookChangeOutbox',
     ]);
     const sync = await readStores('omnia-reader-sync', ['operations'], true);
     const bookmarks = library['bookmarks'] ?? [];
@@ -157,7 +158,10 @@ export async function canonicalRecoveryInventory(
       annotations,
       tombstones,
       exclusions,
-      pendingJournalOperations: sync['operations'],
+      pendingJournalOperations: {
+        journal: sync['operations'],
+        logicalChangeOutbox: library['logicalBookChangeOutbox'],
+      },
       coversAndCatalogOwnership: {
         covers: library['covers'],
         logicalBookCovers: library['logicalBookCovers'],

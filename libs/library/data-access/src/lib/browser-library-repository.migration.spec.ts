@@ -84,9 +84,10 @@ describe('BrowserLibraryRepository schema migration', () => {
     ).resolves.toEqual(expect.any(Blob));
     await expect(repository.listQuarantinedRecords()).resolves.toEqual([]);
     const migrated = await openDatabase(databaseName);
-    expect(migrated.version).toBe(9);
+    expect(migrated.version).toBe(10);
     expect([...migrated.objectStoreNames]).toContain('quarantine');
     expect([...migrated.objectStoreNames]).toContain('progressDocuments');
+    expect([...migrated.objectStoreNames]).toContain('logicalBookChangeOutbox');
     expect([...migrated.objectStoreNames]).toEqual(
       expect.arrayContaining([
         'logicalBooks',
@@ -165,7 +166,7 @@ describe('BrowserLibraryRepository schema migration', () => {
         );
       }
       const migrated = await openDatabase(databaseName);
-      expect(migrated.version).toBe(9);
+      expect(migrated.version).toBe(10);
       migrated.close();
     },
   );
@@ -241,6 +242,58 @@ describe('BrowserLibraryRepository schema migration', () => {
     await expect(repository.listLogicalBooks()).resolves.toEqual([
       expect.objectContaining({ variants: { pdf: BOOK.id } }),
     ]);
+  });
+
+  it('migrates v9 logical state to the durable v10 change outbox without rewriting it', async () => {
+    const databaseName = 'omnia-reader-v9-outbox';
+    const logicalBook = {
+      schemaVersion: 1 as const,
+      id: `logical:sha256:${'e'.repeat(64)}` as const,
+      title: BOOK.title,
+      authors: BOOK.authors,
+      importedAt: BOOK.importedAt,
+      updatedAt: BOOK.importedAt,
+      coverState: 'unavailable' as const,
+      variants: { pdf: BOOK.id },
+    };
+    const versionNine = await openDatabase(databaseName, 9, (database) => {
+      createLegacyStores(database);
+      const logicalBooks = database.createObjectStore('logicalBooks', {
+        keyPath: 'id',
+      });
+      logicalBooks.createIndex('epubVariantId', 'variants.epub', {
+        unique: true,
+      });
+      logicalBooks.createIndex('pdfVariantId', 'variants.pdf', {
+        unique: true,
+      });
+      logicalBooks.put(logicalBook);
+      database.createObjectStore('logicalBookCovers', {
+        keyPath: 'logicalBookId',
+      });
+      database.createObjectStore('logicalBookPreferences', {
+        keyPath: 'logicalBookId',
+      });
+      database.createObjectStore('logicalBookReconciliations', {
+        keyPath: 'conflictId',
+      });
+    });
+    versionNine.close();
+
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      databaseName,
+    );
+
+    await expect(repository.listLogicalBooks()).resolves.toEqual([logicalBook]);
+    await expect(repository.listPendingLogicalBookChanges()).resolves.toEqual(
+      [],
+    );
+    const migrated = await openDatabase(databaseName);
+    expect(migrated.version).toBe(10);
+    expect([...migrated.objectStoreNames]).toContain('logicalBookChangeOutbox');
+    migrated.close();
   });
 });
 

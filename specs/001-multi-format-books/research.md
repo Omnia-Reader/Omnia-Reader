@@ -54,6 +54,30 @@ later detached or deleted.
   could silently change or lose shared presentation.
 - Rekeying progress and annotations was rejected as unnecessary and unsafe.
 
+### 2026-08-20 amendment: v10 durable logical-change outbox
+
+**Decision**: Add one key-by-`changeId` outbox store in IndexedDB v10. Every
+membership or preferred-format transaction writes its complete immutable
+`LogicalBookChange` into that store. A sync-core journal adapter presents
+outbox records as normal pending operations, removes them after the separate
+IndexedDB journal accepts the change, and routes recovered acknowledgements
+back to the outbox.
+
+**Rationale**: Post-commit append retry alone leaves an unavoidable crash gap
+between two IndexedDB databases. The outbox makes the local after-state and its
+sync intent atomic without moving provider authority into browser persistence.
+Duplicate outbox and journal records are harmless because canonical sync
+already deduplicates immutable changes by `changeId`.
+
+**Alternatives considered**:
+
+- Bounded append retry was rejected as the only mechanism because a tab or
+  process termination can still lose the change before any retry runs.
+- Writing the journal before the local mutation was rejected because a failed
+  local transaction would publish an effect that never committed.
+- A localStorage fallback was rejected because it has a smaller, less reliable
+  quota and would duplicate the IndexedDB durability boundary.
+
 ## Decision 3: Make every aggregate mutation atomic at the repository boundary
 
 **Decision**: Add explicit `addVariant`, `associate`, `detachVariant`, and

@@ -538,7 +538,7 @@ async function branchDiagnostic(
         document.querySelector(query)?.textContent?.trim().slice(0, 512) ??
         null;
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('omnia-reader', 9);
+        const request = indexedDB.open('omnia-reader', 10);
         request.addEventListener('success', () => resolve(request.result));
         request.addEventListener('error', () => reject(request.error));
       });
@@ -604,7 +604,7 @@ async function storedRecordExists(
   return page.evaluate(
     async ({ storeName, key }) => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('omnia-reader', 9);
+        const request = indexedDB.open('omnia-reader', 10);
         request.addEventListener('success', () => resolve(request.result));
         request.addEventListener('error', () => reject(request.error));
       });
@@ -647,7 +647,7 @@ async function removeLogicalBook(
 
     function openLibraryDatabase(): Promise<IDBDatabase> {
       return new Promise((resolve, reject) => {
-        const request = indexedDB.open('omnia-reader', 9);
+        const request = indexedDB.open('omnia-reader', 10);
         request.addEventListener('success', () => resolve(request.result));
         request.addEventListener('error', () => reject(request.error));
       });
@@ -674,7 +674,7 @@ async function removeLogicalBook(
   return () =>
     page.evaluate(async (value) => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('omnia-reader', 9);
+        const request = indexedDB.open('omnia-reader', 10);
         request.addEventListener('success', () => resolve(request.result));
         request.addEventListener('error', () => reject(request.error));
       });
@@ -760,7 +760,7 @@ async function updateReconciliationStatus(
   await page.evaluate(
     async ({ conflictId, status }) => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('omnia-reader', 9);
+        const request = indexedDB.open('omnia-reader', 10);
         request.addEventListener('success', () => resolve(request.result));
         request.addEventListener('error', () => reject(request.error));
       });
@@ -813,7 +813,7 @@ async function reconciliationReviewIndex(
 ): Promise<number> {
   return page.evaluate(async (targetConflictId) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('omnia-reader', 9);
+      const request = indexedDB.open('omnia-reader', 10);
       request.addEventListener('success', () => resolve(request.result));
       request.addEventListener('error', () => reject(request.error));
     });

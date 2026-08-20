@@ -33,13 +33,16 @@ payload. It contains complete resulting logical records, removals, exact
 variant effects, preference effects, reconciliation resolutions, causal
 parents, and an immutable change identity.
 
-- Append the change only after the corresponding local repository transaction
-  commits.
+- Persist the change in the IndexedDB v10 logical-change outbox in the same
+  transaction as the local mutation. Append it to the normal sync journal only
+  after that transaction commits, then remove the outbox copy. A crash or
+  append failure leaves the outbox copy visible through `pending()`; duplicate
+  outbox/journal copies are deduplicated by immutable change ID.
 - Do not coalesce distinct logical changes by logical-book ID.
 - Progress, bookmark, annotation, and exact-variant state remain keyed by the
   publication SHA-256 ID.
-- A provider failure leaves the local result usable and the journal operation
-  pending.
+- A journal or provider failure leaves the local result usable and durable
+  pending work discoverable after restart.
 - A journal operation is acknowledged only after a reread canonical state
   proves that its complete effect is covered.
 

@@ -407,7 +407,7 @@ npm run release:verify                                  PASS (122 files; 33 npm 
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
 npm run native:build                                     PASS (deb + rpm + AppImage)
 Initial production bundle                                394.46 kB (87.58 kB estimated transfer; PDF.js lazy)
-Schema-v9 migration and corrupt-record recovery tests     PASS
+Schema-v10 migration, outbox, and corrupt recovery tests  PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
 Chromium layered PDF/EPUB reader and resume E2E          PASS

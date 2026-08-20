@@ -224,6 +224,18 @@ export interface SyncOperationJournal {
   acknowledge(operationIds: readonly string[]): Promise<void>;
 }
 
+/**
+ * Durable handoff for logical changes committed before the separate sync
+ * journal can accept them. Implementations must persist a change in the same
+ * transaction as its owning logical-library mutation.
+ */
+export interface LogicalBookChangeOutbox {
+  listPendingLogicalBookChanges(): Promise<readonly LogicalBookChange[]>;
+  acknowledgePendingLogicalBookChanges(
+    changeIds: readonly string[],
+  ): Promise<void>;
+}
+
 export interface SyncResult {
   pulled: number;
   pushed: number;

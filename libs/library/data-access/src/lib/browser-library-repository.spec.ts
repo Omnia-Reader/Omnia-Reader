@@ -466,7 +466,7 @@ describe('BrowserLibraryRepository logical singleton and availability', () => {
     });
   });
 
-  it('accepts exact replacement after historical quarantine', async () => {
+  it('REC-exact-source-replacement-post-commit-pre-journal leaves no logical outbox work', async () => {
     const bytes = new Blob(['%PDF-1.4 replacement fixture'], {
       type: 'application/pdf',
     });
@@ -501,11 +501,14 @@ describe('BrowserLibraryRepository logical singleton and availability', () => {
     await expect(repository.openHealthyVariant(bookId)).resolves.toMatchObject({
       availability: { status: 'healthy' },
     });
+    await expect(repository.listPendingLogicalBookChanges()).resolves.toEqual(
+      [],
+    );
   });
 });
 
 describe('BrowserLibraryRepository add logical-book variant', () => {
-  it('atomically adds an opposite format without creating another card', async () => {
+  it('REC-add-post-commit-pre-journal retains the committed change in the outbox', async () => {
     const repository = new BrowserLibraryRepository();
     const pdf = new Blob(['%PDF-1.4 destination'], { type: 'application/pdf' });
     const destination = await repository.importBook(
@@ -546,6 +549,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
     ).resolves.toMatchObject({
       availability: { status: 'healthy' },
     });
+    await expectOutboxChange(repository, 'add:1');
   });
 
   it('returns discriminated duplicate and same-format ownership results', async () => {
@@ -693,6 +697,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
     await expect(repository.getLogicalBook(logical.id)).resolves.toMatchObject({
       variants: { pdf: destination.id },
     });
+    await expectNoOutboxChange(repository, 'add:transaction-retry');
 
     await deleteRawLibraryRecord('books', variant.id, databaseName);
     await expect(
@@ -767,7 +772,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
 });
 
 describe('BrowserLibraryRepository logical-book association', () => {
-  it('keeps destination presentation and preserves exact variant state', async () => {
+  it('REC-associate-post-commit-pre-journal retains the committed change in the outbox', async () => {
     const repository = new BrowserLibraryRepository();
     const epubBytes = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 11])], {
       type: 'application/epub+zip',
@@ -810,6 +815,7 @@ describe('BrowserLibraryRepository logical-book association', () => {
     });
     await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
     await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+    await expectOutboxChange(repository, 'associate:1');
   });
 
   it('REC-associate-before-transaction rejects incompatible membership without mutation', async () => {
@@ -890,6 +896,7 @@ describe('BrowserLibraryRepository logical-book association', () => {
     );
     await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
     await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+    await expectNoOutboxChange(repository, 'associate:abort');
     await expect(
       repository.associate(
         destination.id,
@@ -901,7 +908,7 @@ describe('BrowserLibraryRepository logical-book association', () => {
 });
 
 describe('BrowserLibraryRepository logical-book management', () => {
-  it('detaches the selected format without changing either exact publication', async () => {
+  it('REC-detach-post-commit-pre-journal retains the committed change in the outbox', async () => {
     const repository = new BrowserLibraryRepository();
     const epubBytes = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 21])], {
       type: 'application/epub+zip',
@@ -947,9 +954,10 @@ describe('BrowserLibraryRepository logical-book management', () => {
     ).resolves.toMatchObject({ preferredFormat: 'epub' });
     await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
     await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+    await expectOutboxChange(repository, 'detach:pdf');
   });
 
-  it('deletes one format state and then removes the final logical book', async () => {
+  it('REC-delete-non-last-post-commit-pre-journal retains the committed change in the outbox', async () => {
     const repository = new BrowserLibraryRepository();
     const epubBytes = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 22])], {
       type: 'application/epub+zip',
@@ -977,10 +985,38 @@ describe('BrowserLibraryRepository logical-book management', () => {
     await expect(repository.getLogicalBook(logical.id)).resolves.toMatchObject({
       variants: { epub: epub.id },
     });
+    await expectOutboxChange(repository, 'delete:pdf');
 
     await repository.deleteVariant(logical.id, null, mutation('delete:book'));
     await expect(repository.getLogicalBook(logical.id)).resolves.toBeNull();
     await expect(repository.getBook(epub.id)).resolves.toBeNull();
+  });
+
+  it('REC-preference-change-post-commit-pre-journal retains the committed change in the outbox', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-post-commit-outbox',
+    );
+    const { logical } = await prepareTwoFormatRepository(
+      repository,
+      'preference-post-commit',
+    );
+    const previous = await repository.listPendingLogicalBookChanges();
+    await repository.acknowledgePendingLogicalBookChanges(
+      previous.map((change) => change.changeId),
+    );
+
+    await repository.saveLogicalBookFormatPreference(
+      logical.id,
+      'pdf',
+      mutation('preference:post-commit'),
+    );
+
+    await expect(
+      repository.getLogicalBookFormatPreference(logical.id),
+    ).resolves.toMatchObject({ preferredFormat: 'pdf' });
+    await expectOutboxChange(repository, 'preference:post-commit');
   });
 
   it('REC-detach-before-transaction rejects a singleton without mutation', async () => {
@@ -1045,6 +1081,7 @@ describe('BrowserLibraryRepository logical-book management', () => {
     await expect(repository.getProgress(pdf.id)).resolves.toEqual(
       progressBefore,
     );
+    await expectNoOutboxChange(repository, 'delete:before-transaction');
     await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
     await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
   });
@@ -1078,6 +1115,7 @@ describe('BrowserLibraryRepository logical-book management', () => {
     await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
       before,
     );
+    await expectNoOutboxChange(repository, 'preference:before-transaction');
     await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
   });
 
@@ -1140,6 +1178,7 @@ describe('BrowserLibraryRepository logical-book management', () => {
     );
     await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
     await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+    await expectNoOutboxChange(repository, 'detach:abort');
     await expect(
       repository.detachVariant(logical.id, pdf.id, mutation('detach:retry')),
     ).resolves.toMatchObject({ createdLogicalBookIds: [expect.any(String)] });
@@ -1175,6 +1214,7 @@ describe('BrowserLibraryRepository logical-book management', () => {
     await expect(repository.getProgress(pdf.id)).resolves.toEqual(
       progressBefore,
     );
+    await expectNoOutboxChange(repository, 'delete:abort');
     await expect(
       repository.deleteVariant(logical.id, pdf.id, mutation('delete:retry')),
     ).resolves.toMatchObject({ deletedVariantIds: [pdf.id] });
@@ -1210,6 +1250,7 @@ describe('BrowserLibraryRepository logical-book management', () => {
     await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
       before,
     );
+    await expectNoOutboxChange(repository, 'preference:abort');
     await expect(
       repository.saveLogicalBookFormatPreference(
         logical.id,
@@ -1997,6 +2038,24 @@ function mutation(changeId: string): LogicalMutationIdentity {
     deviceId: 'test-device',
     appVersion: '0.1.0',
   };
+}
+
+async function expectOutboxChange(
+  repository: BrowserLibraryRepository,
+  changeId: string,
+): Promise<void> {
+  await expect(repository.listPendingLogicalBookChanges()).resolves.toEqual(
+    expect.arrayContaining([expect.objectContaining({ changeId })]),
+  );
+}
+
+async function expectNoOutboxChange(
+  repository: BrowserLibraryRepository,
+  changeId: string,
+): Promise<void> {
+  await expect(repository.listPendingLogicalBookChanges()).resolves.not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ changeId })]),
+  );
 }
 
 function testObjectPath(book: BookRecord): string {

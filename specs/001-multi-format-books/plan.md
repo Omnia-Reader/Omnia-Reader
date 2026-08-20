@@ -19,6 +19,8 @@ must not recreate them.
 Introduce a format-neutral logical-book aggregate while preserving every
 existing `BookRecord.id` as the SHA-256 identity of one exact publication
 variant. Add an IndexedDB v9 logical-book store and atomic aggregate operations,
+then migrate to v10 with a transaction-owned logical-change outbox so the
+separate sync journal cannot lose a committed local mutation,
 keep progress/bookmarks/annotations and `/reader/:bookId` scoped to the selected
 variant, derive variant health locally through authoritative source
 verification, migrate backup archives to schema 4, and use the current sync
@@ -124,7 +126,8 @@ sync, provider, host, or reader-engine contract. No exception is required.
   only runtime owners affected by FR-022/FR-023. No durable or provider-facing
   contract changes.
 - **Owning project(s)**: `reader-domain` owns logical-book and repository
-  contracts; `library-data-access` owns IndexedDB v9, OPFS transaction staging,
+  contracts; `library-data-access` owns IndexedDB v10, including v8→v9 logical
+  migration, the logical-change outbox, OPFS transaction staging,
   migration, quarantine, and backup schema 4; `sync-core` owns schema 2,
   local logical-book changes, deterministic canonical-state merge, legacy
   migration, and provider-neutral application; `sync-git` owns journal compatibility; `omnia-reader` owns UI and
@@ -172,8 +175,8 @@ apps/omnia-reader/src/app/reader-route-reuse-strategy.ts
 apps/omnia-reader-e2e/src/                         # browser, accessibility, storage, and offline journeys
 apps/omnia-reader-e2e/performance/                 # profile preflight, page timing, raw-result schema
 libs/reader/domain/src/lib/                        # logical-book records, validation, repository/sync contracts
-libs/library/data-access/src/lib/                  # IndexedDB v9, atomic mutations, backup schema 4
-libs/sync/core/src/lib/                            # root schema 2, canonical logical state, merge, recovery, remote backup
+libs/library/data-access/src/lib/                  # IndexedDB v10, atomic mutations/outbox, backup schema 4
+libs/sync/core/src/lib/                            # root schema 2, outbox journal bridge, canonical state, merge/recovery
 libs/sync/git/src/lib/                             # journal entity compatibility and focused tests
 libs/sync/mega/src/lib/                            # provider-neutral conformance tests only, if fixtures live here
 specs/001-multi-format-books/performance/          # immutable profile sets and raw acceptance results
@@ -373,7 +376,11 @@ existing <format>`, closes before the selected picker/dialog opens, and
   leave unreachable bytes but cannot leave a visible partial book. Missing or
   quarantined variants remain visible with their cause while healthy siblings
   remain readable.
-- Optional journal/provider failure occurs after local commit and stays pending.
+- Each logical mutation writes its immutable change to the v10 outbox in the
+  same transaction. Post-commit journal handoff removes that copy only after
+  the normal journal accepts it; a failed handoff remains visible through the
+  journal contract across restart. Provider failure therefore leaves durable
+  pending work rather than merely a process-local status.
   Remote objects are verified before change publication; incomplete publication
   is invisible. Pull builds and validates a candidate graph before one local
   transaction. Cancellation and retry are idempotent.
@@ -428,9 +435,9 @@ environment gates.
 | Requirement/story                              | Evidence                                                                                                                                                                                                                                                                                                               | Command or environment                                                                                                                                                                                          | Required locally?                                                                                       |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | FR-001, FR-005, FR-009, FR-010                 | Record validation, stable SHA IDs, membership/cardinality, variant-scoped locator state                                                                                                                                                                                                                                | `npx nx test reader-domain`                                                                                                                                                                                     | Yes                                                                                                     |
-| FR-002, FR-003, FR-006, FR-011–FR-014, US1–US3 | IndexedDB v8→v9 migration; add/associate/detach/delete atomic failure and restart; missing bytes/quarantine                                                                                                                                                                                                            | `npx nx test library-data-access`                                                                                                                                                                               | Yes                                                                                                     |
+| FR-002, FR-003, FR-006, FR-011–FR-014, US1–US3 | IndexedDB v8→v9 logical migration and v9→v10 durable outbox migration; add/associate/detach/delete atomic failure and restart; missing bytes/quarantine                                                                                                                                                                | `npx nx test library-data-access`                                                                                                                                                                               | Yes                                                                                                     |
 | FR-015, FR-016, FR-020                         | Backup v4 round-trip, v1–v3 singleton migration, all-conflict preflight, revision recheck, zero mutation, rollback                                                                                                                                                                                                     | `npx nx test library-data-access`                                                                                                                                                                               | Yes                                                                                                     |
-| FR-015, FR-017, FR-021                         | Root schema gate, canonical-state migration, causal membership/preference merge, persistent reconciliation, tombstones, optimistic retry                                                                                                                                                                               | `npx nx test sync-core`                                                                                                                                                                                         | Yes                                                                                                     |
+| FR-015, FR-017, FR-021                         | Durable outbox/journal handoff, root schema gate, canonical-state migration, causal membership/preference merge, persistent reconciliation, tombstones, optimistic retry                                                                                                                                               | `npx nx test sync-core`                                                                                                                                                                                         | Yes                                                                                                     |
 | FR-015, FR-017, FR-021                         | Logical/preference/reconciliation journal work remains durable, ordered, and acknowledgement-safe                                                                                                                                                                                                                      | `npx nx test sync-git`                                                                                                                                                                                          | Yes                                                                                                     |
 | FR-015, FR-017, FR-021                         | Provider-neutral membership/preference/reconciliation fixtures preserve identical semantics                                                                                                                                                                                                                            | `npx nx test sync-mega`                                                                                                                                                                                         | Yes                                                                                                     |
 | FR-002–FR-012, FR-017–FR-023, US1–US3          | Always-visible EPUB/PDF badges, per-variant percentages and refresh states, anchored menu semantics, present-format open, missing-format add/associate choice, duplicate/empty/cancel/focus/live-update outcomes, all nine health rows, no-readable state, conflict reports, reconciliation, safe format switch        | `npx nx test omnia-reader`                                                                                                                                                                                      | Yes                                                                                                     |
@@ -460,7 +467,9 @@ unless the implementation departs from this plan and changes native commands.
   schema 2, deterministic canonical membership/preference merge, persistent
   conflict reconciliation, legacy migration, and provider conformance. Each slice starts with
   focused failing tests and remains locally usable before optional sync work.
-- **Migration/rollout**: Ship local v9 migration before UI mutation paths. Ship
+- **Migration/rollout**: Ship local v9 migration before UI mutation paths, then
+  v10 as an additive empty-outbox migration before relying on crash-durable
+  post-commit journal handoff. Ship
   backup v4 reader/writer with legacy readers before relying on it. A new client
   may read sync schema 1 only to verify/copy exact variants into singleton
   logical state, then compare-and-swap the root to schema 2 before publishing

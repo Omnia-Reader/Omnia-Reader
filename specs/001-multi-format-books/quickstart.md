@@ -28,8 +28,9 @@ npx nx test omnia-reader
 
 Expected:
 
-- an actual v8 IndexedDB fixture opens as v9 with one singleton logical book per
-  exact variant and unchanged progress/bookmark/annotation IDs;
+- an actual v8 IndexedDB fixture opens at v10 through the v9 singleton migration
+  with one logical book per exact variant and unchanged reading-state IDs; a
+  v9 fixture gains an empty logical-change outbox without rewriting its state;
 - add, associate, detach, and delete failure injection always yields a complete
   before-or-after state;
 - backup v4 round-trips two variants and schemas 1–3 restore as singletons;

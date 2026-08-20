@@ -5,7 +5,7 @@ import { assertManagementWorkload } from './management-workload.mjs';
 
 const IMPORTED_AT = '2026-08-20T00:00:00.000Z';
 const LIBRARY_DATABASE = 'omnia-reader';
-const LIBRARY_VERSION = 9;
+const LIBRARY_VERSION = 10;
 const SYNC_DATABASE = 'omnia-reader-sync';
 const SYNC_VERSION = 1;
 const BRANCH_SAMPLES = 20;
@@ -499,7 +499,12 @@ async function assertSeedDatabases(page) {
       const library = await open(libraryName, libraryVersion, false);
       const sync = await open(syncName, syncVersion, true);
       try {
-        for (const storeName of ['books', 'binaries', 'logicalBooks']) {
+        for (const storeName of [
+          'books',
+          'binaries',
+          'logicalBooks',
+          'logicalBookChangeOutbox',
+        ]) {
           if (!library.objectStoreNames.contains(storeName)) {
             throw new Error(`Library database is missing ${storeName}`);
           }
@@ -513,6 +518,7 @@ async function assertSeedDatabases(page) {
           count(library, 'books'),
           count(library, 'binaries'),
           count(library, 'logicalBooks'),
+          count(library, 'logicalBookChangeOutbox'),
           count(sync, 'operations'),
           count(sync, 'revisions'),
         ]);

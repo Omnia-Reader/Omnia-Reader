@@ -4,11 +4,13 @@ import {
   detectPublicationFormat,
   isBookRecord,
   isLogicalBookFormatPreference,
+  isLogicalBookChange,
   isLogicalBookRecord,
   isMembershipReconciliation,
   isReaderPreferences,
   isReadingProgress,
   LibraryRepository,
+  LogicalBookChangeOutbox,
   LogicalBookFormatPreference,
   LogicalBookChange,
   LogicalBookId,
@@ -48,7 +50,7 @@ import {
 export { publicationFingerprint } from './publication-fingerprint';
 
 const DATABASE_NAME = 'omnia-reader';
-const DATABASE_VERSION = 9;
+const DATABASE_VERSION = 10;
 const BOOKS_STORE = 'books';
 const BINARIES_STORE = 'binaries';
 const COVERS_STORE = 'covers';
@@ -67,6 +69,7 @@ const LOGICAL_BOOK_PDF_INDEX = 'pdfVariantId';
 const LOGICAL_BOOK_COVERS_STORE = 'logicalBookCovers';
 const LOGICAL_BOOK_PREFERENCES_STORE = 'logicalBookPreferences';
 const LOGICAL_BOOK_RECONCILIATIONS_STORE = 'logicalBookReconciliations';
+const LOGICAL_BOOK_CHANGE_OUTBOX_STORE = 'logicalBookChangeOutbox';
 
 type ActiveLibraryStore =
   | typeof BOOKS_STORE
@@ -80,7 +83,8 @@ type ActiveLibraryStore =
   | typeof LOGICAL_BOOKS_STORE
   | typeof LOGICAL_BOOK_COVERS_STORE
   | typeof LOGICAL_BOOK_PREFERENCES_STORE
-  | typeof LOGICAL_BOOK_RECONCILIATIONS_STORE;
+  | typeof LOGICAL_BOOK_RECONCILIATIONS_STORE
+  | typeof LOGICAL_BOOK_CHANGE_OUTBOX_STORE;
 
 export interface QuarantinedLibraryRecord {
   id?: number;
@@ -142,7 +146,10 @@ class StoredBookSource implements BookSource {
 }
 
 export class BrowserLibraryRepository
-  implements LibraryRepository, LibraryQuarantineRepository
+  implements
+    LibraryRepository,
+    LibraryQuarantineRepository,
+    LogicalBookChangeOutbox
 {
   private databasePromise: Promise<IDBDatabase> | null = null;
 
@@ -285,6 +292,34 @@ export class BrowserLibraryRepository
       preferences,
       reconciliations,
     };
+  }
+
+  async listPendingLogicalBookChanges(): Promise<readonly LogicalBookChange[]> {
+    const changes = await this.readAllValidated(
+      LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
+      isLogicalBookChange,
+      'Pending logical-book change failed schema validation',
+    );
+    return changes.sort(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.changeId.localeCompare(right.changeId),
+    );
+  }
+
+  async acknowledgePendingLogicalBookChanges(
+    changeIds: readonly string[],
+  ): Promise<void> {
+    if (changeIds.length === 0) return;
+    await this.writeTransaction(
+      [LOGICAL_BOOK_CHANGE_OUTBOX_STORE],
+      (transaction) => {
+        const outbox = transaction.objectStore(
+          LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
+        );
+        [...new Set(changeIds)].forEach((changeId) => outbox.delete(changeId));
+      },
+    );
   }
 
   async replaceLogicalBookState(
@@ -550,8 +585,19 @@ export class BrowserLibraryRepository
       const database = await this.database();
       const transaction = database.transaction(
         storedCover
-          ? [BOOKS_STORE, BINARIES_STORE, COVERS_STORE, LOGICAL_BOOKS_STORE]
-          : [BOOKS_STORE, BINARIES_STORE, LOGICAL_BOOKS_STORE],
+          ? [
+              BOOKS_STORE,
+              BINARIES_STORE,
+              COVERS_STORE,
+              LOGICAL_BOOKS_STORE,
+              LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
+            ]
+          : [
+              BOOKS_STORE,
+              BINARIES_STORE,
+              LOGICAL_BOOKS_STORE,
+              LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
+            ],
         'readwrite',
       );
       const completion = idbTransactionComplete(transaction);
@@ -570,6 +616,7 @@ export class BrowserLibraryRepository
       transaction.objectStore(BINARIES_STORE).add(staged);
       if (storedCover) transaction.objectStore(COVERS_STORE).add(storedCover);
       transaction.objectStore(LOGICAL_BOOKS_STORE).put(updated);
+      transaction.objectStore(LOGICAL_BOOK_CHANGE_OUTBOX_STORE).put(change);
       await completion;
     } catch (error) {
       await this.binaryStorage.remove(staged);
@@ -628,6 +675,7 @@ export class BrowserLibraryRepository
         LOGICAL_BOOKS_STORE,
         LOGICAL_BOOK_COVERS_STORE,
         LOGICAL_BOOK_PREFERENCES_STORE,
+        LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
       ],
       'readwrite',
     );
@@ -652,6 +700,7 @@ export class BrowserLibraryRepository
       transaction
         .objectStore(LOGICAL_BOOK_PREFERENCES_STORE)
         .delete(sourceLogicalBookId);
+      transaction.objectStore(LOGICAL_BOOK_CHANGE_OUTBOX_STORE).put(change);
       await completion;
     } catch (error) {
       try {
@@ -741,6 +790,7 @@ export class BrowserLibraryRepository
         LOGICAL_BOOKS_STORE,
         LOGICAL_BOOK_COVERS_STORE,
         LOGICAL_BOOK_PREFERENCES_STORE,
+        LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
       ],
       (transaction) => {
         transaction.objectStore(LOGICAL_BOOKS_STORE).put(updated);
@@ -753,6 +803,7 @@ export class BrowserLibraryRepository
             .objectStore(LOGICAL_BOOK_PREFERENCES_STORE)
             .put(updatedPreference);
         }
+        transaction.objectStore(LOGICAL_BOOK_CHANGE_OUTBOX_STORE).put(change);
       },
     );
     return {
@@ -831,6 +882,7 @@ export class BrowserLibraryRepository
         LOGICAL_BOOKS_STORE,
         LOGICAL_BOOK_COVERS_STORE,
         LOGICAL_BOOK_PREFERENCES_STORE,
+        LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
       ],
       (transaction) => {
         for (const item of cleanup) {
@@ -875,6 +927,7 @@ export class BrowserLibraryRepository
             .objectStore(LOGICAL_BOOK_PREFERENCES_STORE)
             .delete(logicalBookId);
         }
+        transaction.objectStore(LOGICAL_BOOK_CHANGE_OUTBOX_STORE).put(change);
       },
     );
     await Promise.all(
@@ -932,7 +985,13 @@ export class BrowserLibraryRepository
       ),
       preferenceEffects: [{ logicalBookId, preference }],
     };
-    await this.write(LOGICAL_BOOK_PREFERENCES_STORE, preference);
+    await this.writeTransaction(
+      [LOGICAL_BOOK_PREFERENCES_STORE, LOGICAL_BOOK_CHANGE_OUTBOX_STORE],
+      (transaction) => {
+        transaction.objectStore(LOGICAL_BOOK_PREFERENCES_STORE).put(preference);
+        transaction.objectStore(LOGICAL_BOOK_CHANGE_OUTBOX_STORE).put(change);
+      },
+    );
     return change;
   }
 
@@ -1060,6 +1119,7 @@ export class BrowserLibraryRepository
         LOGICAL_BOOKS_STORE,
         LOGICAL_BOOK_PREFERENCES_STORE,
         LOGICAL_BOOK_RECONCILIATIONS_STORE,
+        LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
       ],
       (transaction) => {
         const booksStore = transaction.objectStore(LOGICAL_BOOKS_STORE);
@@ -1073,6 +1133,7 @@ export class BrowserLibraryRepository
             .objectStore(LOGICAL_BOOK_PREFERENCES_STORE)
             .delete(logicalBookId);
         }
+        transaction.objectStore(LOGICAL_BOOK_CHANGE_OUTBOX_STORE).put(change);
       },
     );
     return {
@@ -1848,6 +1909,15 @@ export class BrowserLibraryRepository
           ) {
             database.createObjectStore(LOGICAL_BOOK_RECONCILIATIONS_STORE, {
               keyPath: 'conflictId',
+            });
+          }
+          if (
+            !database.objectStoreNames.contains(
+              LOGICAL_BOOK_CHANGE_OUTBOX_STORE,
+            )
+          ) {
+            database.createObjectStore(LOGICAL_BOOK_CHANGE_OUTBOX_STORE, {
+              keyPath: 'changeId',
             });
           }
           if (
