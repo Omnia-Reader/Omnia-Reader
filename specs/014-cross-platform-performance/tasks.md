@@ -70,7 +70,7 @@
 ### Tests for User Story 2
 
 - [ ] T023 [US2] Add failing debug package, archive/link attack, stale endpoint, duplicate instance, process-scope drift, crash, hang, and cleanup tests in `apps/omnia-reader-e2e/performance/packaged-desktop-environment.spec.mjs`
-- [ ] T024 [US2] Add an exact-artifact external WebDriver spike test in `apps/omnia-reader-e2e/performance/packaged-desktop-spike.spec.mjs`
+- [x] T024 [US2] Add an exact-artifact external WebDriver spike test in `apps/omnia-reader-e2e/performance/packaged-desktop-spike.spec.mjs`
 - [ ] T025 [US2] Add failing primary driver result/cardinality/evaluator/no-promotion tests in `apps/omnia-reader-e2e/performance/run-packaged-desktop.spec.mjs`
 
 ### Implementation for User Story 2
