@@ -13,6 +13,7 @@ import {
 
 export interface LibraryManifestSyncOptions {
   maxConflictRetries?: number;
+  prepareLegacyUpgrade?: () => Promise<void>;
   retryDelayMs?: number;
   wait?: (milliseconds: number) => Promise<void>;
 }
@@ -31,6 +32,7 @@ const DEFAULT_RETRY_DELAY_MS = 100;
 
 export class LibrarySyncManifestService implements SyncWorker {
   private readonly maxConflictRetries: number;
+  private readonly prepareLegacyUpgrade?: () => Promise<void>;
   private readonly retryDelayMs: number;
   private readonly wait: (milliseconds: number) => Promise<void>;
   private activeSync: Promise<SyncWorkerResult> | null = null;
@@ -41,6 +43,7 @@ export class LibrarySyncManifestService implements SyncWorker {
   ) {
     this.maxConflictRetries =
       options.maxConflictRetries ?? DEFAULT_MAX_CONFLICT_RETRIES;
+    this.prepareLegacyUpgrade = options.prepareLegacyUpgrade;
     this.retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
     this.wait = options.wait ?? wait;
   }
@@ -57,10 +60,26 @@ export class LibrarySyncManifestService implements SyncWorker {
   private async runSynchronization(): Promise<SyncWorkerResult> {
     let conflicts = 0;
     for (let attempt = 0; ; attempt += 1) {
-      const current = await this.remote.read(SYNC_MANIFEST_PATH);
+      let current = await this.remote.read(SYNC_MANIFEST_PATH);
       if (current) {
         const schema = parseManifest(current);
         if (schema === 'current') {
+          return { pulled: 0, pushed: 0, conflicts, rejected: 0 };
+        }
+        if (!this.prepareLegacyUpgrade) {
+          throw new LibrarySyncManifestCompatibilityError(
+            'The legacy sync destination cannot be upgraded before its logical-book state is prepared',
+          );
+        }
+        await this.prepareLegacyUpgrade();
+        current = await this.remote.read(SYNC_MANIFEST_PATH);
+        if (!current) {
+          throw new LibrarySyncManifestCompatibilityError(
+            'The sync root changed while preparing the logical-book upgrade',
+          );
+        }
+        const preparedSchema = parseManifest(current);
+        if (preparedSchema === 'current') {
           return { pulled: 0, pushed: 0, conflicts, rejected: 0 };
         }
         try {

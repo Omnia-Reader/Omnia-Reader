@@ -107,17 +107,22 @@ function createLibrarySyncService(
   const bookmarks = new BookmarkSyncService(remote, journal, repository);
   const annotations = new AnnotationSyncService(remote, journal, repository);
   const rootReconciliation = new SyncRootReconciliationService(remote);
+  const logicalBooks = new LogicalBookSyncService(
+    remote,
+    journal,
+    repository,
+    exclusions,
+  );
   const coordinator = new LibrarySyncCoordinator({
     preflight: {
       synchronize: (options) => rootReconciliation.prepare(options),
     },
-    schema: new LibrarySyncManifestService(remote),
-    logicalBooks: new LogicalBookSyncService(
-      remote,
-      journal,
-      repository,
-      exclusions,
-    ),
+    schema: new LibrarySyncManifestService(remote, {
+      prepareLegacyUpgrade: async () => {
+        await logicalBooks.synchronize();
+      },
+    }),
+    logicalBooks,
     books: new BookSyncService(remote, journal, repository, { exclusions }),
     progress,
     bookmarks,

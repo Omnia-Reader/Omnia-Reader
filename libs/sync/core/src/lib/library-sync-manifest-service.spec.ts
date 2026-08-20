@@ -61,6 +61,63 @@ describe('LibrarySyncManifestService', () => {
 
   it('compare-and-swaps a compatible schema-1 root to schema 2', async () => {
     const remote = new MemoryTransport();
+    const prepareLegacyUpgrade = vi.fn(async () => undefined);
+    remote.documents.set(
+      SYNC_MANIFEST_PATH,
+      document({
+        schemaVersion: 1,
+        application: 'omnia-reader',
+        publicationIdentity: 'sha256',
+        features: ['annotations', 'bookmarks', 'books', 'progress'],
+      }),
+    );
+
+    await expect(
+      new LibrarySyncManifestService(remote, {
+        prepareLegacyUpgrade,
+      }).synchronize(),
+    ).resolves.toMatchObject({
+      pushed: 1,
+    });
+    expect(prepareLegacyUpgrade).toHaveBeenCalledOnce();
+    expect(remote.readRequests).toEqual([
+      SYNC_MANIFEST_PATH,
+      SYNC_MANIFEST_PATH,
+    ]);
+    expect(prepareLegacyUpgrade.mock.invocationCallOrder[0]).toBeLessThan(
+      remote.write.mock.invocationCallOrder[0],
+    );
+    expect(remote.writeRequests[0]).toMatchObject({
+      expectedRevision: 'root-1',
+      message: 'Upgrade Omnia Reader logical-book synchronization schema',
+    });
+  });
+
+  it('does not expose schema 2 when legacy prerequisites fail', async () => {
+    const remote = new MemoryTransport();
+    remote.documents.set(
+      SYNC_MANIFEST_PATH,
+      document({
+        schemaVersion: 1,
+        application: 'omnia-reader',
+        publicationIdentity: 'sha256',
+        features: ['annotations', 'bookmarks', 'books', 'progress'],
+      }),
+    );
+    const prepareLegacyUpgrade = vi.fn(async () => {
+      throw new Error('Canonical state verification failed');
+    });
+
+    await expect(
+      new LibrarySyncManifestService(remote, {
+        prepareLegacyUpgrade,
+      }).synchronize(),
+    ).rejects.toThrow('Canonical state verification failed');
+    expect(remote.writeRequests).toEqual([]);
+  });
+
+  it('fails closed when no legacy bootstrap is configured', async () => {
+    const remote = new MemoryTransport();
     remote.documents.set(
       SYNC_MANIFEST_PATH,
       document({
@@ -73,13 +130,71 @@ describe('LibrarySyncManifestService', () => {
 
     await expect(
       new LibrarySyncManifestService(remote).synchronize(),
-    ).resolves.toMatchObject({
+    ).rejects.toBeInstanceOf(LibrarySyncManifestCompatibilityError);
+    expect(remote.writeRequests).toEqual([]);
+  });
+
+  it('honors a concurrent compatible upgrade observed after bootstrap', async () => {
+    const remote = new MemoryTransport();
+    remote.documents.set(
+      SYNC_MANIFEST_PATH,
+      document({
+        schemaVersion: 1,
+        application: 'omnia-reader',
+        publicationIdentity: 'sha256',
+        features: ['annotations', 'bookmarks', 'books', 'progress'],
+      }),
+    );
+    const prepareLegacyUpgrade = vi.fn(async () => {
+      remote.documents.set(
+        SYNC_MANIFEST_PATH,
+        document(createLibrarySyncManifest()),
+      );
+    });
+
+    await expect(
+      new LibrarySyncManifestService(remote, {
+        prepareLegacyUpgrade,
+      }).synchronize(),
+    ).resolves.toEqual({
+      pulled: 0,
+      pushed: 0,
+      conflicts: 0,
+      rejected: 0,
+    });
+    expect(remote.writeRequests).toEqual([]);
+  });
+
+  it('reuses verified legacy prerequisites after an interrupted root upgrade', async () => {
+    const remote = new MemoryTransport();
+    remote.documents.set(
+      SYNC_MANIFEST_PATH,
+      document({
+        schemaVersion: 1,
+        application: 'omnia-reader',
+        publicationIdentity: 'sha256',
+        features: ['annotations', 'bookmarks', 'books', 'progress'],
+      }),
+    );
+    remote.conflictsRemaining = 1;
+    remote.preserveManifestOnConflict = true;
+    const prepareLegacyUpgrade = vi.fn(async () => undefined);
+
+    await expect(
+      new LibrarySyncManifestService(remote, {
+        prepareLegacyUpgrade,
+        retryDelayMs: 0,
+        wait: async () => undefined,
+      }).synchronize(),
+    ).resolves.toEqual({
+      pulled: 0,
       pushed: 1,
+      conflicts: 1,
+      rejected: 0,
     });
-    expect(remote.writeRequests[0]).toMatchObject({
-      expectedRevision: 'root-1',
-      message: 'Upgrade Omnia Reader logical-book synchronization schema',
-    });
+    expect(prepareLegacyUpgrade).toHaveBeenCalledTimes(2);
+    expect(remote.writeRequests).toHaveLength(2);
+    expect(remote.writeRequests[1]?.expectedRevision).toBe('root-1');
   });
 
   it('re-reads after an initialization conflict', async () => {
@@ -138,25 +253,35 @@ describe('LibrarySyncManifestService', () => {
 
 class MemoryTransport implements LibrarySyncTransport {
   readonly documents = new Map<string, RemoteDocument>();
+  readonly readRequests: string[] = [];
   readonly writeRequests: DocumentWriteRequest[] = [];
+  readonly write = vi.fn(async (request: DocumentWriteRequest) =>
+    this.writeDocument(request),
+  );
   conflictsRemaining = 0;
+  preserveManifestOnConflict = false;
 
   async list(): Promise<readonly RemoteDocument[]> {
     return [...this.documents.values()];
   }
 
   async read(path: string): Promise<RemoteDocument | null> {
+    this.readRequests.push(path);
     return this.documents.get(path) ?? null;
   }
 
-  async write(request: DocumentWriteRequest): Promise<RemoteDocument> {
+  private async writeDocument(
+    request: DocumentWriteRequest,
+  ): Promise<RemoteDocument> {
     this.writeRequests.push(request);
     if (this.conflictsRemaining > 0) {
       this.conflictsRemaining -= 1;
-      this.documents.set(
-        SYNC_MANIFEST_PATH,
-        document(createLibrarySyncManifest()),
-      );
+      if (!this.preserveManifestOnConflict) {
+        this.documents.set(
+          SYNC_MANIFEST_PATH,
+          document(createLibrarySyncManifest()),
+        );
+      }
       throw new SyncConflictError();
     }
     const current = this.documents.get(request.path);
