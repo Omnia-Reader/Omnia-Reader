@@ -20,6 +20,7 @@ import {
   bookObjectPath,
 } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
+import { createOpaqueId, DEVICE_ID } from '../../device-identity';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 
 export type AddPublicationFormatResult =
@@ -46,6 +47,7 @@ export class PublicationAssociationService {
   private readonly journal = inject(SYNC_OPERATION_JOURNAL);
   private readonly syncExclusions =
     inject<BookSyncExclusions>(BOOK_SYNC_EXCLUSIONS);
+  private readonly deviceId = inject(DEVICE_ID);
 
   async addFormat(
     logicalBookId: LogicalBookId,
@@ -82,7 +84,7 @@ export class PublicationAssociationService {
       importedAt: new Date().toISOString(),
     };
     const candidate = await this.enrichment.validateSource(source, initial);
-    const identity = createMutationIdentity();
+    const identity = createMutationIdentity(this.deviceId);
     const result = await this.repository.addVariant(
       logicalBookId,
       candidate.book,
@@ -125,7 +127,7 @@ export class PublicationAssociationService {
     const mutation = await this.repository.associate(
       destinationLogicalBookId,
       sourceLogicalBookId,
-      createMutationIdentity(),
+      createMutationIdentity(this.deviceId),
     );
     let syncPending = false;
     try {
@@ -148,7 +150,7 @@ export class PublicationAssociationService {
     const mutation = await this.repository.detachVariant(
       logicalBookId,
       variantId,
-      createMutationIdentity(),
+      createMutationIdentity(this.deviceId),
     );
     return this.afterLocalMutation(mutation);
   }
@@ -173,7 +175,7 @@ export class PublicationAssociationService {
       mutation = await this.repository.deleteVariant(
         logicalBookId,
         variantId,
-        createMutationIdentity(),
+        createMutationIdentity(this.deviceId),
       );
     } catch (error) {
       newlyExcluded.forEach((target) => this.syncExclusions.include(target));
@@ -189,7 +191,7 @@ export class PublicationAssociationService {
     const mutation = await this.repository.reconcileMembership(
       conflictId,
       decision,
-      createMutationIdentity(),
+      createMutationIdentity(this.deviceId),
     );
     return this.afterLocalMutation(mutation);
   }
@@ -234,12 +236,8 @@ class CandidateBookSource implements BookSource {
   }
 }
 
-function createMutationIdentity(): LogicalMutationIdentity {
-  const deviceId = persistentDeviceId();
-  const suffix =
-    typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.trunc(Math.random() * 1_000_000)}`;
+function createMutationIdentity(deviceId: string): LogicalMutationIdentity {
+  const suffix = createOpaqueId();
   return {
     changeId: `change:${deviceId}:${suffix}`,
     parents: [],
@@ -247,22 +245,6 @@ function createMutationIdentity(): LogicalMutationIdentity {
     deviceId,
     appVersion: '0.0.0',
   };
-}
-
-function persistentDeviceId(): string {
-  const key = 'omnia-reader.device-id';
-  try {
-    const current = localStorage.getItem(key);
-    if (current) return current;
-    const created =
-      typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `device-${Date.now()}`;
-    localStorage.setItem(key, created);
-    return created;
-  } catch {
-    return 'local-device';
-  }
 }
 
 function titleFromFileName(fileName: string): string {

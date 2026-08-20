@@ -9,6 +9,7 @@ import {
   BookSyncExclusions,
 } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
+import { DEVICE_ID } from '../../device-identity';
 import { PublicationAssociationService } from './publication-association.service';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 
@@ -68,6 +69,7 @@ describe('PublicationAssociationService', () => {
           provide: BOOK_SYNC_EXCLUSIONS,
           useValue: syncExclusions as unknown as BookSyncExclusions,
         },
+        { provide: DEVICE_ID, useValue: 'shared-test-device' },
       ],
     });
   });
@@ -107,7 +109,10 @@ describe('PublicationAssociationService', () => {
       expect.stringMatching(
         /^\.omnia-reader\/library\/companion--[a-f0-9]{12}\/companion\.pdf$/,
       ),
-      expect.objectContaining({ changeId: expect.stringMatching(/^change:/) }),
+      expect.objectContaining({
+        changeId: expect.stringMatching(/^change:shared-test-device:/),
+        deviceId: 'shared-test-device',
+      }),
       undefined,
     );
     expect(addVariant.mock.invocationCallOrder[0]).toBeLessThan(

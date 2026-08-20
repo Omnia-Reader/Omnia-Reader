@@ -12,6 +12,7 @@ import {
   BookSyncExclusions,
   bookObjectPath,
 } from '@omnia-reader/sync/core';
+import { DEVICE_ID } from '../../device-identity';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 import { PublicationImportService } from './publication-import.service';
 
@@ -80,6 +81,7 @@ describe('PublicationImportService', () => {
           provide: BOOK_SYNC_EXCLUSIONS,
           useValue: syncExclusions as unknown as BookSyncExclusions,
         },
+        { provide: DEVICE_ID, useValue: 'shared-test-device' },
       ],
     });
   });
@@ -192,6 +194,10 @@ describe('PublicationImportService', () => {
         entity: 'logical-book-change',
         operation: 'upsert',
         payload: expect.objectContaining({
+          changeId: expect.stringMatching(
+            /^change:bootstrap:shared-test-device:/,
+          ),
+          deviceId: 'shared-test-device',
           variantEffects: [
             expect.objectContaining({ objectPath: bookObjectPath(book) }),
           ],

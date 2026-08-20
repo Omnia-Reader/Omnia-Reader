@@ -72,6 +72,7 @@ import {
 import { createBookSyncManifest } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { BackNavigationService } from '../../back-navigation.service';
+import { createOpaqueId, DEVICE_ID } from '../../device-identity';
 import { AnnotationMarkdownExportService } from './annotation-markdown-export.service';
 import { PdfThumbnailComponent } from './pdf-thumbnail.component';
 
@@ -109,11 +110,10 @@ function availabilityMessage(availability: VariantAvailability): string {
   return `${availability.status} (${availability.cause.replace(/-/g, ' ')})`;
 }
 
-function readerMutationIdentity(): LogicalMutationIdentity {
+function readerMutationIdentity(deviceId: string): LogicalMutationIdentity {
   const now = new Date().toISOString();
-  const deviceId = getDeviceId();
   return {
-    changeId: `change:${deviceId}:${crypto.randomUUID()}`,
+    changeId: `change:${deviceId}:${createOpaqueId()}`,
     parents: [],
     createdAt: now,
     deviceId,
@@ -246,6 +246,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   private readonly platform = inject(PLATFORM_PORT);
   private readonly backNavigation = inject(BackNavigationService);
   private readonly annotationExports = inject(AnnotationMarkdownExportService);
+  private readonly deviceId = inject(DEVICE_ID);
   private readonly progressSliderThumbWidthPx = 10;
 
   book: BookRecord | null = null;
@@ -483,7 +484,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
         const change = await this.repository.saveLogicalBookFormatPreference(
           logicalBook.id,
           book.format,
-          readerMutationIdentity(),
+          readerMutationIdentity(this.deviceId),
         );
         if (change) {
           try {
@@ -1850,10 +1851,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       const timestamp = new Date().toISOString();
       const bookmark: PublicationBookmark = {
         schemaVersion: 1,
-        id: crypto.randomUUID(),
+        id: createOpaqueId(),
         bookId: this.book.id,
         format: this.book.format,
-        deviceId: getDeviceId(),
+        deviceId: this.deviceId,
         locator: structuredClone(locator),
         label: createBookmarkLabel(locator, this.bookmarks.length + 1),
         createdAt: timestamp,
@@ -1875,7 +1876,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     const timestamp = new Date().toISOString();
     const tombstone: PublicationBookmark = {
       ...bookmark,
-      deviceId: getDeviceId(),
+      deviceId: this.deviceId,
       updatedAt: timestamp,
       deletedAt: timestamp,
     };
@@ -2263,10 +2264,10 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       };
       const annotation: PublicationAnnotation = {
         schemaVersion: 1,
-        id: this.editingAnnotation?.id ?? crypto.randomUUID(),
+        id: this.editingAnnotation?.id ?? createOpaqueId(),
         bookId: this.book.id,
         format: this.book.format,
-        deviceId: getDeviceId(),
+        deviceId: this.deviceId,
         locator: structuredClone(this.pendingSelection.locator),
         color: primaryDecoration.color,
         style: primaryDecoration.style,
@@ -2309,7 +2310,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       const timestamp = new Date().toISOString();
       const tombstone: PublicationAnnotation = {
         ...annotation,
-        deviceId: getDeviceId(),
+        deviceId: this.deviceId,
         updatedAt: timestamp,
         deletedAt: timestamp,
       };
@@ -2359,7 +2360,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       };
       const updated: PublicationAnnotation = {
         ...annotation,
-        deviceId: getDeviceId(),
+        deviceId: this.deviceId,
         color: primaryDecoration.color,
         style: primaryDecoration.style,
         decorations,
@@ -2426,7 +2427,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     try {
       const restored: PublicationAnnotation = {
         ...deletedAnnotation,
-        deviceId: getDeviceId(),
+        deviceId: this.deviceId,
         updatedAt: timestampAfter(deletedAnnotation.updatedAt),
         deletedAt: undefined,
       };
@@ -3317,7 +3318,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       schemaVersion: 1,
       bookId: this.book.id,
       format: this.book.format,
-      deviceId: getDeviceId(),
+      deviceId: this.deviceId,
       locator,
       furthestTotalProgression: Math.max(
         this.progress?.furthestTotalProgression ?? 0,
@@ -3737,16 +3738,6 @@ const UNNUMBERED_TOP_LEVEL_TOC_TITLES = new Set([
   'table of contents',
   'title page',
 ]);
-
-function getDeviceId(): string {
-  const storageKey = 'omnia-reader-device-id';
-  let deviceId = localStorage.getItem(storageKey);
-  if (!deviceId) {
-    deviceId = crypto.randomUUID();
-    localStorage.setItem(storageKey, deviceId);
-  }
-  return deviceId;
-}
 
 function timestampAfter(value: string): string {
   const previous = Date.parse(value);

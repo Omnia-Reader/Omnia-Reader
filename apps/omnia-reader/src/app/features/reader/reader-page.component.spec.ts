@@ -19,6 +19,7 @@ import {
 } from '@omnia-reader/reader/domain';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { BackNavigationService } from '../../back-navigation.service';
+import { DEVICE_ID } from '../../device-identity';
 import {
   hasBookSyncMetadataChanged,
   ReaderPageComponent,
@@ -318,6 +319,7 @@ describe('ReaderPageComponent annotations', () => {
             registerTransientHandler: () => () => undefined,
           },
         },
+        { provide: DEVICE_ID, useValue: 'shared-test-device' },
       ],
     }).compileComponents();
 
@@ -334,7 +336,10 @@ describe('ReaderPageComponent annotations', () => {
     expect(saveLogicalBookFormatPreference).toHaveBeenCalledWith(
       logicalBookFromVariant(BOOK).id,
       'pdf',
-      expect.objectContaining({ changeId: expect.stringMatching(/^change:/) }),
+      expect.objectContaining({
+        changeId: expect.stringMatching(/^change:shared-test-device:/),
+        deviceId: 'shared-test-device',
+      }),
     );
     expect(journal.append).not.toHaveBeenCalledWith(
       expect.objectContaining({ entity: 'book' }),

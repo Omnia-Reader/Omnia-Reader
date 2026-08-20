@@ -1476,6 +1476,47 @@ test('imports, reads, and resumes a PDF', async ({ page }) => {
   await expect(page.getByText('No annotations yet.')).toBeVisible();
 });
 
+test('keeps local reading available when browser storage is denied', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.addInitScript(() => {
+    const denied = () => {
+      throw new DOMException('Storage denied', 'SecurityError');
+    };
+    for (const method of ['getItem', 'setItem', 'removeItem'] as const) {
+      Object.defineProperty(Storage.prototype, method, {
+        configurable: true,
+        value: denied,
+      });
+    }
+  });
+  await page.reload();
+  await expect(
+    page.getByRole('heading', { name: 'Library', exact: true }),
+  ).toBeVisible();
+
+  await importPublication(
+    page,
+    'storage-denied.pdf',
+    'application/pdf',
+    createPdfFixture(),
+    'Omnia PDF Fixture',
+  );
+  await libraryFormatButton(page, 'Omnia PDF Fixture', 'pdf').click();
+  await expect(
+    page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
+  ).toBeVisible({ timeout: 20_000 });
+
+  await page.getByRole('button', { name: 'Toggle bookmarks' }).click();
+  await page
+    .getByRole('button', { name: 'Add bookmark at current location' })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Delete bookmark Page 1' }),
+  ).toBeVisible();
+});
+
 test('opens an encrypted PDF after an accessible password retry', async ({
   page,
 }) => {

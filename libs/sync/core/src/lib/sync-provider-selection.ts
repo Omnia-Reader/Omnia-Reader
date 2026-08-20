@@ -23,21 +23,47 @@ export class BrowserSyncProviderSelection implements SyncProviderSelection {
   private readonly listeners = new Set<
     (provider: SyncProviderKind | null) => void
   >();
+  private selectedProvider: SyncProviderKind | null = null;
+  private loaded = false;
 
-  constructor(private readonly storage: Storage = globalThis.localStorage) {}
+  constructor(
+    private readonly storage: Storage | undefined = browserStorage(),
+  ) {}
 
   current(): SyncProviderKind | null {
-    const value = this.storage.getItem(this.storageKey);
-    return value === 'git' || value === 'mega' ? value : null;
+    if (!this.loaded) {
+      this.loaded = true;
+      try {
+        const value = this.storage?.getItem(this.storageKey);
+        this.selectedProvider =
+          value === 'git' || value === 'mega' ? value : null;
+      } catch {
+        // Optional synchronization cannot make local reading depend on access
+        // to browser storage. Keep provider selection session-local instead.
+      }
+    }
+    return this.selectedProvider;
   }
 
   select(provider: SyncProviderKind): void {
-    this.storage.setItem(this.storageKey, provider);
+    this.loaded = true;
+    this.selectedProvider = provider;
+    try {
+      this.storage?.setItem(this.storageKey, provider);
+    } catch {
+      // The in-memory selection remains authoritative for this session.
+    }
     this.notify(provider);
   }
 
   clear(): void {
-    this.storage.removeItem(this.storageKey);
+    this.loaded = true;
+    this.selectedProvider = null;
+    try {
+      this.storage?.removeItem(this.storageKey);
+    } catch {
+      // Clearing the in-memory selection is sufficient for this session.
+    }
     this.notify(null);
   }
 
@@ -59,6 +85,14 @@ export class BrowserSyncProviderSelection implements SyncProviderSelection {
         // Provider state presentation cannot prevent a valid selection.
       }
     }
+  }
+}
+
+function browserStorage(): Storage | undefined {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
   }
 }
 

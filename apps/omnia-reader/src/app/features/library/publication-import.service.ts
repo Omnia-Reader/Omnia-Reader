@@ -12,6 +12,7 @@ import {
   createBookSyncManifest,
 } from '@omnia-reader/sync/core';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
+import { createOpaqueId, DEVICE_ID } from '../../device-identity';
 import { PublicationEnrichmentService } from './publication-enrichment.service';
 
 export interface PublicationImportResult {
@@ -49,6 +50,7 @@ export class PublicationImportService {
   private readonly syncJournal = inject(SYNC_OPERATION_JOURNAL);
   private readonly enrichment = inject(PublicationEnrichmentService);
   private readonly syncExclusions = inject(BOOK_SYNC_EXCLUSIONS);
+  private readonly deviceId = inject(DEVICE_ID);
   private readonly importedListeners = new Set<
     (books: readonly BookRecord[]) => void
   >();
@@ -92,7 +94,7 @@ export class PublicationImportService {
             book.id,
           );
           if (logicalBook) {
-            const changeId = `change:bootstrap:${crypto.randomUUID()}`;
+            const changeId = `change:bootstrap:${this.deviceId}:${createOpaqueId()}`;
             await this.appendJournalEntry({
               entity: 'logical-book-change',
               entityId: changeId,
@@ -114,7 +116,7 @@ export class PublicationImportService {
                 preferenceEffects: [],
                 resolvesConflictIds: [],
                 createdAt: book.importedAt,
-                deviceId: 'local-import',
+                deviceId: this.deviceId,
                 appVersion: '0.0.0',
               },
             });

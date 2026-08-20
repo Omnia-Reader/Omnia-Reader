@@ -36,6 +36,21 @@ describe('BrowserSyncProviderSelection', () => {
     expect(selection.current()).toBe('git');
     expect(healthyListener).toHaveBeenLastCalledWith('git');
   });
+
+  it('keeps provider selection usable when browser storage is unavailable', () => {
+    const storage = new MemoryStorage();
+    storage.rejectAccess = true;
+    const selection = new BrowserSyncProviderSelection(storage);
+    const listener = vi.fn();
+    selection.subscribe(listener);
+
+    expect(selection.current()).toBeNull();
+    expect(() => selection.select('git')).not.toThrow();
+    expect(selection.current()).toBe('git');
+    expect(() => selection.clear()).not.toThrow();
+    expect(selection.current()).toBeNull();
+    expect(listener.mock.calls).toEqual([[null], ['git'], [null]]);
+  });
 });
 
 describe('SelectedLibrarySyncTransport', () => {
@@ -91,6 +106,7 @@ describe('SelectedLibrarySyncTransport', () => {
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
+  rejectAccess = false;
 
   get length(): number {
     return this.values.size;
@@ -101,6 +117,7 @@ class MemoryStorage implements Storage {
   }
 
   getItem(key: string): string | null {
+    this.assertAccessible();
     return this.values.get(key) ?? null;
   }
 
@@ -109,10 +126,18 @@ class MemoryStorage implements Storage {
   }
 
   removeItem(key: string): void {
+    this.assertAccessible();
     this.values.delete(key);
   }
 
   setItem(key: string, value: string): void {
+    this.assertAccessible();
     this.values.set(key, value);
+  }
+
+  private assertAccessible(): void {
+    if (this.rejectAccess) {
+      throw new DOMException('Storage denied', 'SecurityError');
+    }
   }
 }
