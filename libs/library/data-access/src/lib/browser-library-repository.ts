@@ -633,27 +633,35 @@ export class BrowserLibraryRepository
     );
     const completion = idbTransactionComplete(transaction);
     const store = transaction.objectStore(LOGICAL_BOOKS_STORE);
-    const [currentDestination, currentSource] = await Promise.all([
-      idbRequest<unknown>(store.get(destinationLogicalBookId)),
-      idbRequest<unknown>(store.get(sourceLogicalBookId)),
-    ]);
-    if (
-      JSON.stringify(currentDestination) !== JSON.stringify(destination) ||
-      JSON.stringify(currentSource) !== JSON.stringify(source)
-    ) {
-      transaction.abort();
+    try {
+      const [currentDestination, currentSource] = await Promise.all([
+        idbRequest<unknown>(store.get(destinationLogicalBookId)),
+        idbRequest<unknown>(store.get(sourceLogicalBookId)),
+      ]);
+      if (
+        JSON.stringify(currentDestination) !== JSON.stringify(destination) ||
+        JSON.stringify(currentSource) !== JSON.stringify(source)
+      ) {
+        throw new Error('Logical membership changed before association commit');
+      }
+      store.delete(sourceLogicalBookId);
+      store.put(updated);
+      transaction
+        .objectStore(LOGICAL_BOOK_COVERS_STORE)
+        .delete(sourceLogicalBookId);
+      transaction
+        .objectStore(LOGICAL_BOOK_PREFERENCES_STORE)
+        .delete(sourceLogicalBookId);
+      await completion;
+    } catch (error) {
+      try {
+        transaction.abort();
+      } catch {
+        // The transaction may already be inactive after a request failure.
+      }
       await completion.catch(() => undefined);
-      throw new Error('Logical membership changed before association commit');
+      throw error;
     }
-    store.delete(sourceLogicalBookId);
-    store.put(updated);
-    transaction
-      .objectStore(LOGICAL_BOOK_COVERS_STORE)
-      .delete(sourceLogicalBookId);
-    transaction
-      .objectStore(LOGICAL_BOOK_PREFERENCES_STORE)
-      .delete(sourceLogicalBookId);
-    await completion;
     return {
       createdLogicalBookIds: [],
       updatedLogicalBookIds: [destinationLogicalBookId],

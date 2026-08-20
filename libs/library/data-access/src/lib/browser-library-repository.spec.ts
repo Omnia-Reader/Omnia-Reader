@@ -647,7 +647,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
     expect(removed).toHaveLength(0);
   });
 
-  it('cleans staged bytes after a metadata transaction failure and permits retry', async () => {
+  it('REC-add-transaction-abort cleans staged bytes and permits retry', async () => {
     const databaseName = 'add-variant-transaction-retry';
     const storage = controlledBinaryStorage('opfs', null);
     const repository = new BrowserLibraryRepository(
@@ -671,6 +671,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
       'epub',
       epub,
     );
+    const inventoryBeforeAbort = await repository.getLogicalLibrarySnapshot();
     await putRawLibraryRecords(
       [{ storeName: 'books', value: variant }],
       databaseName,
@@ -686,6 +687,9 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
       ),
     ).rejects.toBeTruthy();
     expect(storage.remove).toHaveBeenCalledTimes(1);
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      inventoryBeforeAbort,
+    );
     await expect(repository.getLogicalBook(logical.id)).resolves.toMatchObject({
       variants: { pdf: destination.id },
     });
@@ -711,9 +715,10 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
     });
   });
 
-  it('leaves membership unchanged when staging fails for quota', async () => {
+  it('REC-add-before-transaction leaves state unchanged when staging exceeds quota', async () => {
     const databaseName = 'add-variant-quota-failure';
-    const storage = controlledBinaryStorage('opfs', null);
+    let readable: Blob | null = null;
+    const storage = controlledBinaryStorage('opfs', () => readable);
     const repository = new BrowserLibraryRepository(
       storage,
       undefined,
@@ -722,6 +727,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
     const pdf = new Blob(['%PDF-1.4 quota destination'], {
       type: 'application/pdf',
     });
+    readable = pdf;
     const destination = await repository.importBook(source('quota.pdf', pdf));
     const logical = await repository.findLogicalBookByVariant(destination.id);
     assertPresent(logical);
@@ -736,6 +742,7 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
       'epub',
       epub,
     );
+    const before = await repository.getLogicalLibrarySnapshot();
 
     await expect(
       repository.addVariant(
@@ -746,10 +753,16 @@ describe('BrowserLibraryRepository add logical-book variant', () => {
         mutation('add:quota'),
       ),
     ).rejects.toMatchObject({ name: 'QuotaExceededError' });
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
     await expect(repository.getLogicalBook(logical.id)).resolves.toMatchObject({
       variants: { pdf: destination.id },
     });
     await expect(repository.getBook(variant.id)).resolves.toBeNull();
+    await expect(
+      repository.getBookSource(destination.id),
+    ).resolves.not.toBeNull();
   });
 });
 
@@ -799,7 +812,7 @@ describe('BrowserLibraryRepository logical-book association', () => {
     await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
   });
 
-  it('rejects same-format and self association without mutation', async () => {
+  it('REC-associate-before-transaction rejects incompatible membership without mutation', async () => {
     const repository = new BrowserLibraryRepository();
     const leftBytes = new Blob(['%PDF-1.4 left association'], {
       type: 'application/pdf',
@@ -813,6 +826,7 @@ describe('BrowserLibraryRepository logical-book association', () => {
     const rightLogical = await repository.findLogicalBookByVariant(right.id);
     assertPresent(leftLogical);
     assertPresent(rightLogical);
+    const before = await repository.getLogicalLibrarySnapshot();
 
     await expect(
       repository.associate(
@@ -828,9 +842,61 @@ describe('BrowserLibraryRepository logical-book association', () => {
         mutation('associate:self'),
       ),
     ).rejects.toThrow('itself');
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getBookSource(left.id)).resolves.not.toBeNull();
+    await expect(repository.getBookSource(right.id)).resolves.not.toBeNull();
+  });
+
+  it('REC-associate-transaction-abort rolls back membership and permits retry', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'associate-transaction-abort',
+    );
+    const epub = await repository.importBook(
+      source(
+        'abort-association.epub',
+        new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 31])], {
+          type: 'application/epub+zip',
+        }),
+      ),
+    );
+    const pdf = await repository.importBook(
+      source(
+        'abort-association.pdf',
+        new Blob(['%PDF-1.4 abort association'], { type: 'application/pdf' }),
+      ),
+    );
+    const destination = await repository.findLogicalBookByVariant(epub.id);
+    const sourceLogical = await repository.findLogicalBookByVariant(pdf.id);
+    assertPresent(destination);
+    assertPresent(sourceLogical);
+    const before = await repository.getLogicalLibrarySnapshot();
+    const abort = abortNextStorePut('logicalBooks');
+
     await expect(
-      repository.getLogicalBook(rightLogical.id),
-    ).resolves.not.toBeNull();
+      repository.associate(
+        destination.id,
+        sourceLogical.id,
+        mutation('associate:abort'),
+      ),
+    ).rejects.toBeTruthy();
+    abort.mockRestore();
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
+    await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+    await expect(
+      repository.associate(
+        destination.id,
+        sourceLogical.id,
+        mutation('associate:retry'),
+      ),
+    ).resolves.toMatchObject({ updatedLogicalBookIds: [destination.id] });
   });
 });
 
@@ -915,6 +981,276 @@ describe('BrowserLibraryRepository logical-book management', () => {
     await repository.deleteVariant(logical.id, null, mutation('delete:book'));
     await expect(repository.getLogicalBook(logical.id)).resolves.toBeNull();
     await expect(repository.getBook(epub.id)).resolves.toBeNull();
+  });
+
+  it('REC-detach-before-transaction rejects a singleton without mutation', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'detach-before-transaction',
+    );
+    const epub = await repository.importBook(
+      source(
+        'detach-singleton.epub',
+        new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 41])], {
+          type: 'application/epub+zip',
+        }),
+      ),
+    );
+    const logical = await repository.findLogicalBookByVariant(epub.id);
+    assertPresent(logical);
+    const before = await repository.getLogicalLibrarySnapshot();
+
+    await expect(
+      repository.detachVariant(
+        logical.id,
+        epub.id,
+        mutation('detach:before-transaction'),
+      ),
+    ).rejects.toThrow('Only a two-format logical book can be detached');
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
+  });
+
+  it('REC-delete-non-last-before-transaction rejects a non-member without mutation', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'delete-before-transaction',
+    );
+    const { logical, epub, pdf } = await prepareTwoFormatRepository(
+      repository,
+      'delete-before',
+    );
+    await repository.saveProgress(
+      progressDocument(pdf.id, 'delete-before', 0.5),
+    );
+    const before = await repository.getLogicalLibrarySnapshot();
+    const progressBefore = await repository.getProgress(pdf.id);
+
+    await expect(
+      repository.deleteVariant(
+        logical.id,
+        `sha256:${'f'.repeat(64)}`,
+        mutation('delete:before-transaction'),
+      ),
+    ).rejects.toThrow('not a current member');
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getProgress(pdf.id)).resolves.toEqual(
+      progressBefore,
+    );
+    await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
+    await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+  });
+
+  it('REC-preference-change-before-transaction rejects a missing format without mutation', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-before-transaction',
+    );
+    const epub = await repository.importBook(
+      source(
+        'preference-singleton.epub',
+        new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 42])], {
+          type: 'application/epub+zip',
+        }),
+      ),
+    );
+    const logical = await repository.findLogicalBookByVariant(epub.id);
+    assertPresent(logical);
+    const before = await repository.getLogicalLibrarySnapshot();
+
+    await expect(
+      repository.saveLogicalBookFormatPreference(
+        logical.id,
+        'pdf',
+        mutation('preference:before-transaction'),
+      ),
+    ).rejects.toThrow('not a current logical-book member');
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
+  });
+
+  it('REC-exact-source-replacement-before-transaction rejects mismatched bytes without mutation', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'replacement-before-transaction',
+    );
+    const original = new Blob(['%PDF-1.4 exact source A'], {
+      type: 'application/pdf',
+    });
+    const mismatch = new Blob(['%PDF-1.4 exact source B'], {
+      type: 'application/pdf',
+    });
+    expect(mismatch.size).toBe(original.size);
+    const book = await repository.importBook(source('original.pdf', original));
+    const before = await repository.getLogicalLibrarySnapshot();
+
+    await expect(
+      repository.replaceVariantSource(
+        book.id,
+        source('mismatch.pdf', mismatch),
+      ),
+    ).rejects.toThrow('failed exact-source validation');
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getBookSource(book.id)).resolves.toMatchObject({
+      name: 'original.pdf',
+    });
+  });
+
+  it('REC-detach-transaction-abort preserves grouping, preference, and both sources', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'detach-transaction-abort',
+    );
+    const { logical, epub, pdf } = await prepareTwoFormatRepository(
+      repository,
+      'detach-abort',
+    );
+    await repository.saveLogicalBookFormatPreference(
+      logical.id,
+      'pdf',
+      mutation('preference:detach-abort'),
+    );
+    const before = await repository.getLogicalLibrarySnapshot();
+    const abort = abortNextStorePut('logicalBooks');
+
+    await expect(
+      repository.detachVariant(logical.id, pdf.id, mutation('detach:abort')),
+    ).rejects.toBeTruthy();
+    abort.mockRestore();
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getBookSource(epub.id)).resolves.not.toBeNull();
+    await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+    await expect(
+      repository.detachVariant(logical.id, pdf.id, mutation('detach:retry')),
+    ).resolves.toMatchObject({ createdLogicalBookIds: [expect.any(String)] });
+  });
+
+  it('REC-delete-non-last-transaction-abort restores catalog, binary, and reading state', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'delete-transaction-abort',
+    );
+    const { logical, pdf } = await prepareTwoFormatRepository(
+      repository,
+      'delete-abort',
+    );
+    await repository.saveProgress(
+      progressDocument(pdf.id, 'delete-abort', 0.6),
+    );
+    const before = await repository.getLogicalLibrarySnapshot();
+    const progressBefore = await repository.getProgress(pdf.id);
+    const abort = abortNextStorePut('logicalBooks');
+
+    await expect(
+      repository.deleteVariant(logical.id, pdf.id, mutation('delete:abort')),
+    ).rejects.toBeTruthy();
+    abort.mockRestore();
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(repository.getBook(pdf.id)).resolves.not.toBeNull();
+    await expect(repository.getBookSource(pdf.id)).resolves.not.toBeNull();
+    await expect(repository.getProgress(pdf.id)).resolves.toEqual(
+      progressBefore,
+    );
+    await expect(
+      repository.deleteVariant(logical.id, pdf.id, mutation('delete:retry')),
+    ).resolves.toMatchObject({ deletedVariantIds: [pdf.id] });
+  });
+
+  it('REC-preference-change-transaction-abort preserves the previous preference', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-transaction-abort',
+    );
+    const { logical } = await prepareTwoFormatRepository(
+      repository,
+      'preference-abort',
+    );
+    await repository.saveLogicalBookFormatPreference(
+      logical.id,
+      'epub',
+      mutation('preference:baseline'),
+    );
+    const before = await repository.getLogicalLibrarySnapshot();
+    const abort = abortNextStorePut('logicalBookPreferences');
+
+    await expect(
+      repository.saveLogicalBookFormatPreference(
+        logical.id,
+        'pdf',
+        mutation('preference:abort'),
+      ),
+    ).rejects.toBeTruthy();
+    abort.mockRestore();
+
+    await expect(repository.getLogicalLibrarySnapshot()).resolves.toEqual(
+      before,
+    );
+    await expect(
+      repository.saveLogicalBookFormatPreference(
+        logical.id,
+        'pdf',
+        mutation('preference:retry'),
+      ),
+    ).resolves.toMatchObject({ kind: 'preference' });
+  });
+
+  it('REC-exact-source-replacement-transaction-abort retains the readable source', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'replacement-transaction-abort',
+    );
+    const bytes = new Blob(['%PDF-1.4 exact replacement abort'], {
+      type: 'application/pdf',
+    });
+    const book = await repository.importBook(source('original.pdf', bytes));
+    const abort = abortNextStorePut('binaries');
+
+    await expect(
+      repository.replaceVariantSource(
+        book.id,
+        source('replacement.pdf', bytes),
+      ),
+    ).rejects.toBeTruthy();
+    abort.mockRestore();
+
+    await expect(repository.getBookSource(book.id)).resolves.toMatchObject({
+      name: 'original.pdf',
+    });
+    await expect(
+      repository.replaceVariantSource(
+        book.id,
+        source('replacement.pdf', bytes),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(repository.getBookSource(book.id)).resolves.toMatchObject({
+      name: 'replacement.pdf',
+    });
   });
 
   it('persists and resolves a membership reconciliation atomically', async () => {
@@ -1514,6 +1850,60 @@ function progressDocument(
         : '2026-07-25T09:00:00.000Z',
     appVersion: '1.0.0',
   };
+}
+
+async function prepareTwoFormatRepository(
+  repository: BrowserLibraryRepository,
+  fixture: string,
+): Promise<{
+  logical: NonNullable<
+    Awaited<ReturnType<BrowserLibraryRepository['getLogicalBook']>>
+  >;
+  epub: BookRecord;
+  pdf: BookRecord;
+}> {
+  const epub = await repository.importBook(
+    source(
+      `${fixture}.epub`,
+      new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, fixture.length])], {
+        type: 'application/epub+zip',
+      }),
+    ),
+  );
+  const pdf = await repository.importBook(
+    source(
+      `${fixture}.pdf`,
+      new Blob([`%PDF-1.4 ${fixture}`], { type: 'application/pdf' }),
+    ),
+  );
+  const logical = await repository.findLogicalBookByVariant(epub.id);
+  const pdfLogical = await repository.findLogicalBookByVariant(pdf.id);
+  assertPresent(logical);
+  assertPresent(pdfLogical);
+  await repository.associate(
+    logical.id,
+    pdfLogical.id,
+    mutation(`associate:${fixture}`),
+  );
+  return { logical, epub, pdf };
+}
+
+function abortNextStorePut(storeName: string) {
+  const put = IDBObjectStore.prototype.put;
+  let aborted = false;
+  return vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (
+    this: IDBObjectStore,
+    value: unknown,
+    key?: IDBValidKey,
+  ) {
+    const request =
+      key === undefined ? put.call(this, value) : put.call(this, value, key);
+    if (!aborted && this.name === storeName) {
+      aborted = true;
+      this.transaction.abort();
+    }
+    return request;
+  });
 }
 
 async function putRawLibraryRecords(

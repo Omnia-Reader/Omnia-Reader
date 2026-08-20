@@ -468,6 +468,26 @@ after the badge-only checkpoint passes.
   twelve-field inventories. Together with association and replacement
   cancellation, all five fixed cancellation rows now have executable canonical
   browser evidence. The complete `storage.spec.ts` passed 13/13.
+- All six `transaction-abort` rows now have executable repository-level
+  rollback-and-retry evidence for add, associate, detach, non-last delete,
+  preferred-format change, and exact-source replacement. Each case aborts the
+  owning IndexedDB transaction after writes are queued, verifies the complete
+  logical snapshot and applicable catalog, binary, preference, or reading state
+  remain unchanged, and then proves a clean retry succeeds. The association
+  abort initially exposed an unhandled transaction-completion rejection when a
+  later queued operation observed an already inactive transaction; the owning
+  error path now consumes completion before rethrowing. Uncached
+  `npx nx test library-data-access --skip-nx-cache` passed 6 files / 72 tests.
+  These rows do not substitute for the remaining full twelve-field browser
+  evidence at the `before-transaction` and `post-commit-pre-journal` points.
+- All six `before-transaction` rows now have executable repository-level
+  no-mutation evidence. Add fails during quota-bound staging; association rejects
+  incompatible membership; detach rejects a singleton; non-last delete rejects
+  a non-member; preference rejects a missing format; and exact-source
+  replacement rejects same-size bytes with a different digest. Every case
+  compares the complete logical snapshot and verifies the applicable catalog,
+  source, preference, or reading state remains intact. The same uncached
+  data-access run passed 6 files / 72 tests.
 - T095 remains incomplete until the other fixed recovery rows have executable
   outcomes rather than matrix-cardinality assertions alone.
 
