@@ -72,9 +72,18 @@ Build/select one explicit unmodified release package and provenance record,
 then run:
 
 ```sh
+npm run native:build
+node tools/release/write-native-provenance.mjs \
+  --artifact "src-tauri/target/release/bundle/appimage/Omnia Reader_0.1.0_amd64.AppImage" \
+  --output-directory dist/native-provenance
+
 npx nx run omnia-reader-e2e:performance-packaged-desktop-smoke --skip-nx-cache
 npx nx run omnia-reader-e2e:performance-packaged-desktop --skip-nx-cache
 ```
+
+Provenance generation requires clean Git source, the exact release AppImage,
+coherent package versions, and a new output destination. It writes the
+AppImage provenance JSON and `SHA256SUMS` without replacing existing output.
 
 Expected smoke: external WebDriver proves script execution and semantic product
 actions against the exact owned release bytes. If the host lacks a supported

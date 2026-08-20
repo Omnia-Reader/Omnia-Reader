@@ -78,7 +78,7 @@
 - [x] T026 [US2] Implement release package extraction/runtime/process attestation in `apps/omnia-reader-e2e/performance/packaged-desktop-environment.mjs`
 - [x] T027 [US2] Implement a bounded protocol-neutral semantic automation adapter in `apps/omnia-reader-e2e/performance/management-automation.mjs`
 - [ ] T028 [US2] Implement the fail-closed external-Tauri packaged driver in `apps/omnia-reader-e2e/performance/run-packaged-desktop.mjs`
-- [ ] T029 [US2] Generate bounded native package provenance and checksums in `tools/release/write-native-provenance.mjs`
+- [x] T029 [US2] Generate bounded native package provenance and checksums in `tools/release/write-native-provenance.mjs`
 - [ ] T030 [US2] Upload only intended native packages plus provenance/checksums in `.github/workflows/verify.yml`
 - [ ] T031 [US2] Wire packaged-desktop smoke/primary targets in `apps/omnia-reader-e2e/project.json`
 - [ ] T032 [US2] Freeze the reviewed package/runtime identity in `specs/001-multi-format-books/performance/profiles-v2.json` only after the external-driver spike passes
