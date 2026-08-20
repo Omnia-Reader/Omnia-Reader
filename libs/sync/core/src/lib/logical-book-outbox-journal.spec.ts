@@ -40,6 +40,36 @@ describe('LogicalBookOutboxJournal', () => {
     await expect(journal.pending()).resolves.toHaveLength(1);
   });
 
+  it('retains the outbox copy when the accepted payload names another change', async () => {
+    const change = logicalChange('change:expected');
+    const outbox = new MemoryOutbox([change]);
+    const journal = new LogicalBookOutboxJournal(new MemoryJournal(), outbox);
+
+    await journal.append({
+      ...operation(change),
+      payload: logicalChange('change:different'),
+    });
+
+    await expect(outbox.listPendingLogicalBookChanges()).resolves.toEqual([
+      change,
+    ]);
+  });
+
+  it('retains the outbox copy when the accepted payload is invalid', async () => {
+    const change = logicalChange('change:invalid-payload');
+    const outbox = new MemoryOutbox([change]);
+    const journal = new LogicalBookOutboxJournal(new MemoryJournal(), outbox);
+
+    await journal.append({
+      ...operation(change),
+      payload: { changeId: change.changeId },
+    });
+
+    await expect(outbox.listPendingLogicalBookChanges()).resolves.toEqual([
+      change,
+    ]);
+  });
+
   it('acknowledges recovered outbox work only after the sync worker accepts it', async () => {
     const change = logicalChange('change:preference');
     const outbox = new MemoryOutbox([change]);

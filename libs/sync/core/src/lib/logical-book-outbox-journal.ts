@@ -1,4 +1,5 @@
 import {
+  isLogicalBookChange,
   LogicalBookChangeOutbox,
   NewSyncOperation,
   SyncOperation,
@@ -21,7 +22,11 @@ export class LogicalBookOutboxJournal implements SyncOperationJournal {
 
   async append(input: NewSyncOperation): Promise<SyncOperation> {
     const operation = await this.delegate.append(input);
-    if (input.entity === 'logical-book-change') {
+    if (
+      input.entity === 'logical-book-change' &&
+      isLogicalBookChange(input.payload) &&
+      input.payload.changeId === input.entityId
+    ) {
       await this.outbox
         .acknowledgePendingLogicalBookChanges([input.entityId])
         .catch(() => undefined);

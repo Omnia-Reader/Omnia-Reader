@@ -73,6 +73,56 @@ describe('LogicalBookSyncService', () => {
     expect(acknowledge).toHaveBeenCalledWith(['operation-1']);
   });
 
+  it('acknowledges every journal view of one immutable logical change', async () => {
+    const remote = new MemoryTransport();
+    const acknowledge = vi.fn();
+    const journal = {
+      pending: vi.fn().mockResolvedValue([
+        {
+          id: 'operation-1',
+          entity: 'logical-book-change',
+          entityId: change.changeId,
+          operation: 'upsert',
+          revision: 1,
+          createdAt: change.createdAt,
+          payload: change,
+        },
+        {
+          id: `logical-book-outbox:${change.changeId}`,
+          entity: 'logical-book-change',
+          entityId: change.changeId,
+          operation: 'upsert',
+          revision: 1,
+          createdAt: change.createdAt,
+          payload: change,
+        },
+      ]),
+      acknowledge,
+      append: vi.fn(),
+    } as unknown as SyncOperationJournal;
+    const repository = {
+      getLogicalLibrarySnapshot: vi.fn().mockResolvedValue(emptySnapshot()),
+      replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
+    } as unknown as LogicalBookStateRepository;
+
+    await expect(
+      new LogicalBookSyncService(remote, journal, repository).synchronize(),
+    ).resolves.toMatchObject({ pushed: 1, rejected: 0 });
+
+    const state = parseLogicalBookState(
+      remote.documents.get(LOGICAL_BOOK_STATE_PATH)?.content ?? '',
+    );
+    expect(serializeLogicalBookState(state)).toBe(
+      serializeLogicalBookState(
+        mergeLogicalBookChangesIntoState(emptyLogicalBookState(), [change]),
+      ),
+    );
+    expect(acknowledge).toHaveBeenCalledWith([
+      'operation-1',
+      `logical-book-outbox:${change.changeId}`,
+    ]);
+  });
+
   it('does not acknowledge local work when publication fails', async () => {
     const remote = new MemoryTransport();
     remote.writeError = new Error('provider unavailable');
