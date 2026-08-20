@@ -161,17 +161,29 @@
       </div>
 
       @if (busy) {
-        <p class="m-0 pl-11 text-sm text-stone-600" role="status">
+        <p
+          class="m-0 pl-11 text-sm text-stone-600"
+          role="status"
+          data-testid="backup-progress"
+        >
           {{ backupProgressMessage ?? 'Processing library archive…' }}
         </p>
       }
       @if (statusMessage) {
-        <p class="m-0 pl-11 text-sm text-emerald-700" role="status">
+        <p
+          class="m-0 pl-11 text-sm text-emerald-700"
+          role="status"
+          data-testid="backup-status"
+        >
           {{ statusMessage }}
         </p>
       }
       @if (errorMessage) {
-        <p class="m-0 pl-11 text-sm text-red-700" role="alert">
+        <p
+          class="m-0 pl-11 text-sm text-red-700"
+          role="alert"
+          data-testid="backup-error"
+        >
           {{ errorMessage }}
         </p>
       }

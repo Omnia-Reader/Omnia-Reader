@@ -70,7 +70,7 @@
       "executor": "nx:run-commands",
       "parallelism": false,
       "options": {
-        "command": "node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs apps/omnia-reader-e2e/performance/management-workload.spec.mjs apps/omnia-reader-e2e/performance/management-dataset.spec.mjs apps/omnia-reader-e2e/performance/page-measurement.spec.mjs apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs"
+        "command": "node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs apps/omnia-reader-e2e/performance/management-workload.spec.mjs apps/omnia-reader-e2e/performance/management-dataset.spec.mjs apps/omnia-reader-e2e/performance/page-measurement.spec.mjs apps/omnia-reader-e2e/performance/primary-management-run.spec.mjs apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs"
       }
     },
     "native": {

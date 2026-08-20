@@ -535,7 +535,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
       } else if (result.status === 'invalid-selection') {
         this.errorMessage = 'Choose exactly one matching publication file.';
       } else {
-        await this.reload();
+        await this.reload(new Set([book.id]));
         this.statusMessage = `${book.format.toUpperCase()} for “${book.title}” was restored from this device.`;
       }
     } catch (error) {
@@ -570,7 +570,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
           this.changeDetector.markForCheck();
         },
       });
-      await this.reload();
+      await this.reload(new Set([book.id]));
       this.statusMessage = `${book.format.toUpperCase()} for “${book.title}” was restored from synchronization.`;
     } catch (error) {
       this.errorMessage =
@@ -667,7 +667,9 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async reload(): Promise<void> {
+  private async reload(
+    forceAvailabilityVariantIds: ReadonlySet<string> = new Set(),
+  ): Promise<void> {
     const initialLoad = this.logicalBooks.length === 0;
     this.loading = initialLoad;
     this.refreshing = !initialLoad;
@@ -678,10 +680,31 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         this.repository.listLogicalBooks(),
         this.repository.listOpenMembershipReconciliations(),
       ]);
-      const variantIds = logicalBooks.flatMap((logicalBook) =>
-        Object.values(logicalBook.variants).filter((id): id is string => !!id),
+      const variantIds = [
+        ...new Set(
+          logicalBooks.flatMap((logicalBook) =>
+            Object.values(logicalBook.variants).filter(
+              (id): id is string => !!id,
+            ),
+          ),
+        ),
+      ];
+      const variantIdSet = new Set(variantIds);
+      const retainedAvailability = new Map(
+        [...this.availability].filter(
+          ([variantId]) =>
+            variantIdSet.has(variantId) &&
+            !forceAvailabilityVariantIds.has(variantId),
+        ),
       );
-      const [covers, progressResult, availability, preferences] =
+      const unresolvedVariantIds = variantIds.filter(
+        (variantId) => !retainedAvailability.has(variantId),
+      );
+      const availabilityPromise =
+        unresolvedVariantIds.length > 0
+          ? this.repository.resolveVariantAvailability(unresolvedVariantIds)
+          : Promise.resolve(new Map<string, VariantAvailability>());
+      const [covers, progressResult, resolvedAvailability, preferences] =
         await Promise.all([
           Promise.all(
             logicalBooks.map(async (logicalBook) => ({
@@ -693,7 +716,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
             .listProgress()
             .then((records) => ({ records, available: true as const }))
             .catch(() => ({ records: [], available: false as const })),
-          this.repository.resolveVariantAvailability(variantIds),
+          availabilityPromise,
           Promise.all(
             logicalBooks.map((logicalBook) =>
               this.repository.getLogicalBookFormatPreference(logicalBook.id),
@@ -706,7 +729,10 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
       this.books = books;
       this.logicalBooks = logicalBooks;
       this.openReconciliations = openReconciliations;
-      this.availability = availability;
+      this.availability = new Map([
+        ...retainedAvailability,
+        ...resolvedAvailability,
+      ]);
       this.preferences = preferences.filter(
         (preference): preference is LogicalBookFormatPreference => !!preference,
       );

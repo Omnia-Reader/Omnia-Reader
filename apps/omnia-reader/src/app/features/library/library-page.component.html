@@ -30,7 +30,11 @@
   </header>
 
   @if (errorMessage) {
-    <p class="mx-auto my-18 max-w-xl text-center text-red-700" role="alert">
+    <p
+      class="mx-auto my-18 max-w-xl text-center text-red-700"
+      role="alert"
+      data-testid="library-error"
+    >
       {{ errorMessage }}
     </p>
   }
@@ -40,6 +44,7 @@
       class="mx-auto my-6 max-w-xl text-center text-emerald-800"
       role="status"
       aria-live="polite"
+      data-testid="library-status"
     >
       {{ statusMessage }}
     </p>
@@ -270,6 +275,7 @@
         @for (book of displayedBooks; track book.id) {
           <article
             data-testid="library-book"
+            [attr.data-logical-book-id]="book.id"
             [class]="
               viewMode === 'grid'
                 ? 'flex h-full flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm transition-shadow hover:shadow-md'

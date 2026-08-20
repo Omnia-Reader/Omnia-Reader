@@ -1112,6 +1112,7 @@ describe('LibraryPageComponent', () => {
       'button[id$="-epub"]',
     ) as HTMLButtonElement;
     badge.focus();
+    repository.resolveVariantAvailability.mockClear();
 
     let resolveProgress!: (records: readonly ReadingProgress[]) => void;
     repository.listProgress.mockReturnValueOnce(
@@ -1137,6 +1138,22 @@ describe('LibraryPageComponent', () => {
     ]);
     await pendingReload;
     fixture.detectChanges();
+    expect(repository.resolveVariantAvailability).not.toHaveBeenCalled();
+    repository.listProgress.mockResolvedValueOnce([
+      {
+        ...initialProgress,
+        locator: {
+          href: 'chapter.xhtml',
+          type: 'application/xhtml+xml',
+          locations: { totalProgression: 0.6 },
+        },
+        furthestTotalProgression: 0.6,
+      },
+    ]);
+    await fixture.componentInstance['reload'](new Set([book.id]));
+    expect(repository.resolveVariantAvailability).toHaveBeenCalledWith([
+      book.id,
+    ]);
     const refreshedBadge = fixture.nativeElement.querySelector(
       'button[id$="-epub"]',
     ) as HTMLButtonElement;

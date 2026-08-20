@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import JSZip from 'jszip';
+import { MANAGEMENT_BRANCHES } from './management-branches.mjs';
 import { assertManagementWorkload } from './management-workload.mjs';
 
 const IMPORTED_AT = '2026-08-20T00:00:00.000Z';
@@ -7,11 +8,12 @@ const LIBRARY_DATABASE = 'omnia-reader';
 const LIBRARY_VERSION = 9;
 const SYNC_DATABASE = 'omnia-reader-sync';
 const SYNC_VERSION = 1;
+const BRANCH_SAMPLES = 20;
 
 export async function createPerformanceEpubTemplate() {
   const archive = new JSZip();
   const date = new Date('2026-08-20T00:00:00.000Z');
-  const options = { date, compression: 'STORE' };
+  const options = { date, compression: 'STORE', createFolders: false };
   archive.file('mimetype', 'application/epub+zip', options);
   archive.file(
     'META-INF/container.xml',
@@ -110,6 +112,176 @@ export async function seedManagementDataset(page, workloadInput, options = {}) {
     );
   }
   return summary;
+}
+
+export async function prepareManagementBranchDataset(page, workloadInput) {
+  const workload = assertManagementWorkload(workloadInput);
+  if (!page || typeof page.evaluate !== 'function') {
+    throw new TypeError('A Playwright page is required to prepare branch data');
+  }
+  const template = await createPerformanceEpubTemplate();
+  const fixtures = {};
+  const activeBranches = MANAGEMENT_BRANCHES.filter(
+    ({ action }) => action !== 'restore',
+  );
+  for (const [branchIndex, branch] of activeBranches.entries()) {
+    const start = branchIndex * BRANCH_SAMPLES;
+    const batch = createSeedBatch(workload, template, start, BRANCH_SAMPLES);
+    fixtures[branch.id] = batch.logicalBooks.map((logicalBook, index) => ({
+      ordinal: start + index,
+      title: logicalBook.title,
+      logicalBookId: logicalBook.id,
+      epub: {
+        record: batch.books[index * 2],
+        binary: batch.binaries[index * 2],
+      },
+      pdf: {
+        record: batch.books[index * 2 + 1],
+        binary: batch.binaries[index * 2 + 1],
+      },
+    }));
+  }
+  for (const branch of MANAGEMENT_BRANCHES.filter(
+    ({ action }) => action === 'restore',
+  )) {
+    fixtures[branch.id] = Array.from({ length: BRANCH_SAMPLES }, () => ({
+      ordinal: null,
+    }));
+  }
+
+  await page.evaluate(
+    async ({ databaseName, databaseVersion, importedAt, fixtures }) => {
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open(databaseName, databaseVersion);
+        request.addEventListener('success', () => resolve(request.result));
+        request.addEventListener('error', () => reject(request.error));
+      });
+      try {
+        const transaction = database.transaction(
+          ['books', 'binaries', 'logicalBooks', 'logicalBookReconciliations'],
+          'readwrite',
+        );
+        const completion = new Promise((resolve, reject) => {
+          transaction.addEventListener('complete', () => resolve());
+          transaction.addEventListener('error', () =>
+            reject(transaction.error),
+          );
+          transaction.addEventListener('abort', () =>
+            reject(transaction.error),
+          );
+        });
+        const books = transaction.objectStore('books');
+        const binaries = transaction.objectStore('binaries');
+        const logicalBooks = transaction.objectStore('logicalBooks');
+        const reconciliations = transaction.objectStore(
+          'logicalBookReconciliations',
+        );
+        for (const [branchId, entries] of Object.entries(fixtures)) {
+          for (const entry of entries) {
+            if (entry.ordinal === null) continue;
+            if (branchId.startsWith('add-local-')) {
+              logicalBooks.put({
+                ...entry.logicalBook,
+                variants: { epub: entry.epub.id },
+              });
+              books.delete(entry.pdf.id);
+              binaries.delete(entry.pdf.id);
+            }
+            if (branchId.startsWith('associate-')) {
+              logicalBooks.put({
+                ...entry.logicalBook,
+                variants: { epub: entry.epub.id },
+              });
+              logicalBooks.add({
+                schemaVersion: 1,
+                id: `logical:sha256:${entry.pdf.id.slice('sha256:'.length)}`,
+                title: entry.pdf.title,
+                authors: entry.pdf.authors,
+                ...(entry.pdf.language ? { language: entry.pdf.language } : {}),
+                ...(entry.pdf.identifier
+                  ? { identifier: entry.pdf.identifier }
+                  : {}),
+                importedAt: entry.pdf.importedAt,
+                updatedAt: entry.pdf.importedAt,
+                coverState: entry.pdf.coverState ?? 'unavailable',
+                variants: { pdf: entry.pdf.id },
+              });
+            }
+            if (branchId.startsWith('reconcile-')) {
+              const affectedVariantIds = [entry.epub.id, entry.pdf.id].sort();
+              reconciliations.add({
+                schemaVersion: 1,
+                conflictId: `conflict:performance:${String(entry.ordinal).padStart(4, '0')}`,
+                status: 'open',
+                conflictingChangeIds: [
+                  `change:accepted:${String(entry.ordinal).padStart(4, '0')}`,
+                  `change:rejected:${String(entry.ordinal).padStart(4, '0')}`,
+                ],
+                affectedVariantIds,
+                acceptedMembership: [
+                  {
+                    logicalBookId: entry.logicalBook.id,
+                    format: 'epub',
+                    variantId: entry.epub.id,
+                  },
+                  {
+                    logicalBookId: entry.logicalBook.id,
+                    format: 'pdf',
+                    variantId: entry.pdf.id,
+                  },
+                ],
+                rejectedMembership: [
+                  {
+                    logicalBookId: entry.logicalBook.id,
+                    format: 'epub',
+                    variantId: entry.epub.id,
+                  },
+                  {
+                    logicalBookId: `logical:sha256:${entry.pdf.id.slice('sha256:'.length)}`,
+                    format: 'pdf',
+                    variantId: entry.pdf.id,
+                  },
+                ],
+                detectedAt: new Date(
+                  Date.parse(importedAt) + entry.ordinal,
+                ).toISOString(),
+              });
+            }
+            if (branchId.startsWith('replace-')) {
+              binaries.delete(entry.epub.id);
+            }
+          }
+        }
+        await completion;
+      } finally {
+        database.close();
+      }
+    },
+    {
+      databaseName: LIBRARY_DATABASE,
+      databaseVersion: LIBRARY_VERSION,
+      importedAt: IMPORTED_AT,
+      fixtures: Object.fromEntries(
+        Object.entries(fixtures).map(([branchId, entries]) => [
+          branchId,
+          entries.map((entry) =>
+            entry.ordinal === null
+              ? entry
+              : {
+                  ordinal: entry.ordinal,
+                  logicalBook: workload.items[entry.ordinal]
+                    ? createSeedBatch(workload, template, entry.ordinal, 1)
+                        .logicalBooks[0]
+                    : null,
+                  epub: entry.epub.record,
+                  pdf: entry.pdf.record,
+                },
+          ),
+        ]),
+      ),
+    },
+  );
+  return fixtures;
 }
 
 function createSeedBatch(workload, epubTemplate, start, count) {
