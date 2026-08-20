@@ -736,6 +736,42 @@ describe('LibraryPageComponent', () => {
     );
   });
 
+  it('verifies a checking preferred format when its cover is opened', async () => {
+    const logicalBook = {
+      ...logicalBookFromVariant(book),
+      id: 'logical:sha256:checking-preference',
+      variants: { epub: book.id, pdf: secondBook.id },
+    };
+    repository.listBooks.mockResolvedValue([book, secondBook]);
+    repository.listLogicalBooks.mockResolvedValue([logicalBook]);
+    repository.getLogicalBookFormatPreference.mockResolvedValue({
+      schemaVersion: 1,
+      logicalBookId: logicalBook.id,
+      preferredFormat: 'pdf',
+      updatedAt: '2026-08-20T00:00:00.000Z',
+      deviceId: 'device-a',
+      appVersion: '0.0.0',
+    });
+    repository.resolveVariantAvailability.mockResolvedValue(
+      new Map([
+        [book.id, { status: 'checking' }],
+        [secondBook.id, { status: 'checking' }],
+      ]),
+    );
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.openPreferredFormat(
+      fixture.componentInstance.displayedBooks[0],
+    );
+
+    expect(repository.openHealthyVariant).toHaveBeenCalledWith(secondBook.id);
+    expect(repository.openHealthyVariant).not.toHaveBeenCalledWith(book.id);
+  });
+
   it('keeps all-unavailable entries manageable and explains recovery', async () => {
     repository.resolveVariantAvailability.mockResolvedValue(
       new Map([[book.id, { status: 'unavailable', cause: 'missing' }]]),

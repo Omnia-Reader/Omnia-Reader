@@ -1004,7 +1004,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     if (
       preferred &&
       card.variants[preferred] &&
-      card.availability[preferred]?.status === 'healthy'
+      isOpenableAvailability(card.availability[preferred])
     ) {
       return preferred;
     }
@@ -1012,7 +1012,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
       this.formatOrder.find(
         (format) =>
           !!card.variants[format] &&
-          card.availability[format]?.status === 'healthy',
+          isOpenableAvailability(card.availability[format]),
       ) ?? null
     );
   }
@@ -1124,4 +1124,12 @@ function availabilityLabel(availability: VariantAvailability): string {
   if (availability.status === 'healthy') return 'ready';
   if (availability.status === 'checking') return 'still being checked';
   return `${availability.status}: ${availability.cause.replace(/-/g, ' ')}`;
+}
+
+function isOpenableAvailability(
+  availability: VariantAvailability | undefined,
+): boolean {
+  return (
+    availability?.status === 'healthy' || availability?.status === 'checking'
+  );
 }

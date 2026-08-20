@@ -16,16 +16,16 @@
       }
     },
     {
-      "name": "lazy-code",
-      "installMode": "lazy",
+      "name": "offline-app-code",
+      "installMode": "prefetch",
       "updateMode": "prefetch",
       "resources": {
         "files": ["/*.js"]
       }
     },
     {
-      "name": "lazy-workers",
-      "installMode": "lazy",
+      "name": "offline-reader-assets",
+      "installMode": "prefetch",
       "updateMode": "prefetch",
       "resources": {
         "files": ["/assets/pdfjs/**"]

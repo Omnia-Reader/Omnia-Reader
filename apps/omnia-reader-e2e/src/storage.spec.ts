@@ -154,6 +154,177 @@ test('keeps an exact duplicate import canonically unchanged', async ({
   expect(inventoryAfterDuplicate).toEqual(inventoryBeforeDuplicate);
 });
 
+test('cancels association of an exact duplicate owned by another entry without canonical changes', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await importPublication(page, {
+    name: 'duplicate-elsewhere.epub',
+    mimeType: 'application/epub+zip',
+    buffer: await createEpubFixture(),
+  });
+  const pdf = await createPdfFixture();
+  await importPublication(page, {
+    name: 'duplicate-elsewhere.pdf',
+    mimeType: 'application/pdf',
+    buffer: pdf,
+  });
+  await expect(page.getByTestId('library-book')).toHaveCount(2);
+  const inventoryBeforeAssociation = await canonicalRecoveryInventory(page);
+
+  const epubCard = page
+    .getByTestId('library-book')
+    .filter({ hasText: 'Omnia EPUB Fixture' });
+  const chooser = page.waitForEvent('filechooser');
+  await epubCard
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'duplicate-elsewhere-copy.pdf',
+    mimeType: 'application/pdf',
+    buffer: pdf,
+  });
+  const dialog = page.getByRole('dialog', {
+    name: 'Associate an existing book',
+  });
+  await expect(dialog).toContainText('Omnia PDF Fixture');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId('library-book')).toHaveCount(2);
+
+  const inventoryAfterCancellation = await canonicalRecoveryInventory(page);
+  expect(inventoryAfterCancellation).toEqual(inventoryBeforeAssociation);
+});
+
+test('rejects a stale add when another page fills the format slot without canonical changes', async ({
+  context,
+  page,
+}) => {
+  await page.goto('/');
+  await importPublication(page, {
+    name: 'occupied-format.epub',
+    mimeType: 'application/epub+zip',
+    buffer: await createEpubFixture(),
+  });
+  const staleChooser = page.waitForEvent('filechooser');
+  await page
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+
+  const competingPage = await context.newPage();
+  await competingPage.goto('/');
+  const acceptedPdf = await createPdfFixture();
+  const competingChooser = competingPage.waitForEvent('filechooser');
+  await competingPage
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (
+    await competingChooser
+  ).setFiles({
+    name: 'accepted-format.pdf',
+    mimeType: 'application/pdf',
+    buffer: acceptedPdf,
+  });
+  await expect(
+    competingPage.getByRole('button', { name: /^PDF\b/ }),
+  ).toBeVisible();
+  const inventoryBeforeRejection =
+    await canonicalRecoveryInventory(competingPage);
+
+  await (
+    await staleChooser
+  ).setFiles({
+    name: 'stale-format.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.concat([
+      acceptedPdf,
+      Buffer.from('\n% distinct occupied-slot edition\n'),
+    ]),
+  });
+  await expect(page.getByRole('alert')).toContainText(
+    '“Omnia EPUB Fixture” already has a PDF source in that format slot.',
+  );
+  await expect(page.getByTestId('library-book')).toHaveCount(1);
+
+  const inventoryAfterRejection = await canonicalRecoveryInventory(page);
+  expect(inventoryAfterRejection).toEqual(inventoryBeforeRejection);
+});
+
+test('cancels the add-format picker without changing canonical inventory', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await importPublication(page, {
+    name: 'picker-cancelled.epub',
+    mimeType: 'application/epub+zip',
+    buffer: await createEpubFixture(),
+  });
+  await expect(
+    page.getByText('Omnia EPUB Fixture', { exact: true }),
+  ).toBeVisible();
+  const inventoryBeforeCancellation = await canonicalRecoveryInventory(page);
+
+  const chooser = page.waitForEvent('filechooser');
+  await page
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (await chooser).setFiles([]);
+  await expect(
+    page.getByRole('status').filter({
+      hasText: 'Adding a format to “Omnia EPUB Fixture” was cancelled.',
+    }),
+  ).toBeVisible();
+
+  const inventoryAfterCancellation = await canonicalRecoveryInventory(page);
+  expect(inventoryAfterCancellation).toEqual(inventoryBeforeCancellation);
+});
+
+test('cancels separating a format without changing canonical inventory', async ({
+  page,
+}) => {
+  const card = await prepareTwoFormatBook(page);
+  const inventoryBeforeCancellation = await canonicalRecoveryInventory(page);
+
+  await card
+    .getByRole('button', {
+      name: 'Separate PDF from Omnia EPUB Fixture',
+    })
+    .click();
+  const dialog = page.getByRole('dialog', {
+    name: 'Separate the PDF version?',
+  });
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+
+  const inventoryAfterCancellation = await canonicalRecoveryInventory(page);
+  expect(inventoryAfterCancellation).toEqual(inventoryBeforeCancellation);
+});
+
+test('cancels removing a non-last format without changing canonical inventory', async ({
+  page,
+}) => {
+  const card = await prepareTwoFormatBook(page);
+  const inventoryBeforeCancellation = await canonicalRecoveryInventory(page);
+
+  await card
+    .getByRole('button', {
+      name: 'Remove PDF for Omnia EPUB Fixture',
+    })
+    .click();
+  const dialog = page.getByRole('dialog', {
+    name: 'Remove the PDF version of “Omnia PDF Fixture”?',
+  });
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+
+  const inventoryAfterCancellation = await canonicalRecoveryInventory(page);
+  expect(inventoryAfterCancellation).toEqual(inventoryBeforeCancellation);
+});
+
 test('cancels exact-source replacement without changing canonical inventory', async ({
   page,
 }) => {
@@ -261,6 +432,31 @@ async function prepareUnavailablePdf(
     [...canonicalInventoryFields].sort(),
   );
   return { inventory, replace };
+}
+
+async function prepareTwoFormatBook(page: Page): Promise<Locator> {
+  await page.goto('/');
+  await importPublication(page, {
+    name: 'cancellation.epub',
+    mimeType: 'application/epub+zip',
+    buffer: await createEpubFixture(),
+  });
+  const card = page
+    .getByTestId('library-book')
+    .filter({ hasText: 'Omnia EPUB Fixture' });
+  const chooser = page.waitForEvent('filechooser');
+  await card
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'cancellation.pdf',
+    mimeType: 'application/pdf',
+    buffer: await createPdfFixture(),
+  });
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+  return card;
 }
 
 async function rejectPdfReplacement(

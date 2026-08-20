@@ -383,11 +383,40 @@ after the badge-only checkpoint passes.
   the other eleven fields remain unchanged before the PDF opens. The snapshot
   helper is reusable by the remaining storage and offline matrix journeys.
 - `REC-add-offline-restart` now has executable PDF and EPUB evidence. With
-  `PWA_E2E=1`, the production service-worker journey closed each persistent
-  context, cold-started fully offline, proved all twelve canonical inventory
-  fields unchanged, and restored the durable page/chapter; `offline.spec.ts`
-  passed 2/2. The other five operation-specific offline rows remain metadata
-  only.
+  `PWA_E2E=1`, the production service-worker journey now takes the controlled
+  context offline before importing, closes it, cold-starts fully offline,
+  proves all twelve canonical inventory fields unchanged, and restores the
+  durable page/chapter. Its first strengthened run exposed that lazy application
+  code was unavailable during offline EPUB import; after prefetching application
+  chunks and PDF.js runtime assets, the focused EPUB/PDF journey passed 1/1.
+- `REC-associate-offline-restart` now imports EPUB and PDF while fully offline,
+  associates the separate entries through the real add-format and confirmation
+  flow, cold-starts the persistent profile offline, proves all twelve canonical
+  fields unchanged, and opens both exact formats. The initial red runs failed on
+  the uncached hash-WASM chunk and then the uncached PDF.js worker; the corrected
+  service-worker policy made the focused Chromium journey pass 1/1, and the
+  complete production PWA `offline.spec.ts` passed 3/3.
+- `REC-detach-offline-restart` and `REC-delete-non-last-offline-restart` now
+  commit their real confirmation flows while offline, wait for the durable
+  completion acknowledgement, cold-start offline, compare all twelve canonical
+  fields, and open every surviving EPUB/PDF source. The first delete run sampled
+  before asynchronous orchestration completed; after synchronizing on the
+  library status, the focused Chromium journeys passed 2/2 and the complete
+  production PWA `offline.spec.ts` passed 5/5.
+- `REC-preference-change-offline-restart` now chooses PDF through the real
+  format control while offline, persists the synchronized preference and
+  journal operation, cold-starts offline with canonical equality, and proves the
+  cover opens the preferred PDF. `REC-exact-source-replacement-offline-restart`
+  removes the stored PDF bytes, restores the exact source from the real picker
+  while offline, cold-starts with canonical equality, and renders the restored
+  PDF. The focused Chromium journeys passed 2/2; all six fixed committed-offline
+  rows now have executable browser evidence. The first complete seven-scenario
+  run exposed a cold-start race where persisted sources were still marked
+  `checking` when the preferred-format cover was clicked. Cover opening now
+  performs the authoritative source verification during that state; the app
+  unit suite passed 22 files / 176 tests, the preferred-format PWA journey
+  passed 3/3 with parallel workers, and the complete production PWA
+  `offline.spec.ts` passed 7/7.
 - `REC-replace-source-cancelled` now uses the real Chromium file chooser after
   making an imported PDF unavailable. An empty replacement selection returned
   the control to its enabled state and preserved all twelve canonical inventory
@@ -417,6 +446,28 @@ after the badge-only checkpoint passes.
   suite passed 22 files / 175 tests, the focused Chromium journey passed 1/1,
   and the complete `storage.spec.ts` passed 8/8 with identical before/after
   inventory.
+- `REC-validation-duplicate-elsewhere` now imports separate EPUB and PDF entries,
+  selects the exact already-owned PDF through the destination's real add-format
+  picker, verifies the explicit association dialog, and cancels it. This also
+  supplies executable `REC-association-cancelled` evidence: both logical cards
+  remain and all twelve canonical fields are unchanged; the focused Chromium
+  journey passed 1/1.
+- `REC-validation-occupied-format` now uses two same-context pages to exercise a
+  genuine stale-picker race. One page waits with the missing-PDF picker open,
+  the other atomically fills that logical slot, and the first submits a distinct
+  valid PDF. The stale add is rejected with the occupied-slot alert and the
+  complete post-race canonical inventory is unchanged; the focused journey
+  passed 1/1.
+- All seven fixed validation-rejection rows now have executable canonical
+  browser evidence. The complete `storage.spec.ts` passed 10/10.
+- `REC-picker-cancelled`, `REC-detach-cancelled`, and `REC-delete-cancelled`
+  now exercise the real add-format chooser and the detach/remove confirmation
+  dialogs. The initial picker run exposed an incomplete test baseline while the
+  setup import was still committing; after waiting for the visible imported
+  card, all three focused Chromium journeys passed 3/3 with identical
+  twelve-field inventories. Together with association and replacement
+  cancellation, all five fixed cancellation rows now have executable canonical
+  browser evidence. The complete `storage.spec.ts` passed 13/13.
 - T095 remains incomplete until the other fixed recovery rows have executable
   outcomes rather than matrix-cardinality assertions alone.
 
