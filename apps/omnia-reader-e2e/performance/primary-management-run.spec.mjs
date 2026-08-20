@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readJsonFile } from './performance-contract.mjs';
 import { createManagementWorkload } from './management-workload.mjs';
+import { profileSetV2Fixture } from './platform-test-fixtures.mjs';
 import {
   assertSamplingIdentity,
   runPrimaryManagementMeasurement,
@@ -137,6 +138,28 @@ test('refuses sampling identity drift before invoking a measurement adapter', as
     );
   }
   assert.equal(calls, 0);
+});
+
+test('accepts only the recaptured mobile environment as sampling identity', () => {
+  const profileSet = profileSetV2Fixture();
+  const environment = environmentFixture(profileSet, 'mobile-web-v2');
+  const workload = createManagementWorkload();
+
+  assert.deepEqual(
+    assertSamplingIdentity(
+      profileSet,
+      environment,
+      workload,
+      structuredClone(environment),
+    ),
+    environment,
+  );
+  const drifted = structuredClone(environment);
+  drifted.values['runtime.chromeVersion'] = '0.0.0.0';
+  assert.throws(
+    () => assertSamplingIdentity(profileSet, environment, workload, drifted),
+    /mobile-web sampling identity drift/,
+  );
 });
 
 test('rejects invalid adapter timings and incomplete counters', async () => {

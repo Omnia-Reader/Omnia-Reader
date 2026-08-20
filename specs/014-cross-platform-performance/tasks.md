@@ -46,7 +46,7 @@
 
 - [x] T014 [US1] Add failing canonical AVD-tree, serial selection, device-collision, snapshot-drift, and owned-cleanup tests in `apps/omnia-reader-e2e/performance/android-emulator-controller.spec.mjs`
 - [x] T015 [US1] Add failing Chrome package/CDP mismatch, viewport, battery, network, cgroup, and sampling-recapture tests in `apps/omnia-reader-e2e/performance/mobile-web-environment.spec.mjs`
-- [ ] T016 [US1] Add failing driver crash, disconnect, timeout, signal, invalid-result, and no-promotion tests in `apps/omnia-reader-e2e/performance/run-mobile-web.spec.mjs`
+- [x] T016 [US1] Add failing driver crash, disconnect, timeout, signal, invalid-result, and no-promotion tests in `apps/omnia-reader-e2e/performance/run-mobile-web.spec.mjs`
 
 ### Implementation for User Story 1
 

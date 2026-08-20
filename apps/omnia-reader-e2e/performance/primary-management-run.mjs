@@ -29,6 +29,19 @@ export function assertSamplingIdentity(
   const profileSet = assertProfileSet(profileSetInput);
   const environment = assertEnvironmentRecord(environmentInput, profileSet);
   const workload = assertManagementWorkload(workloadInput);
+  if (
+    profileSet.schemaVersion === 2 &&
+    environment.profileId === 'mobile-web-v2'
+  ) {
+    const current = assertEnvironmentRecord(value, profileSet);
+    if (canonicalStringify(current) !== canonicalStringify(environment)) {
+      throw new EvidenceValidationError(
+        'mobile-web sampling identity drift detected',
+        'samplingIdentity',
+      );
+    }
+    return current;
+  }
   assertRecord(value, 'samplingIdentity');
   assertExactKeys(
     value,
