@@ -1,13 +1,14 @@
 /* eslint-disable playwright/expect-expect -- Node tests assert through node:assert. */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import {
   EvidenceValidationError,
+  assertProfileSet,
   atomicWriteEvidence,
 } from './performance-contract.mjs';
 import {
@@ -21,6 +22,27 @@ import {
   profileSetFixture,
   rawResultFixture,
 } from './test-fixtures.mjs';
+import {
+  profileSetV1Fixture,
+  profileSetV2Fixture,
+} from './platform-test-fixtures.mjs';
+
+test('dispatches only allowlisted immutable profile-set versions', () => {
+  assert.equal(assertProfileSet(profileSetV1Fixture()).schemaVersion, 1);
+  assert.equal(assertProfileSet(profileSetV2Fixture()).schemaVersion, 2);
+
+  const unknown = profileSetV2Fixture();
+  unknown.schemaVersion = 3;
+  assert.throws(() => assertProfileSet(unknown), /unsupported profile set/);
+
+  const mismatched = profileSetV2Fixture();
+  mismatched.profileSetId = 'multi-format-performance-v1';
+  assert.throws(() => assertProfileSet(mismatched), /unsupported profile set/);
+
+  const wrongProfile = profileSetV2Fixture();
+  wrongProfile.profiles[0].id = 'desktop-web-v1';
+  assert.throws(() => assertProfileSet(wrongProfile), /desktop-web-v2/);
+});
 
 test('computes deterministic nearest-rank statistics from raw samples', () => {
   assert.deepEqual(distributionStatistics([1, 2, 3, 4, 100], 4), {
@@ -165,11 +187,32 @@ test('aggregates exactly four current primary passes without pooling samples', (
   assert.equal(incomplete.status, 'INCOMPLETE');
 });
 
+test('aggregates the allowlisted v2 profiles without changing v1 semantics', () => {
+  const profileSet = profileSetV2Fixture();
+  const results = profileSet.profiles.map(({ id }) =>
+    rawResultFixture(profileSet, id),
+  );
+
+  const aggregate = aggregateResults(profileSet, results);
+
+  assert.equal(aggregate.status, 'PASS');
+  assert.deepEqual(
+    aggregate.results.map(({ profileId }) => profileId),
+    profileSet.profiles.map(({ id }) => id),
+  );
+});
+
 test('writes canonical evidence only beneath the allowed root', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omnia-evidence-root-'));
   const output = await atomicWriteEvidence(root, 'result.json', { z: 1, a: 2 });
   assert.equal(output, join(root, 'result.json'));
   assert.equal(await readFile(output, 'utf8'), '{"a":2,"z":1}\n');
+  await assert.rejects(
+    () => atomicWriteEvidence(root, 'result.json', { replaced: true }),
+    /already exists/,
+  );
+  assert.equal(await readFile(output, 'utf8'), '{"a":2,"z":1}\n');
+
   await assert.rejects(
     () => atomicWriteEvidence(root, '../escape.json', { invalid: true }),
     /inside the performance results directory/,
@@ -178,7 +221,36 @@ test('writes canonical evidence only beneath the allowed root', async () => {
     () => atomicWriteEvidence(root, '..\\escape.json', { invalid: true }),
     /inside the performance results directory/,
   );
+
+  const concurrent = await Promise.allSettled([
+    atomicWriteEvidence(root, 'concurrent.json', { writer: 1 }),
+    atomicWriteEvidence(root, 'concurrent.json', { writer: 2 }),
+  ]);
+  assert.equal(
+    concurrent.filter((result) => result.status === 'fulfilled').length,
+    1,
+  );
+  assert.equal(
+    concurrent.filter((result) => result.status === 'rejected').length,
+    1,
+  );
 });
+
+test(
+  'refuses an existing symbolic-link evidence destination',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'omnia-evidence-symlink-'));
+    const symlinkTarget = join(root, 'symlink-target.json');
+    await writeFile(symlinkTarget, '{}\n');
+    await symlink(symlinkTarget, join(root, 'symlink.json'));
+
+    await assert.rejects(
+      () => atomicWriteEvidence(root, 'symlink.json', { invalid: true }),
+      /symbolic link|already exists/,
+    );
+  },
+);
 
 test('evidence CLI exits 0 only for complete passing acceptance', async () => {
   const profileSet = profileSetFixture();

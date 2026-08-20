@@ -1,27 +1,36 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   lstat,
+  link,
   mkdir,
   readFile,
   realpath,
-  rename,
   stat,
   unlink,
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
+import { PLATFORM_PROFILE_IDS } from './platform-contract.mjs';
 
 export const MAX_JSON_BYTES = 8 * 1024 * 1024;
 export const MAX_JSON_DEPTH = 32;
 export const MAX_SAMPLES_PER_COLLECTION = 10_000;
 export const MAX_REASONS = 256;
 
-export const APPROVED_PROFILE_IDS = [
-  'desktop-web-v1',
-  'mobile-web-v1',
-  'packaged-desktop-v1',
-  'android-v1',
-];
+export const APPROVED_PROFILE_IDS = PLATFORM_PROFILE_IDS[1];
+
+const PROFILE_SET_DESCRIPTORS = Object.freeze([
+  Object.freeze({
+    schemaVersion: 1,
+    profileSetId: 'multi-format-performance-v1',
+    profileIds: PLATFORM_PROFILE_IDS[1],
+  }),
+  Object.freeze({
+    schemaVersion: 2,
+    profileSetId: 'multi-format-performance-v2',
+    profileIds: PLATFORM_PROFILE_IDS[2],
+  }),
+]);
 
 export const APPROVED_BRANCH_IDS = [
   'add-local-success',
@@ -128,6 +137,7 @@ export function attachProfileSetDigest(profileSet) {
 
 export function assertProfileSet(value) {
   assertRecord(value, 'profileSet');
+  const descriptor = profileSetDescriptor(value);
   assertExactKeys(
     value,
     [
@@ -140,10 +150,14 @@ export function assertProfileSet(value) {
     ],
     'profileSet',
   );
-  assertEqual(value.schemaVersion, 1, 'profileSet.schemaVersion');
+  assertEqual(
+    value.schemaVersion,
+    descriptor.schemaVersion,
+    'profileSet.schemaVersion',
+  );
   assertEqual(
     value.profileSetId,
-    'multi-format-performance-v1',
+    descriptor.profileSetId,
     'profileSet.profileSetId',
   );
   assertPattern(
@@ -156,13 +170,13 @@ export function assertProfileSet(value) {
   assertArray(value.profiles, 'profileSet.profiles');
   assertEqual(
     value.profiles.length,
-    APPROVED_PROFILE_IDS.length,
+    descriptor.profileIds.length,
     'profileSet.profiles.length',
   );
   value.profiles.forEach((profile, index) =>
     assertProfile(
       profile,
-      APPROVED_PROFILE_IDS[index],
+      descriptor.profileIds[index],
       value.dataset.recipeDigest,
     ),
   );
@@ -174,6 +188,10 @@ export function assertProfileSet(value) {
     );
   }
   return value;
+}
+
+export function profileIdsForProfileSet(profileSet) {
+  return profileSetDescriptor(profileSet).profileIds;
 }
 
 export function assertEnvironmentRecord(value, profileSet) {
@@ -205,7 +223,11 @@ export function assertEnvironmentRecord(value, profileSet) {
     profileSet.profileSetDigest,
     'environment.profileSetDigest',
   );
-  assertOneOf(value.profileId, APPROVED_PROFILE_IDS, 'environment.profileId');
+  assertOneOf(
+    value.profileId,
+    profileIdsForProfileSet(profileSet),
+    'environment.profileId',
+  );
   assertOneOf(value.intent, ['primary', 'supplemental'], 'environment.intent');
   assertOneOf(
     value.availability,
@@ -307,12 +329,34 @@ export async function atomicWriteEvidence(root, relativeName, value) {
       flag: 'wx',
       mode: 0o600,
     });
-    await rename(temporary, destination);
+    await link(temporary, destination);
+    await unlink(temporary).catch(() => undefined);
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
+    if (error && typeof error === 'object' && error.code === 'EEXIST') {
+      throw new EvidenceValidationError(
+        'output already exists and cannot be replaced',
+        'output',
+      );
+    }
     throw error;
   }
   return destination;
+}
+
+function profileSetDescriptor(value) {
+  const descriptor = PROFILE_SET_DESCRIPTORS.find(
+    (candidate) =>
+      value.schemaVersion === candidate.schemaVersion &&
+      value.profileSetId === candidate.profileSetId,
+  );
+  if (!descriptor) {
+    throw new EvidenceValidationError(
+      'unsupported profile set version and identifier',
+      'profileSet',
+    );
+  }
+  return descriptor;
 }
 
 export function assertEvidenceOutputName(relativeName) {

@@ -9,9 +9,9 @@
 
 **Purpose**: Establish additive profile and platform-driver boundaries without changing v1 behavior.
 
-- [ ] T001 Add shared test fixtures for v1/v2 profile identities and hostile platform inputs in `apps/omnia-reader-e2e/performance/platform-test-fixtures.mjs`
-- [ ] T002 [P] Add reviewed profile-v2 schema documentation with unresolved live identities explicitly non-primary in `specs/001-multi-format-books/performance/profiles-v2.md`
-- [ ] T003 [P] Add shared platform identifiers, bounds, and lifecycle states in `apps/omnia-reader-e2e/performance/platform-contract.mjs`
+- [x] T001 Add shared test fixtures for v1/v2 profile identities and hostile platform inputs in `apps/omnia-reader-e2e/performance/platform-test-fixtures.mjs`
+- [x] T002 [P] Add reviewed profile-v2 schema documentation with unresolved live identities explicitly non-primary in `specs/001-multi-format-books/performance/profiles-v2.md`
+- [x] T003 [P] Add shared platform identifiers, bounds, and lifecycle states in `apps/omnia-reader-e2e/performance/platform-contract.mjs`
 
 ---
 
@@ -21,10 +21,10 @@
 
 **⚠️ CRITICAL**: Complete before any platform-specific primary driver.
 
-- [ ] T004 Add failing v1 compatibility, unknown-v2 rejection, and allowlisted-v2 registry tests in `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
-- [ ] T005 Implement the backward-compatible profile-set descriptor registry in `apps/omnia-reader-e2e/performance/performance-contract.mjs`
-- [ ] T006 Add failing existing-destination, symlink, traversal, and concurrent-promotion tests in `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
-- [ ] T007 Implement bounded atomic no-replace evidence promotion while preserving the existing writer contract in `apps/omnia-reader-e2e/performance/performance-contract.mjs`
+- [x] T004 Add failing v1 compatibility, unknown-v2 rejection, and allowlisted-v2 registry tests in `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
+- [x] T005 Implement the backward-compatible profile-set descriptor registry in `apps/omnia-reader-e2e/performance/performance-contract.mjs`
+- [x] T006 Add failing existing-destination, symlink, traversal, and concurrent-promotion tests in `apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs`
+- [x] T007 Implement bounded atomic no-replace evidence promotion while preserving the existing writer contract in `apps/omnia-reader-e2e/performance/performance-contract.mjs`
 - [ ] T008 Add failing lifecycle transition, drift, timeout, signal, diagnostic-bound, and owned-cleanup tests in `apps/omnia-reader-e2e/performance/platform-lifecycle.spec.mjs`
 - [ ] T009 Implement the platform-neutral qualification/evaluation lifecycle in `apps/omnia-reader-e2e/performance/platform-lifecycle.mjs`
 - [ ] T010 Add failing artifact/provenance schema, debug substitution, size/digest drift, and TOCTOU tests in `apps/omnia-reader-e2e/performance/artifact-identity.spec.mjs`

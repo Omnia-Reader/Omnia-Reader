@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   EvidenceValidationError,
-  APPROVED_PROFILE_IDS,
   assertArray,
   assertEnvironmentRecord,
   assertExactKeys,
@@ -16,6 +15,7 @@ import {
   assertString,
   assertTimingArray,
   canonicalStringify,
+  profileIdsForProfileSet,
   readJsonFile,
   stableReasons,
 } from './performance-contract.mjs';
@@ -97,8 +97,9 @@ export function evaluateRawResult(profileSetInput, resultInput) {
 
 export function aggregateResults(profileSetInput, resultInputs) {
   const profileSet = assertProfileSet(profileSetInput);
+  const profileIds = profileIdsForProfileSet(profileSet);
   assertArray(resultInputs, 'results');
-  if (resultInputs.length > APPROVED_PROFILE_IDS.length) {
+  if (resultInputs.length > profileIds.length) {
     const seen = new Set();
     for (const result of resultInputs) {
       if (
@@ -131,7 +132,7 @@ export function aggregateResults(profileSetInput, resultInputs) {
   const blocking = [];
   const results = [];
   const commits = new Set();
-  for (const profileId of APPROVED_PROFILE_IDS) {
+  for (const profileId of profileIds) {
     const result = evaluated.get(profileId);
     if (!result) {
       blocking.push({
@@ -218,7 +219,11 @@ function evaluateRawBase(profileSet, result) {
     profileSet.profileSetDigest,
     'result.profileSetDigest',
   );
-  assertOneOf(result.profileId, APPROVED_PROFILE_IDS, 'result.profileId');
+  assertOneOf(
+    result.profileId,
+    profileIdsForProfileSet(profileSet),
+    'result.profileId',
+  );
   assertString(result.command, 1, 2_048, 'result.command');
   assertCanonicalTimestamp(result.recordedAt, 'result.recordedAt');
   assertEnvironmentRecord(result.environment, profileSet);
