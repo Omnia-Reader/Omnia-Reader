@@ -125,7 +125,9 @@ export function createMobileWebEnvironment(options) {
   const candidateValues = {
     'dataset.recipeDigest': profileSet.dataset.recipeDigest,
     'environment.arch': observations.abi,
+    'environment.avdName': observations.avdName,
     'environment.avdImage': observations.avdImage,
+    'environment.avdSnapshotName': observations.avdSnapshotName,
     'environment.avdSnapshotSha256': observations.avdSnapshotSha256,
     'environment.battery': `simulated-${observations.battery.level}-percent`,
     'environment.batterySaver': observations.batterySaver,
@@ -143,6 +145,7 @@ export function createMobileWebEnvironment(options) {
     'runtime.chromeLongVersionCode': observations.chrome.longVersionCode,
     'runtime.chromePackage': observations.chrome.packageName,
     'runtime.chromeVersion': observations.chrome.versionName,
+    'runtime.emulatorVersion': observations.emulatorVersion,
     'source.nodeVersion': observations.source.nodeVersion,
     'source.packageLockSha256': observations.source.packageLockSha256,
   };
@@ -189,8 +192,11 @@ function assertMobileWebObservations(value) {
     value,
     [
       'serial',
+      'avdName',
       'avdImage',
+      'avdSnapshotName',
       'avdSnapshotSha256',
+      'emulatorVersion',
       'deviceClass',
       'buildFingerprint',
       'abi',
@@ -206,8 +212,11 @@ function assertMobileWebObservations(value) {
     'observations',
   );
   assertEmulatorSerial(value.serial);
+  assertString(value.avdName, 1, 128, 'observations.avdName');
   assertString(value.avdImage, 1, 512, 'observations.avdImage');
+  assertString(value.avdSnapshotName, 1, 128, 'observations.avdSnapshotName');
   assertDigest(value.avdSnapshotSha256, 'observations.avdSnapshotSha256');
+  assertString(value.emulatorVersion, 1, 128, 'observations.emulatorVersion');
   assertString(value.deviceClass, 1, 128, 'observations.deviceClass');
   assertString(value.buildFingerprint, 1, 512, 'observations.buildFingerprint');
   assertOneOf(value.abi, ['x86_64'], 'observations.abi');
@@ -240,13 +249,35 @@ function assertStaticIdentity(value) {
   assertRecord(value, 'capture.staticIdentity');
   assertExactKeys(
     value,
-    ['avdImage', 'avdSnapshotSha256', 'deviceClass', 'resources', 'source'],
+    [
+      'avdName',
+      'avdImage',
+      'avdSnapshotName',
+      'avdSnapshotSha256',
+      'emulatorVersion',
+      'deviceClass',
+      'resources',
+      'source',
+    ],
     'capture.staticIdentity',
   );
+  assertString(value.avdName, 1, 128, 'capture.staticIdentity.avdName');
   assertString(value.avdImage, 1, 512, 'capture.staticIdentity.avdImage');
+  assertString(
+    value.avdSnapshotName,
+    1,
+    128,
+    'capture.staticIdentity.avdSnapshotName',
+  );
   assertDigest(
     value.avdSnapshotSha256,
     'capture.staticIdentity.avdSnapshotSha256',
+  );
+  assertString(
+    value.emulatorVersion,
+    1,
+    128,
+    'capture.staticIdentity.emulatorVersion',
   );
   assertString(value.deviceClass, 1, 128, 'capture.staticIdentity.deviceClass');
   assertResources(value.resources);

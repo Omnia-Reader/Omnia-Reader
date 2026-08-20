@@ -41,9 +41,23 @@ host constraints, and before/after sampling identity checks pass against
 deterministic fixtures.
 
 ```sh
+npx nx run omnia-reader-e2e:performance-mobile-web-contract --skip-nx-cache
+
+export ANDROID_SDK_ROOT=/absolute/path/to/android-sdk
+export OMNIA_PERFORMANCE_AVD_BASELINE=/absolute/path/to/reviewed-avd.avd
+export OMNIA_PERFORMANCE_AVD_NAME=omnia_performance
+export OMNIA_PERFORMANCE_AVD_SNAPSHOT=omnia-performance-v1
+
 npx nx run omnia-reader-e2e:performance-mobile-web-smoke --skip-nx-cache
 npx nx run omnia-reader-e2e:performance-mobile-web --skip-nx-cache
 ```
+
+The baseline path must identify the reviewed immutable AVD directory whose
+canonical digest is recorded in `profiles-v2.json`; the command never chooses
+the first user AVD or connected emulator. The optional CLI flags
+`--sdk-root`, `--avd-baseline`, `--avd-name`, `--snapshot`,
+`--emulator-port`, `--application-port`, and `--cdp-port` make the same inputs
+explicit for isolated runners. Smoke never writes primary evidence.
 
 Expected smoke: the exact disposable AVD/Chrome identity reaches the real app
 through ADB and CDP and executes a reduced supplemental workload.

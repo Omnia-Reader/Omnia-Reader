@@ -121,8 +121,11 @@ test('captures live serial-scoped Android and CDP observations', async () => {
       }),
     },
     staticIdentity: {
+      avdName: 'omnia_performance',
       avdImage: 'system-images;android-36.1;google_apis_playstore;x86_64@4',
+      avdSnapshotName: 'omnia-performance-v1',
       avdSnapshotSha256: `sha256:${'d'.repeat(64)}`,
+      emulatorVersion: '36.3.10.0',
       deviceClass: 'pixel-4a-class',
       resources: { cpuQuota: 2, memoryLimitBytes: 4_294_967_296 },
       source: {
@@ -153,8 +156,10 @@ function mobileProfileSetFixture() {
   profile.requirements = {
     'dataset.recipeDigest': profileSet.dataset.recipeDigest,
     'environment.arch': 'x86_64',
+    'environment.avdName': 'omnia_performance',
     'environment.avdImage':
       'system-images;android-36.1;google_apis_playstore;x86_64@4',
+    'environment.avdSnapshotName': 'omnia-performance-v1',
     'environment.avdSnapshotSha256': `sha256:${'d'.repeat(64)}`,
     'environment.battery': 'simulated-75-percent',
     'environment.batterySaver': false,
@@ -172,6 +177,7 @@ function mobileProfileSetFixture() {
     'runtime.chromeLongVersionCode': '14407559031',
     'runtime.chromePackage': 'com.android.chrome',
     'runtime.chromeVersion': '144.0.7559.31',
+    'runtime.emulatorVersion': '36.3.10.0',
     'source.nodeVersion': 'v26.5.0',
     'source.packageLockSha256': `sha256:${'b'.repeat(64)}`,
   };
@@ -181,8 +187,11 @@ function mobileProfileSetFixture() {
 function observationFixture() {
   return {
     serial: 'emulator-5580',
+    avdName: 'omnia_performance',
     avdImage: 'system-images;android-36.1;google_apis_playstore;x86_64@4',
+    avdSnapshotName: 'omnia-performance-v1',
     avdSnapshotSha256: `sha256:${'d'.repeat(64)}`,
+    emulatorVersion: '36.3.10.0',
     deviceClass: 'pixel-4a-class',
     buildFingerprint: 'google/sdk/device:user/dev-keys',
     abi: 'x86_64',

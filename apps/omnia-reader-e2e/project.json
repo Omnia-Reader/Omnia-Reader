@@ -79,6 +79,39 @@
         "command": "node apps/omnia-reader-e2e/performance/run-desktop-web.mjs"
       }
     },
+    "performance-mobile-web-contract": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "options": {
+        "command": "node --test apps/omnia-reader-e2e/performance/android-emulator-controller.spec.mjs apps/omnia-reader-e2e/performance/mobile-web-environment.spec.mjs apps/omnia-reader-e2e/performance/run-mobile-web.spec.mjs"
+      }
+    },
+    "performance-mobile-web-smoke": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "dependsOn": [
+        {
+          "projects": ["omnia-reader"],
+          "target": "build"
+        }
+      ],
+      "options": {
+        "command": "node apps/omnia-reader-e2e/performance/run-mobile-web.mjs --smoke"
+      }
+    },
+    "performance-mobile-web": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "dependsOn": [
+        {
+          "projects": ["omnia-reader"],
+          "target": "build"
+        }
+      ],
+      "options": {
+        "command": "node apps/omnia-reader-e2e/performance/run-mobile-web.mjs"
+      }
+    },
     "performance-evidence-test": {
       "executor": "nx:run-commands",
       "parallelism": false,
