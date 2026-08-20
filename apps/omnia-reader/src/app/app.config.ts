@@ -43,6 +43,8 @@ import {
   ProgressSyncService,
   ReadingStateSyncCoordinator,
   REMOTE_BOOK_BACKUP_SERVICE,
+  REMOTE_VARIANT_RECOVERY,
+  DefaultRemoteVariantRecovery,
   RemoteBookBackupService,
   SelectedLibrarySyncTransport,
   SyncActivityNotifier,
@@ -108,7 +110,12 @@ function createLibrarySyncService(
       synchronize: (options) => rootReconciliation.prepare(options),
     },
     schema: new LibrarySyncManifestService(remote),
-    logicalBooks: new LogicalBookSyncService(remote, journal, repository),
+    logicalBooks: new LogicalBookSyncService(
+      remote,
+      journal,
+      repository,
+      exclusions,
+    ),
     books: new BookSyncService(remote, journal, repository, { exclusions }),
     progress,
     bookmarks,
@@ -131,6 +138,13 @@ function createRemoteBookBackupService(
   exclusions: BookSyncExclusions,
 ): RemoteBookBackupService {
   return new RemoteBookBackupService(remote, journal, exclusions);
+}
+
+function createRemoteVariantRecovery(
+  remote: LibrarySyncTransport,
+  repository: LibraryRepository,
+): DefaultRemoteVariantRecovery {
+  return new DefaultRemoteVariantRecovery(remote, repository);
 }
 
 function createSelectedSyncTransport(
@@ -295,6 +309,11 @@ export const appConfig: ApplicationConfig = {
               SYNC_OPERATION_JOURNAL,
               BOOK_SYNC_EXCLUSIONS,
             ],
+          },
+          {
+            provide: REMOTE_VARIANT_RECOVERY,
+            useFactory: createRemoteVariantRecovery,
+            deps: [ACTIVE_SYNC_TRANSPORT, LIBRARY_REPOSITORY],
           },
           {
             provide: AUTO_SYNC_SCHEDULER,

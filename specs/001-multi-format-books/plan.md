@@ -8,15 +8,23 @@
 
 ## Summary
 
+**2026-08-20 convergence note**: Feature 010 is authoritative for provider
+persistence. Multi-format outcomes still use schema-2 manifest compatibility,
+provider-neutral exact-object descriptors, deterministic membership/preference
+merge, and durable reconciliation, but current clients persist the folded state
+in `.omnia-reader/logical-books/state.json`. Append-only remote changes and
+checkpoint pages are legacy migration inputs only; implementation and tests
+must not recreate them.
+
 Introduce a format-neutral logical-book aggregate while preserving every
 existing `BookRecord.id` as the SHA-256 identity of one exact publication
 variant. Add an IndexedDB v9 logical-book store and atomic aggregate operations,
 keep progress/bookmarks/annotations and `/reader/:bookId` scoped to the selected
 variant, derive variant health locally through authoritative source
-verification, migrate backup archives to schema 4, and add a sync schema 2
-compatibility gate plus atomic logical-book change documents, an independently
-merged synchronized preferred-format register, and durable membership-conflict
-reconciliation. The library and reader UI resolve a logical book to one
+verification, migrate backup archives to schema 4, and use the current sync
+schema-2 compatibility gate plus one canonical logical-library state document,
+an independently merged synchronized preferred-format register, and durable
+membership-conflict reconciliation. The library and reader UI resolve a logical book to one
 verified healthy variant. Performance evidence separates first-painted
 acknowledgement from final result on four versioned minimum profiles with
 profile-specific drivers. Exact-source replacement and verified remote retry
@@ -37,7 +45,8 @@ JSZip, EPUB, PDF.js, and provider transport dependencies; no new dependency
 
 **Storage**: IndexedDB metadata and journals; OPFS with IndexedDB fallback for
 publication binaries; ZIP backup archive; provider-neutral JSON documents and
-Git LFS/MEGA objects beneath `.omnia-reader/v1`
+Git LFS/MEGA objects beneath `.omnia-reader/`, with logical state in
+`.omnia-reader/logical-books/state.json`
 
 **Testing**: Vitest/Angular unit tests; fake IndexedDB migration and failure
 fixtures; Playwright browser/PWA journeys; Git/MEGA transport conformance
@@ -117,8 +126,8 @@ sync, provider, host, or reader-engine contract. No exception is required.
 - **Owning project(s)**: `reader-domain` owns logical-book and repository
   contracts; `library-data-access` owns IndexedDB v9, OPFS transaction staging,
   migration, quarantine, and backup schema 4; `sync-core` owns schema 2,
-  logical-book changes, deterministic merge, checkpoints, and provider-neutral
-  application; `sync-git` owns journal compatibility; `omnia-reader` owns UI and
+  local logical-book changes, deterministic canonical-state merge, legacy
+  migration, and provider-neutral application; `sync-git` owns journal compatibility; `omnia-reader` owns UI and
   orchestration; `omnia-reader-e2e` owns real-browser outcomes.
 - **Affected consumers**: `omnia-reader` statically consumes `reader-domain`,
   `library-data-access`, `sync-core`, and `sync-git`; `library-data-access` and
@@ -164,7 +173,7 @@ apps/omnia-reader-e2e/src/                         # browser, accessibility, sto
 apps/omnia-reader-e2e/performance/                 # profile preflight, page timing, raw-result schema
 libs/reader/domain/src/lib/                        # logical-book records, validation, repository/sync contracts
 libs/library/data-access/src/lib/                  # IndexedDB v9, atomic mutations, backup schema 4
-libs/sync/core/src/lib/                            # root schema 2, changes, merge, checkpoint, remote backup
+libs/sync/core/src/lib/                            # root schema 2, canonical logical state, merge, recovery, remote backup
 libs/sync/git/src/lib/                             # journal entity compatibility and focused tests
 libs/sync/mega/src/lib/                            # provider-neutral conformance tests only, if fixtures live here
 specs/001-multi-format-books/performance/          # immutable profile sets and raw acceptance results
@@ -222,11 +231,13 @@ specs/001-multi-format-books/performance/          # immutable profile sets and 
   conflict in canonical order. Any conflict aborts before staging or mutation;
   a conflict-free restore rechecks the snapshot revision before one repository
   commit or complete before-image rollback.
-- Bump the root sync manifest at `.omnia-reader/v1/manifest.json` from schema 1
-  to 2 before publishing association data; old clients reject the schema before
-  normal sync. Keep exact variant state operations keyed by SHA-256 IDs. Publish
-  verified immutable variant objects first and one immutable
-  `LogicalBookChange` last as the membership commit marker.
+- Validate the schema-2 root manifest at `.omnia-reader/manifest.json` before
+  publishing association data; old clients reject the schema before normal
+  sync. Keep exact variant state operations keyed by SHA-256 IDs. Publish
+  verified immutable variant objects first, fold durable local
+  `LogicalBookChange` journal payloads into the canonical
+  `.omnia-reader/logical-books/state.json`, then reread and semantically verify
+  the optimistic write before acknowledgement.
 - Fold change documents causally by declared parent heads; order concurrent
   changes by change ID, never device clocks or device-local journal revisions.
   Conflicting losing associations preserve their variants in the last accepted
@@ -235,9 +246,10 @@ specs/001-multi-format-books/performance/          # immutable profile sets and 
   head is required to resolve it. Preference-only changes fold in an independent
   register: descendants win and concurrent choices use the same change-ID
   tie-break without reading or rewriting membership or variant state.
-  Tombstones participate in the same causal order. Bounded checkpoint pages
-  retain membership/deletion, preference-head, and open/resolved reconciliation
-  authority needed by an offline client.
+  Tombstones participate in the same causal order. Bounded record clocks and
+  tombstones inside canonical state retain membership/deletion,
+  preference-head, and open/resolved reconciliation authority needed by an
+  offline client. Former change/checkpoint entries are migration inputs only.
 - Add `logical-book-change` to `SyncOperation.entity`. Append it after local
   commit; do not coalesce distinct changes by logical-book ID. Provider failure
   leaves local state usable and the operation pending.
@@ -418,7 +430,7 @@ environment gates.
 | FR-001, FR-005, FR-009, FR-010                 | Record validation, stable SHA IDs, membership/cardinality, variant-scoped locator state                                                                                                                                                                                                                                | `npx nx test reader-domain`                                                                                                                                                                                     | Yes                                                                                                     |
 | FR-002, FR-003, FR-006, FR-011–FR-014, US1–US3 | IndexedDB v8→v9 migration; add/associate/detach/delete atomic failure and restart; missing bytes/quarantine                                                                                                                                                                                                            | `npx nx test library-data-access`                                                                                                                                                                               | Yes                                                                                                     |
 | FR-015, FR-016, FR-020                         | Backup v4 round-trip, v1–v3 singleton migration, all-conflict preflight, revision recheck, zero mutation, rollback                                                                                                                                                                                                     | `npx nx test library-data-access`                                                                                                                                                                               | Yes                                                                                                     |
-| FR-015, FR-017, FR-021                         | Root schema gate, causal membership/preference merge, persistent reconciliation, tombstones, checkpoints, retry                                                                                                                                                                                                        | `npx nx test sync-core`                                                                                                                                                                                         | Yes                                                                                                     |
+| FR-015, FR-017, FR-021                         | Root schema gate, canonical-state migration, causal membership/preference merge, persistent reconciliation, tombstones, optimistic retry                                                                                                                                                                               | `npx nx test sync-core`                                                                                                                                                                                         | Yes                                                                                                     |
 | FR-015, FR-017, FR-021                         | Logical/preference/reconciliation journal work remains durable, ordered, and acknowledgement-safe                                                                                                                                                                                                                      | `npx nx test sync-git`                                                                                                                                                                                          | Yes                                                                                                     |
 | FR-015, FR-017, FR-021                         | Provider-neutral membership/preference/reconciliation fixtures preserve identical semantics                                                                                                                                                                                                                            | `npx nx test sync-mega`                                                                                                                                                                                         | Yes                                                                                                     |
 | FR-002–FR-012, FR-017–FR-023, US1–US3          | Always-visible EPUB/PDF badges, per-variant percentages and refresh states, anchored menu semantics, present-format open, missing-format add/associate choice, duplicate/empty/cancel/focus/live-update outcomes, all nine health rows, no-readable state, conflict reports, reconciliation, safe format switch        | `npx nx test omnia-reader`                                                                                                                                                                                      | Yes                                                                                                     |
@@ -445,23 +457,25 @@ unless the implementation departs from this plan and changes native commands.
 - **Vertical slices**: (1) domain records, IndexedDB v9 singleton migration, and
   add-format with one-card UI; (2) associate existing entries with preserved
   state; (3) format choice/switch, detach, and delete; (4) backup v4; (5) sync
-  schema 2, deterministic membership/preference merge, persistent conflict
-  reconciliation, checkpoints, and provider conformance. Each slice starts with
+  schema 2, deterministic canonical membership/preference merge, persistent
+  conflict reconciliation, legacy migration, and provider conformance. Each slice starts with
   focused failing tests and remains locally usable before optional sync work.
 - **Migration/rollout**: Ship local v9 migration before UI mutation paths. Ship
   backup v4 reader/writer with legacy readers before relying on it. A new client
   may read sync schema 1 only to verify/copy exact variants into singleton
   logical state, then compare-and-swap the root to schema 2 before publishing
-  association changes. Retain legacy provider objects; garbage collection is a
-  later verified checkpoint action. An old sync already in flight cannot be
-  recalled, but distinct v2 roots prevent it from interpreting new membership;
-  later upgrade reconciles its legacy singleton copies without data loss.
+  association changes. Retain legacy provider objects until canonical state is
+  written, reread, and semantically verified; then remove legacy changes and
+  checkpoints as one retryable batch. An old sync already in flight cannot be
+  recalled, but the schema gate prevents it from interpreting new membership;
+  a later upgrade reconciles its legacy singleton copies without data loss.
 - **Documentation**: Keep detailed contracts in this feature directory. Update
   `docs/universal-reader-plan.md` only after implementation evidence changes
-  verified product/architecture status. Document backup v4 and sync schema 2
+  verified product/architecture status. Document backup v4, sync schema 2, and
+  canonical logical state
   compatibility for users before release.
 - **Residual gates**: Live GitHub/MEGA credentials and quotas, provider
-  interruption during schema upgrade/compaction, packaged desktop behavior,
+  interruption during schema upgrade/canonical-state migration, packaged desktop behavior,
   Android emulator, physical-device behavior, Windows NVDA/Firefox, macOS
   VoiceOver/Safari, Android TalkBack/WebView, the pinned Pixel-class AVD, and
   packaged/Android performance profiles cannot be implied by local unit/browser

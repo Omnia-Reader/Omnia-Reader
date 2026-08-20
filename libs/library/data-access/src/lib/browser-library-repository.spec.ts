@@ -10,6 +10,7 @@ import {
 import { BrowserLibraryRepository } from './browser-library-repository';
 import { publicationFingerprint } from './browser-library-repository';
 import { PublicationBinaryStorage } from './publication-binary-storage';
+import { LibraryRestoreStaleRevisionError } from './library-restore';
 
 describe('publicationFingerprint', () => {
   it('creates a stable exact-edition SHA-256 identifier', async () => {
@@ -38,6 +39,170 @@ describe('BrowserLibraryRepository reader preferences', () => {
     await expect(
       new BrowserLibraryRepository().getReaderPreferences('pdf'),
     ).resolves.toBeNull();
+  });
+});
+
+describe('BrowserLibraryRepository atomic backup restore', () => {
+  it('commits publication bytes, membership, and reader state together', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'atomic-backup-restore',
+    );
+    const content = new Blob(['%PDF-1.7 atomic restore'], {
+      type: 'application/pdf',
+    });
+    const id = await publicationFingerprint(content);
+    const book: BookRecord = {
+      id,
+      format: 'pdf',
+      fileName: 'atomic.pdf',
+      mediaType: content.type,
+      size: content.size,
+      title: 'Atomic',
+      authors: [],
+      importedAt: '2026-08-20T00:00:00.000Z',
+    };
+    const snapshot = await repository.getLogicalLibrarySnapshot();
+
+    await repository.restoreLibraryBackupAtomically({
+      expectedLogicalRevision: snapshot.revision,
+      publications: [{ record: book, content }],
+      logicalBooks: [
+        {
+          schemaVersion: 1,
+          id: `logical:sha256:${id.slice('sha256:'.length)}`,
+          title: book.title,
+          authors: [],
+          importedAt: book.importedAt,
+          updatedAt: book.importedAt,
+          coverState: 'unavailable',
+          variants: { pdf: id },
+        },
+      ],
+      logicalBookPreferences: [],
+      membershipReconciliations: [],
+      logicalBookCovers: new Map(),
+      progress: [],
+      progressDocuments: [],
+      readerPreferences: [],
+      bookmarks: [],
+      annotations: [],
+    });
+
+    await expect(repository.getBook(id)).resolves.toEqual(book);
+    await expect((await repository.getBookSource(id))?.open()).resolves.toEqual(
+      content,
+    );
+    await expect(
+      repository.findLogicalBookByVariant(id),
+    ).resolves.toMatchObject({
+      variants: { pdf: id },
+    });
+  });
+
+  it('aborts without publishing staged records when the logical revision is stale', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'stale-backup-restore',
+    );
+    const stale = await repository.getLogicalLibrarySnapshot();
+    await repository.importBook(
+      source(
+        'concurrent.pdf',
+        new Blob(['%PDF-1.7 concurrent'], { type: 'application/pdf' }),
+      ),
+    );
+    const content = new Blob(['%PDF-1.7 stale candidate'], {
+      type: 'application/pdf',
+    });
+    const id = await publicationFingerprint(content);
+    const book: BookRecord = {
+      id,
+      format: 'pdf',
+      fileName: 'stale.pdf',
+      mediaType: content.type,
+      size: content.size,
+      title: 'Stale',
+      authors: [],
+      importedAt: '2026-08-20T00:00:00.000Z',
+    };
+
+    await expect(
+      repository.restoreLibraryBackupAtomically({
+        expectedLogicalRevision: stale.revision,
+        publications: [{ record: book, content }],
+        logicalBooks: [],
+        logicalBookPreferences: [],
+        membershipReconciliations: [],
+        logicalBookCovers: new Map(),
+        progress: [],
+        progressDocuments: [],
+        readerPreferences: [],
+        bookmarks: [],
+        annotations: [],
+      }),
+    ).rejects.toBeInstanceOf(LibraryRestoreStaleRevisionError);
+    await expect(repository.getBook(id)).resolves.toBeNull();
+  });
+
+  it('rolls back publication bytes when the restore transaction fails', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'failed-atomic-backup-restore',
+    );
+    const content = new Blob(['%PDF-1.7 rollback candidate'], {
+      type: 'application/pdf',
+    });
+    const id = await publicationFingerprint(content);
+    const book: BookRecord = {
+      id,
+      format: 'pdf',
+      fileName: 'rollback.pdf',
+      mediaType: content.type,
+      size: content.size,
+      title: 'Rollback',
+      authors: [],
+      importedAt: '2026-08-20T00:00:00.000Z',
+    };
+    const snapshot = await repository.getLogicalLibrarySnapshot();
+    const logical = {
+      schemaVersion: 1 as const,
+      id: `logical:sha256:${'1'.repeat(64)}` as const,
+      title: book.title,
+      authors: [],
+      importedAt: book.importedAt,
+      updatedAt: book.importedAt,
+      coverState: 'unavailable' as const,
+      variants: { pdf: id },
+    };
+
+    await expect(
+      repository.restoreLibraryBackupAtomically({
+        expectedLogicalRevision: snapshot.revision,
+        publications: [{ record: book, content }],
+        logicalBooks: [
+          logical,
+          {
+            ...logical,
+            id: `logical:sha256:${'2'.repeat(64)}`,
+          },
+        ],
+        logicalBookPreferences: [],
+        membershipReconciliations: [],
+        logicalBookCovers: new Map(),
+        progress: [],
+        progressDocuments: [],
+        readerPreferences: [],
+        bookmarks: [],
+        annotations: [],
+      }),
+    ).rejects.toBeDefined();
+    await expect(repository.getBook(id)).resolves.toBeNull();
+    await expect(repository.getBookSource(id)).resolves.toBeNull();
+    await expect(repository.listLogicalBooks()).resolves.toEqual([]);
   });
 });
 

@@ -36,9 +36,11 @@ Expected:
 - backup preflight reports every membership/occupied-slot conflict in canonical
   order and invokes no OPFS, repository, preference, reconciliation, or journal
   mutator;
-- root schema 1→2 migration, causal membership/preference conflicts, persistent
-  reconciliation, tombstones, retries, and checkpoints converge without data
-  loss or variant-state changes;
+- root schema 1→2 migration, canonical-state migration, causal
+  membership/preference conflicts, persistent reconciliation, tombstones, and
+  bounded optimistic retries converge without data loss or variant-state
+  changes; a schema-2 device checkpoint is invalidated once before the
+  canonical-state fast path is trusted;
 - derived availability distinguishes `unavailable` causes
   missing/evicted/inaccessible/incomplete from `quarantined` causes
   malformed-reference/integrity-invalid/unsupported; same-size wrong bytes and
@@ -345,7 +347,8 @@ fixtures for all rows and simulated Git/MEGA transports for sync rows.
 Run identical provider-neutral scenarios against configured GitHub and MEGA
 transports:
 
-- v1 bootstrap then compare-and-swap to root schema 2;
+- previous-root bootstrap, canonical-state migration, then compare-and-swap to
+  the current root schema 2;
 - old-client version refusal;
 - object-before-change publication and interruption after every step;
 - two-device concurrent associate/detach/delete and same-format conflicts;
@@ -354,7 +357,8 @@ transports:
 - concurrent EPUB/PDF preference choices in both delivery orders, an unavailable
   preferred member fallback, and byte-identical variant state before/after;
 - deletion versus stale association, followed by explicit child reimport;
-- checkpoint interruption, retry, pruning recovery, and offline-client rebase;
+- canonical-state conflict, interrupted migration/cleanup retry, and stale
+  offline-client reapply;
 - delete variant versus delete whole logical book;
 - quota/network failure leaves local state usable and journal work pending.
 

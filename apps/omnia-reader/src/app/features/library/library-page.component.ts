@@ -45,8 +45,16 @@ import {
 } from './publication-import.service';
 import { RemovePublicationDialogComponent } from './remove-publication-dialog.component';
 import { AssociatePublicationDialogComponent } from './associate-publication-dialog.component';
+import { DetachPublicationDialogComponent } from './detach-publication-dialog.component';
+import { PublicationRecoveryService } from './publication-recovery.service';
 
-type FormatAction = 'export' | 'remove' | 'add';
+type FormatAction =
+  | 'export'
+  | 'remove'
+  | 'add'
+  | 'detach'
+  | 'replace'
+  | 'download';
 
 @Component({
   selector: 'omnia-library-page',
@@ -87,6 +95,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   private readonly dialog = inject(MatDialog);
   private readonly router = inject(Router);
   private readonly associations = inject(PublicationAssociationService);
+  private readonly recovery = inject(PublicationRecoveryService);
   private readonly document = inject(DOCUMENT);
   private readonly initialViewPreferences = loadLibraryViewPreferences();
   private removeImportListener: (() => void) | null = null;
@@ -114,6 +123,10 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   exportingBookId: string | null = null;
   removingBookId: string | null = null;
   addingLogicalBookId: string | null = null;
+  recoveringVariantId: string | null = null;
+  refreshing = false;
+  readonly synchronizedRecoveryVariantIds = new Set<string>();
+  readonly recoveryProgressPercentByVariant = new Map<string, number>();
   errorMessage: string | null = null;
   statusMessage: string | null = null;
   readonly formatOrder: readonly PublicationFormat[] = ['epub', 'pdf'];
@@ -278,7 +291,30 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
     if (action === 'export') {
       return `Export ${format.toUpperCase()} for ${title}`;
     }
+    if (action === 'detach') {
+      return `Separate ${format.toUpperCase()} from ${title}`;
+    }
+    if (action === 'replace') {
+      return `Replace ${format.toUpperCase()} for ${title} from this device`;
+    }
+    if (action === 'download') {
+      return `Download synchronized ${format.toUpperCase()} for ${title}`;
+    }
     return `Remove ${format.toUpperCase()} for ${title}`;
+  }
+
+  hasMultipleVariants(card: LogicalLibraryCard): boolean {
+    return (
+      this.formatOrder.filter((format) => !!card.variants[format]).length > 1
+    );
+  }
+
+  canRecoverFromSynchronization(book: BookRecord): boolean {
+    return this.synchronizedRecoveryVariantIds.has(book.id);
+  }
+
+  recoveryProgress(book: BookRecord): number | null {
+    return this.recoveryProgressPercentByVariant.get(book.id) ?? null;
   }
 
   formatBadgeLabel(
@@ -457,11 +493,13 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   }
 
   async openPreferredFormat(card: LogicalLibraryCard): Promise<void> {
-    const preferred = this.preferredFormat(card);
-    if (!preferred) {
+    const format = this.healthyOpenFormat(card);
+    if (!format) {
+      this.statusMessage = `No readable format is currently available for “${card.title}”. Use a replacement action to restore a source.`;
+      this.changeDetector.markForCheck();
       return;
     }
-    await this.readFormat(card, preferred);
+    await this.readFormat(card, format);
   }
 
   isPreferredFormat(
@@ -472,12 +510,121 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
   }
 
   isFormatActionDisabled(): boolean {
-    return this.exportingBookId !== null || this.removingBookId !== null;
+    return (
+      this.exportingBookId !== null ||
+      this.removingBookId !== null ||
+      this.recoveringVariantId !== null
+    );
+  }
+
+  async replaceVariantLocally(book: BookRecord): Promise<void> {
+    if (this.isFormatActionDisabled()) return;
+    this.recoveringVariantId = book.id;
+    this.errorMessage = null;
+    this.statusMessage = null;
+    this.changeDetector.markForCheck();
+    try {
+      const result = await this.recovery.replaceFromPicker(book);
+      if (result.status === 'cancelled') {
+        this.statusMessage = `Replacement of ${book.format.toUpperCase()} for “${book.title}” was cancelled.`;
+      } else if (result.status === 'invalid-selection') {
+        this.errorMessage = 'Choose exactly one matching publication file.';
+      } else {
+        await this.reload();
+        this.statusMessage = `${book.format.toUpperCase()} for “${book.title}” was restored from this device.`;
+      }
+    } catch (error) {
+      this.errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to replace the publication';
+    } finally {
+      this.recoveringVariantId = null;
+      this.changeDetector.markForCheck();
+      this.focusFormatBadgeByVariant(book.id);
+    }
+  }
+
+  async recoverVariantFromSynchronization(book: BookRecord): Promise<void> {
+    if (this.isFormatActionDisabled()) return;
+    this.recoveringVariantId = book.id;
+    this.errorMessage = null;
+    this.statusMessage = `Downloading synchronized ${book.format.toUpperCase()} for “${book.title}”…`;
+    this.recoveryProgressPercentByVariant.delete(book.id);
+    this.changeDetector.markForCheck();
+    try {
+      await this.recovery.replaceFromSynchronization(book, {
+        onProgress: (progress) => {
+          const percent =
+            progress.totalBytes > 0
+              ? Math.round(
+                  (100 * progress.transferredBytes) / progress.totalBytes,
+                )
+              : 0;
+          this.recoveryProgressPercentByVariant.set(book.id, percent);
+          this.changeDetector.markForCheck();
+        },
+      });
+      await this.reload();
+      this.statusMessage = `${book.format.toUpperCase()} for “${book.title}” was restored from synchronization.`;
+    } catch (error) {
+      this.errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to download the synchronized publication';
+      await this.probeSynchronizedRecovery(book);
+    } finally {
+      this.recoveryProgressPercentByVariant.delete(book.id);
+      this.recoveringVariantId = null;
+      this.changeDetector.markForCheck();
+      this.focusFormatBadgeByVariant(book.id);
+    }
+  }
+
+  async requestVariantDetach(
+    card: LogicalLibraryCard,
+    book: BookRecord,
+  ): Promise<void> {
+    if (!this.hasMultipleVariants(card) || this.isFormatActionDisabled())
+      return;
+    const confirmed = await firstValueFrom(
+      this.dialog
+        .open(DetachPublicationDialogComponent, {
+          data: { book, logicalTitle: card.title },
+          autoFocus: 'first-tabbable',
+          restoreFocus: true,
+          width: 'min(32rem, calc(100vw - 2rem))',
+        })
+        .afterClosed(),
+    );
+    if (!confirmed) return;
+    this.removingBookId = book.id;
+    this.errorMessage = null;
+    this.statusMessage = null;
+    try {
+      const result = await this.associations.detach(
+        card.logicalBook.id,
+        book.id,
+      );
+      await this.reload();
+      this.statusMessage = `${book.format.toUpperCase()} was separated from “${card.title}”${
+        result.syncPending ? '; synchronization remains pending.' : '.'
+      }`;
+    } catch (error) {
+      this.errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to separate the format';
+    } finally {
+      this.removingBookId = null;
+      this.changeDetector.markForCheck();
+    }
   }
 
   private async reload(): Promise<void> {
     const initialLoad = this.logicalBooks.length === 0;
     this.loading = initialLoad;
+    this.refreshing = !initialLoad;
     this.changeDetector.markForCheck();
     try {
       const [books, logicalBooks] = await Promise.all([
@@ -547,10 +694,9 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
                 ),
             ]),
         );
-      } else {
-        this.progressPercentByVariant = new Map();
       }
       this.rebuildLogicalCards();
+      void this.probeUnhealthySynchronizedRecoveries();
       this.scheduleEnrichment(
         books,
         new Set(
@@ -563,6 +709,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         error instanceof Error ? error.message : 'Unable to load the library';
     } finally {
       this.loading = false;
+      this.refreshing = false;
       this.changeDetector.markForCheck();
       this.enqueueCheckingAvailabilityVerification();
     }
@@ -758,6 +905,66 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
       return card.preferredFormat;
     }
     return this.formatOrder.find((format) => !!card.variants[format]) ?? null;
+  }
+
+  private healthyOpenFormat(
+    card: LogicalLibraryCard,
+  ): PublicationFormat | null {
+    const preferred = this.preferredFormat(card);
+    if (
+      preferred &&
+      card.variants[preferred] &&
+      card.availability[preferred]?.status === 'healthy'
+    ) {
+      return preferred;
+    }
+    return (
+      this.formatOrder.find(
+        (format) =>
+          !!card.variants[format] &&
+          card.availability[format]?.status === 'healthy',
+      ) ?? null
+    );
+  }
+
+  private async probeUnhealthySynchronizedRecoveries(): Promise<void> {
+    const currentIds = new Set(this.books.map((book) => book.id));
+    for (const variantId of this.synchronizedRecoveryVariantIds) {
+      if (!currentIds.has(variantId)) {
+        this.synchronizedRecoveryVariantIds.delete(variantId);
+      }
+    }
+    const unhealthy = this.books.filter(
+      (book) => this.availability.get(book.id)?.status !== 'healthy',
+    );
+    await Promise.all(
+      unhealthy.map((book) => this.probeSynchronizedRecovery(book)),
+    );
+  }
+
+  private async probeSynchronizedRecovery(book: BookRecord): Promise<void> {
+    const descriptor = await this.recovery.synchronizedReplacement(book);
+    if (this.destroyed) return;
+    if (descriptor) {
+      this.synchronizedRecoveryVariantIds.add(book.id);
+    } else {
+      this.synchronizedRecoveryVariantIds.delete(book.id);
+    }
+    this.changeDetector.markForCheck();
+  }
+
+  private focusFormatBadgeByVariant(variantId: string): void {
+    const card = this.displayedBooks.find((candidate) =>
+      this.formatOrder.some(
+        (format) => candidate.variants[format]?.id === variantId,
+      ),
+    );
+    const format = card
+      ? this.formatOrder.find(
+          (candidate) => card.variants[candidate]?.id === variantId,
+        )
+      : null;
+    if (card && format) this.focusFormatBadge(card.id, format);
   }
 
   private persistViewPreferences(): void {

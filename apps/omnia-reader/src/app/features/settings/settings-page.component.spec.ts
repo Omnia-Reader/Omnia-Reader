@@ -4,6 +4,7 @@ import { provideRouter } from '@angular/router';
 import {
   LIBRARY_QUARANTINE_REPOSITORY,
   LibraryBackupService,
+  LibraryBackupRestoreConflictError,
 } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -379,6 +380,57 @@ describe('SettingsPageComponent', () => {
       'Backup publication failed integrity validation',
     );
     expect(fixture.componentInstance.statusMessage).toBeNull();
+  });
+
+  it('keeps a semantic restore-conflict report until dismissed or retried', async () => {
+    backups.importArchive.mockRejectedValue(
+      new LibraryBackupRestoreConflictError([
+        {
+          kind: 'format-slot-occupied',
+          archiveLogicalBookId: 'logical:sha256:archive',
+          format: 'epub',
+          archiveVariantId: `sha256:${'a'.repeat(64)}`,
+          currentLogicalBookId: 'logical:sha256:archive',
+          currentVariantId: `sha256:${'b'.repeat(64)}`,
+        },
+        {
+          kind: 'variant-owned-by-another-logical-book',
+          archiveLogicalBookId: 'logical:sha256:second',
+          format: 'pdf',
+          archiveVariantId: `sha256:${'c'.repeat(64)}`,
+          currentLogicalBookId: 'logical:sha256:current',
+          currentVariantId: `sha256:${'c'.repeat(64)}`,
+        },
+      ]),
+    );
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+    fixture.detectChanges();
+
+    await fixture.componentInstance.importBackup({
+      target: {
+        files: { item: () => new File(['conflict'], 'conflict.omnia-backup') },
+        value: 'conflict.omnia-backup',
+      },
+    } as unknown as Event);
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('[role="alert"]').textContent,
+    ).toContain('2 membership conflicts were found');
+    expect(fixture.nativeElement.textContent).toContain(
+      'EPUB slot in logical:sha256:archive is occupied',
+    );
+    expect(fixture.nativeElement.textContent).toContain('PDF variant sha256:');
+    const dismiss = Array.from(
+      fixture.nativeElement.querySelectorAll(
+        'button',
+      ) as NodeListOf<HTMLButtonElement>,
+    ).find((button) => button.textContent?.includes('Dismiss report'));
+    dismiss?.click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain(
+      'Resolve backup membership conflicts',
+    );
   });
 
   it('lists and exports quarantined records without deleting them', async () => {

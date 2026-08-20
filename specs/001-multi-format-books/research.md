@@ -1,5 +1,15 @@
 # Phase 0 Research: Multi-Format Books
 
+## Superseding persistence decision (2026-08-20)
+
+Feature 010 replaced Decisions 7 and 8 only at the provider-storage layer.
+The schema-2 compatibility gate, causal merge rules, tombstones, preference
+authority, reconciliation records, and object-before-state ordering remain.
+Current clients fold those outcomes into one bounded, optimistic
+`.omnia-reader/logical-books/state.json`; append-only change files and
+checkpoint pages are accepted only for migration and are removed after verified
+canonical-state convergence.
+
 ## Decision 1: Separate logical-book and publication-variant identity
 
 **Decision**: Keep `BookRecord.id` as the immutable `sha256:<digest>` identity
@@ -119,18 +129,18 @@ compatible while closing the atomicity gap required by association.
 - Writing schema 3 plus an optional sidecar was rejected because old restorers
   could silently flatten the library.
 
-## Decision 7: Use a hard sync compatibility gate and atomic change documents
+## Decision 7: Use a hard sync compatibility gate and atomic canonical state
 
-**Decision**: Bump the existing root manifest from schema 1 to 2 at the same
-path. Store v2 variant objects and logical change/checkpoint documents under
-distinct safe subroots. Publish verified objects first and one immutable change
-document last. Old clients reject root schema 2; new clients may migrate schema
-1 only before a compare-and-swap upgrade.
+**Decision**: Bump the root manifest from schema 1 to 2 and keep it at the
+current `.omnia-reader/manifest.json` path. Publish verified variant objects
+first, then write one optimistic canonical logical state document. Old clients
+reject root schema 2; current clients may migrate schema 1 only before a
+compare-and-swap upgrade.
 
 **Rationale**: Adding a feature string is insufficient because old validation
 accepts unknown feature names. A root version mismatch is already a hard gate,
-and a last-published change is an atomic membership commit across transports
-that cannot atomically update several files together.
+and one revision-guarded canonical document is the atomic membership commit
+across transports.
 
 **Alternatives considered**:
 
@@ -141,7 +151,7 @@ that cannot atomically update several files together.
 - Provider-specific transactions were rejected because Git and MEGA must share
   one provider-neutral contract.
 
-## Decision 8: Merge causally and compact with verified checkpoints
+## Decision 8: Merge causally into bounded canonical state
 
 **Decision**: Changes declare observed parent heads and complete resulting work
 snapshots. Fold ancestors first; order concurrent changes by opaque change ID.
@@ -149,21 +159,21 @@ If a concurrent change violates unique membership or format cardinality, keep
 the deterministic winner and preserve the losing variant in its last accepted
 membership while creating a deterministic, durable reconciliation record.
 Only an explicit child reconciliation change can resolve that record or change
-the accepted association. Tombstones use the same order. Compact accepted
-state, preference heads, and open/resolved reconciliation authority into
-bounded, immutable pages plus a last-published checkpoint index; offline
-clients rebase pending changes on the latest checkpoint.
+the accepted association. Tombstones use the same order. Store accepted state,
+preference heads, and open/resolved reconciliation authority in one bounded,
+canonical document with per-record clocks; offline changes deterministically
+reapply against the latest verified state.
 
 **Rationale**: Device-local journal revisions and timestamps cannot order
 devices. Causal parents plus a deterministic tie-break converge without data
-loss, while bounded checkpoints prevent an unbounded provider listing.
+loss, while one bounded document prevents an unbounded provider listing.
 
 **Alternatives considered**:
 
 - Coalescing by logical-book ID was rejected because it can erase causally
   distinct detach/delete operations.
-- Deleting old change history without checkpoints was rejected because it can
-  resurrect membership or strand offline clients.
+- Deleting old history without verified canonical clocks/tombstones was
+  rejected because it can resurrect membership or strand offline clients.
 
 ## Decision 9: Synchronize preferred format as an independent causal register
 
@@ -345,7 +355,7 @@ transient UI state and adds no durable entity, migration, sync field, host API,
 or dependency. Implementation must
 still prove: report-all restore preflight plus full rollback for pre-existing
 records; v1→v2 provider compare-and-swap under interruption; already-running
-old-client overlap; bounded checkpoint compaction that retains preference and
+old-client overlap; bounded canonical state that retains preference and
 reconciliation authority; progress flush and annotation-draft handling during
 format switch; exact-source health verification without eager library hashing;
 v1 profile availability/version drift; and identical Git/MEGA membership,

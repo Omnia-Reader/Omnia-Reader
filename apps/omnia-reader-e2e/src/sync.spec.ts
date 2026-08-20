@@ -7,6 +7,12 @@ import {
 } from '@playwright/test';
 import { createEpubFixture, createPdfFixture } from './publication-fixtures';
 import {
+  assertClosedMatrix,
+  compatibilityMatrixRows,
+  recoveryMatrixRows,
+  rowsOwnedBy,
+} from './recovery-compatibility-matrix';
+import {
   SimulatedSyncGateway,
   type SimulatedSyncProvider,
 } from './simulated-sync-gateway';
@@ -18,6 +24,29 @@ import {
 // Browser routing is the provider boundary in this suite. A production service
 // worker must not satisfy `/api/sync/**` before the simulated gateway sees it.
 test.use({ serviceWorkers: 'block' });
+
+test('records all interrupted-transfer recovery and logical sync compatibility rows', async () => {
+  assertClosedMatrix(compatibilityMatrixRows, 14);
+  const recoveryRows = rowsOwnedBy(recoveryMatrixRows, 'sync');
+  const compatibilityRows = rowsOwnedBy(compatibilityMatrixRows, 'sync');
+  expect(recoveryRows).toHaveLength(12);
+  expect(
+    recoveryRows.filter(
+      ({ recoveryPoint }) => recoveryPoint === 'interrupted-upload',
+    ),
+  ).toHaveLength(6);
+  expect(
+    recoveryRows.filter(
+      ({ recoveryPoint }) => recoveryPoint === 'interrupted-download',
+    ),
+  ).toHaveLength(6);
+  expect(compatibilityRows).toHaveLength(7);
+  expect(
+    compatibilityRows.every(
+      ({ providers }) => providers?.join(',') === 'git,mega',
+    ),
+  ).toBe(true);
+});
 
 interface SyncScenario {
   provider: SimulatedSyncProvider;
@@ -561,6 +590,55 @@ test('cancels an automatic publication upload without losing queued local work',
   }
 });
 
+test('recovers an unavailable local source from the exact synchronized object', async ({
+  context,
+  page,
+}) => {
+  const publication = await createPdfFixture();
+  const gateway = new SimulatedSyncGateway('mega', {
+    expectedPublication: publication,
+  });
+  await gateway.install(context);
+
+  await page.goto('/');
+  await importPublication(
+    page,
+    'synchronized-recovery.pdf',
+    'application/pdf',
+    publication,
+    'Omnia PDF Fixture',
+  );
+  await page.goto('/settings/sync');
+  await selectProvider(page, { providerButtonName: /^MEGA/ });
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:', {
+    timeout: 30_000,
+  });
+  expect(gateway.objectPaths()).toHaveLength(1);
+
+  await page.goto('/');
+  await clearStoredPublicationBinaries(page);
+  await page.reload();
+  const recovery = page.getByRole('button', {
+    name: 'Download synchronized PDF for Omnia PDF Fixture',
+  });
+  await expect(recovery).toBeVisible();
+  await recovery.click();
+  await expect(
+    page.getByRole('status').filter({
+      hasText: 'PDF for “Omnia PDF Fixture” was restored from synchronization.',
+    }),
+  ).toBeVisible();
+  await page
+    .getByTestId('library-book')
+    .filter({ hasText: 'Omnia PDF Fixture' })
+    .getByRole('button', { name: /^PDF\b/ })
+    .click();
+  await expect(
+    page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
+  ).toBeVisible();
+});
+
 test('deletes a synchronized publication locally and remotely', async ({
   context,
   page,
@@ -688,6 +766,9 @@ test('deletes a remote publication backup without deleting the local copy', asyn
     .find((path) => path.includes('/library/'));
   expect(manifestPath).toBeDefined();
   expect(libraryObjectPath).toBeDefined();
+  const bookId = JSON.parse(
+    gateway.documentContent(manifestPath as string) ?? '{}',
+  )['bookId'] as string;
   await expect(
     page.getByRole('button', {
       name: 'Delete remote backup for Omnia PDF Fixture',
@@ -713,7 +794,10 @@ test('deletes a remote publication backup without deleting the local copy', asyn
   await expect(
     page.getByText('No publication files are stored in this sync destination'),
   ).toBeVisible();
-  expect(gateway.objectPaths()).not.toContain(libraryObjectPath);
+  expect(
+    gateway.objectPaths(),
+    gateway.requestHistory().join('\n'),
+  ).not.toContain(libraryObjectPath);
   expect(gateway.documentContent(manifestPath as string)).toBeNull();
   const deletionPath = gateway
     .documentPaths()
@@ -725,13 +809,18 @@ test('deletes a remote publication backup without deleting the local copy', asyn
     schemaVersion: 2,
     deleted: true,
   });
+  await expectExcludedBook(page, bookId);
 
   await page.reload();
+  await expectExcludedBook(page, bookId);
   await page.getByRole('button', { name: 'Sync books and progress' }).click();
   await expect(page.getByRole('status')).toContainText('Sync complete:', {
     timeout: 30_000,
   });
-  expect(gateway.objectPaths()).not.toContain(libraryObjectPath);
+  expect(
+    gateway.objectPaths(),
+    gateway.requestHistory().join('\n'),
+  ).not.toContain(libraryObjectPath);
   await page.goto('/');
   await expect(
     page.getByText('Omnia PDF Fixture', { exact: true }),
@@ -1121,6 +1210,34 @@ async function ensureTableOfContentsOpen(page: Page): Promise<void> {
 
 async function storedProgressPage(page: Page): Promise<number | null> {
   return (await storedProgress(page))?.locator?.locations?.position ?? null;
+}
+
+async function expectExcludedBook(page: Page, bookId: string): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const value = localStorage.getItem('omnia-reader.sync-excluded-books');
+        return value ? (JSON.parse(value)['bookIds'] as string[]) : [];
+      }),
+    )
+    .toContain(bookId);
+}
+
+async function clearStoredPublicationBinaries(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('omnia-reader');
+      request.addEventListener('success', () => resolve(request.result));
+      request.addEventListener('error', () => reject(request.error));
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('binaries', 'readwrite');
+      transaction.objectStore('binaries').clear();
+      transaction.addEventListener('complete', () => resolve());
+      transaction.addEventListener('error', () => reject(transaction.error));
+    });
+    database.close();
+  });
 }
 
 async function storedProgressHref(page: Page): Promise<string | null> {

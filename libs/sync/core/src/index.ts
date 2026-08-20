@@ -20,6 +20,7 @@ export * from './lib/progress-merge';
 export * from './lib/progress-paths';
 export * from './lib/progress-sync-service';
 export * from './lib/remote-book-backup-service';
+export * from './lib/remote-variant-recovery.service';
 export * from './lib/sync-activity';
 export * from './lib/sync-provider-selection';
 export * from './lib/sync-root-reconciliation-service';

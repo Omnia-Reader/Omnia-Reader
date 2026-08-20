@@ -62,7 +62,7 @@ test('keeps a 180-page PDF virtualized and releases its reader resources', async
     await resetLongTasks(page);
 
     const openStarted = performance.now();
-    await page.getByText('Omnia Large PDF Fixture', { exact: true }).click();
+    await openLibraryFormat(page, 'Omnia Large PDF Fixture', 'pdf');
     await expect(
       page.locator('.pdfViewer .page[data-page-number="1"] canvas'),
     ).toBeVisible({ timeout: MAX_OPEN_MS });
@@ -117,7 +117,7 @@ test('keeps an 80-chapter EPUB incremental and releases its reader resources', a
     await resetLongTasks(page);
 
     const openStarted = performance.now();
-    await page.getByText('Omnia Large EPUB Fixture', { exact: true }).click();
+    await openLibraryFormat(page, 'Omnia Large EPUB Fixture', 'epub');
     const viewport = page.getByTestId('publication-viewport');
     await expect(
       viewport.frameLocator('iframe').getByRole('heading', {
@@ -193,6 +193,20 @@ test('streams a large PDF and EPUB backup without assembling a final browser blo
   expect(probe.aborted).toBe(false);
   expect(probe.objectUrlCalls).toBe(0);
 });
+
+async function openLibraryFormat(
+  page: Page,
+  title: string,
+  format: 'epub' | 'pdf',
+): Promise<void> {
+  await page
+    .getByTestId('library-book')
+    .filter({ hasText: title })
+    .getByRole('button', {
+      name: new RegExp(`^${format.toUpperCase()}\\b`),
+    })
+    .click();
+}
 
 async function importPublication(
   page: Page,

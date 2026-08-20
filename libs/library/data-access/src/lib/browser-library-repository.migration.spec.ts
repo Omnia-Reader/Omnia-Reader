@@ -12,8 +12,18 @@ const BOOK = {
   importedAt: '2026-07-25T08:00:00.000Z',
 };
 
+const EPUB_BOOK = {
+  ...BOOK,
+  id: `sha256:${'d'.repeat(64)}`,
+  format: 'epub' as const,
+  fileName: 'preserved.epub',
+  mediaType: 'application/epub+zip',
+  size: 256,
+  title: 'Preserved EPUB across migration',
+};
+
 describe('BrowserLibraryRepository schema migration', () => {
-  it('migrates a real v8 singleton without rewriting variant state', async () => {
+  it('COMP-v8-singleton-pdf migrates without rewriting variant state', async () => {
     const databaseName = 'omnia-reader-v8-valid';
     const legacy = await openDatabase(databaseName, 8, (database) => {
       database.createObjectStore('books', { keyPath: 'id' }).put(BOOK);
@@ -110,6 +120,55 @@ describe('BrowserLibraryRepository schema migration', () => {
       ).listLogicalBooks(),
     ).resolves.toHaveLength(1);
   });
+
+  it.each([
+    {
+      matrixId: 'COMP-v8-singleton-epub',
+      databaseName: 'omnia-reader-v8-epub',
+      books: [EPUB_BOOK],
+    },
+    {
+      matrixId: 'COMP-v8-mixed-library',
+      databaseName: 'omnia-reader-v8-mixed',
+      books: [EPUB_BOOK, BOOK],
+    },
+  ])(
+    '$matrixId preserves exact singleton membership',
+    async ({ databaseName, books }) => {
+      const legacy = await openDatabase(databaseName, 8, (database) => {
+        createLegacyStores(database);
+      });
+      const transaction = legacy.transaction('books', 'readwrite');
+      for (const book of books) {
+        transaction.objectStore('books').put(book);
+      }
+      await transactionComplete(transaction);
+      legacy.close();
+
+      const repository = new BrowserLibraryRepository(
+        undefined,
+        undefined,
+        databaseName,
+      );
+
+      const migratedBooks = await repository.listBooks();
+      expect(migratedBooks).toHaveLength(books.length);
+      expect(migratedBooks).toEqual(expect.arrayContaining(books));
+      const logicalBooks = await repository.listLogicalBooks();
+      expect(logicalBooks).toHaveLength(books.length);
+      for (const book of books) {
+        expect(logicalBooks).toContainEqual(
+          expect.objectContaining({
+            id: `logical:${book.id}`,
+            variants: { [book.format]: book.id },
+          }),
+        );
+      }
+      const migrated = await openDatabase(databaseName);
+      expect(migrated.version).toBe(9);
+      migrated.close();
+    },
+  );
 
   it('quarantines malformed v8 books without inventing membership', async () => {
     const databaseName = 'omnia-reader-v8-malformed';

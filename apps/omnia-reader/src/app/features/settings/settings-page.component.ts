@@ -2,8 +2,10 @@ import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  ElementRef,
   inject,
   OnInit,
+  ViewChild,
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
@@ -14,6 +16,8 @@ import {
   LIBRARY_QUARANTINE_REPOSITORY,
   LibraryBackupService,
   LibraryBackupExportProgress,
+  LibraryBackupRestoreConflict,
+  LibraryBackupRestoreConflictError,
   LibraryQuarantineService,
   QuarantinedLibraryRecord,
 } from '@omnia-reader/library/data-access';
@@ -35,6 +39,8 @@ import { SyncConnectionStatusService } from '../../sync-connection-status.servic
   ],
 })
 export class SettingsPageComponent implements OnInit {
+  @ViewChild('restoreBackupButton')
+  private restoreBackupButton?: ElementRef<HTMLButtonElement>;
   private readonly backups = inject(LibraryBackupService);
   private readonly quarantine = inject(LibraryQuarantineService);
   private readonly platform = inject(PLATFORM_PORT);
@@ -47,6 +53,7 @@ export class SettingsPageComponent implements OnInit {
   backupExportActive = false;
   errorMessage: string | null = null;
   statusMessage: string | null = null;
+  restoreConflicts: readonly LibraryBackupRestoreConflict[] = [];
   quarantineLoading = true;
   quarantineErrorMessage: string | null = null;
   quarantinedRecords: readonly QuarantinedLibraryRecord[] = [];
@@ -267,6 +274,8 @@ export class SettingsPageComponent implements OnInit {
 
     await this.runBusy(async () => {
       const result = await this.backups.importArchive(file);
+      this.restoreConflicts = [];
+      this.errorMessage = null;
       this.statusMessage =
         `Backup restored: ${result.booksAdded} added, ` +
         `${result.booksUpdated} updated, ` +
@@ -275,6 +284,21 @@ export class SettingsPageComponent implements OnInit {
         `${result.bookmarksRestored} bookmarks restored, ` +
         `${result.annotationsRestored} annotations restored.`;
     });
+    this.restoreBackupButton?.nativeElement?.focus();
+  }
+
+  dismissRestoreConflicts(): void {
+    this.restoreConflicts = [];
+    this.errorMessage = null;
+    this.changeDetector.markForCheck();
+    this.restoreBackupButton?.nativeElement?.focus();
+  }
+
+  describeRestoreConflict(conflict: LibraryBackupRestoreConflict): string {
+    const format = conflict.format.toUpperCase();
+    return conflict.kind === 'format-slot-occupied'
+      ? `${format} slot in ${conflict.archiveLogicalBookId} is occupied by ${conflict.currentVariantId}.`
+      : `${format} variant ${conflict.archiveVariantId} already belongs to ${conflict.currentLogicalBookId}.`;
   }
 
   async exportQuarantinedRecords(): Promise<void> {
@@ -306,13 +330,20 @@ export class SettingsPageComponent implements OnInit {
     fallbackMessage = 'The library backup operation failed.',
   ): Promise<void> {
     this.busy = true;
-    this.errorMessage = null;
+    if (this.restoreConflicts.length === 0) {
+      this.errorMessage = null;
+    }
     this.statusMessage = null;
     this.changeDetector.markForCheck();
     try {
       await action();
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
+      if (error instanceof LibraryBackupRestoreConflictError) {
+        this.restoreConflicts = error.conflicts;
+        this.errorMessage = `Backup restore stopped before making changes because ${
+          error.conflicts.length
+        } membership ${error.conflicts.length === 1 ? 'conflict was' : 'conflicts were'} found.`;
+      } else if (error instanceof DOMException && error.name === 'AbortError') {
         this.statusMessage = 'Backup export cancelled.';
       } else {
         this.errorMessage =

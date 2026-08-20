@@ -531,3 +531,177 @@ after T089–T091, then T093 and T094 in parallel when browser capacity permits.
   deterministic merge, independent variant state, and narrow commits.
 - Treat T027 as historical evidence only; no completion claim may retain its
   explicit read/add/associate card controls after T089–T094 are in scope.
+
+---
+
+## Phase 9: Canonical-State Convergence and Completion
+
+**Purpose**: Reconcile the original multi-format plan with the current
+feature-010 provider representation, implement only the remaining local and
+provider-neutral behavior, and close every executable gate without recreating
+obsolete remote change/checkpoint storage.
+
+- [x] T121 Reconcile feature 001 with the canonical `.omnia-reader/logical-books/state.json` architecture and record the superseded remote change/checkpoint mechanics in `specs/001-multi-format-books/spec.md`, `specs/001-multi-format-books/plan.md`, `specs/001-multi-format-books/data-model.md`, `specs/001-multi-format-books/research.md`, `specs/001-multi-format-books/contracts/sync-v2.md`, and `specs/001-multi-format-books/quickstart.md`
+- [x] T122 Run `$speckit-analyze` and `$speckit-converge` against feature 001, preserving existing task history and appending no duplicate work
+- [x] T123 [P] [US3] Add failing preferred-format fallback, retained progress-refresh, detach, local replacement, all-unavailable, focus, and announcement tests in `apps/omnia-reader/src/app/features/library/library-page.component.spec.ts`, `apps/omnia-reader/src/app/features/library/library-view.spec.ts`, `apps/omnia-reader/src/app/features/library/publication-association.service.spec.ts`, and `apps/omnia-reader/src/app/features/library/publication-recovery.service.spec.ts`
+- [x] T124 [P] [US3] Add provider-neutral exact-object recovery tests for descriptor availability, size/SHA-256/format validation, cancellation, transfer failure, and zero-change mismatch behavior in `libs/sync/core/src/lib/remote-variant-recovery.service.spec.ts`
+- [x] T125 [US3] Implement and export a provider-neutral remote variant recovery boundary using existing object metadata/download APIs and `replaceVariantSource()` without membership, preference, or journal mutation in `libs/sync/core/src/lib/remote-variant-recovery.service.ts`, `libs/sync/core/src/lib/sync.tokens.ts`, `libs/sync/core/src/index.ts`, and `apps/omnia-reader/src/app/app.config.ts`
+- [x] T126 [US3] Complete library management with healthy preferred/fallback opening, retained progress refresh state, separate local and synchronized recovery, detach, per-variant export/delete, all-unavailable management, stable focus, and status announcements in `apps/omnia-reader/src/app/features/library/library-page.component.ts`, `apps/omnia-reader/src/app/features/library/library-page.component.html`, and `apps/omnia-reader/src/app/features/library/publication-recovery.service.ts`
+- [x] T127 [US3] Add Chromium accessibility, offline-restart, and simulated-sync journeys for completed management and recovery branches in `apps/omnia-reader-e2e/src/example.spec.ts`, `apps/omnia-reader-e2e/src/accessibility.spec.ts`, `apps/omnia-reader-e2e/src/offline.spec.ts`, and `apps/omnia-reader-e2e/src/sync.spec.ts`
+- [x] T128 [P] Add failing schema-4 tests for complete conflict collection, stale revision, staging failure, rollback, schemas 1–3 migration, logical covers/preferences/reconciliations, and zero partial mutation in `libs/library/data-access/src/lib/library-backup.service.spec.ts` and `apps/omnia-reader/src/app/features/settings/settings-page.component.spec.ts`
+- [x] T129 Implement a revision-checked atomic backup restore boundary and structured `LibraryBackupRestoreConflictError` with complete before-image rollback in `libs/library/data-access/src/lib/library-backup.service.ts` and `libs/library/data-access/src/lib/browser-library-repository.ts`
+- [x] T130 Implement the persistent accessible restore-conflict report with deterministic semantic rows, alert summary, focus restoration, dismissal, and corrected-file reselection in `apps/omnia-reader/src/app/features/settings/settings-page.component.ts` and `apps/omnia-reader/src/app/features/settings/settings-page.component.html`
+- [x] T131 Add Chromium schema-4 round-trip, multiple-conflict zero-mutation, corrected retry, keyboard, responsive-layout, and accessibility journeys in `apps/omnia-reader-e2e/src/example.spec.ts` and `apps/omnia-reader-e2e/src/accessibility.spec.ts`
+- [x] T132 Add the fixed recovery and compatibility matrices across `apps/omnia-reader-e2e/src/storage.spec.ts`, `apps/omnia-reader-e2e/src/offline.spec.ts`, `apps/omnia-reader-e2e/src/sync.spec.ts`, `libs/library/data-access/src/lib/browser-library-repository.migration.spec.ts`, and `libs/library/data-access/src/lib/library-backup.service.spec.ts`
+- [x] T133 Complete the deterministic multi-format performance harness and record `PASS`, `FAIL`, `UNVERIFIED`, or `SUPPLEMENTAL` for each immutable profile under `apps/omnia-reader-e2e/performance/` and `specs/001-multi-format-books/performance/`
+- [x] T134 Run the focused and broad unit, lint, production-build, Chromium/PWA/sync, cross-browser, formatting, and whitespace gates and record exact evidence in `specs/001-multi-format-books/tasks.md`
+- [x] T135 Execute or explicitly retain as open the 40-participant usability study, credentialed GitHub/MEGA matrix, packaged-native and Android gates, and 24-cell manual assistive-technology matrix in `specs/001-multi-format-books/usability-results.md`, `specs/001-multi-format-books/accessibility-results.md`, and `specs/001-multi-format-books/tasks.md`
+- [x] T136 Run `$verify-omnia-reader` and `$review-omnia-reader`, resolve actionable findings, reconcile feature artifacts/task status, update `docs/universal-reader-plan.md` only for verified delivery changes, and restore `.specify/feature.json` to `specs/010-provider-filenames`
+
+**Phase 9 analysis evidence (2026-08-20)**: The renewed Spec Kit analysis
+checked 23 functional requirements, seven measurable success criteria, 136
+task IDs, and all seven constitution principles. The canonical-state amendment
+removed the only high-severity architectural inconsistency: current work no
+longer targets `.omnia-reader/v1/`, remote change files, or association
+checkpoint pages. Every remaining implementation or acceptance finding maps to
+T123–T136, so convergence appended no duplicate tasks. External usability,
+credentialed-provider, packaged-native, Android, and manual assistive-technology
+gates remain explicit rather than being treated as implementation gaps.
+
+**Phase 9 implementation and verification evidence (2026-08-20)**:
+
+- T123–T127 — healthy preferred/fallback opening, retained refresh state,
+  unavailable-source management, detach, local replacement, and exact-object
+  synchronized recovery are implemented. Exact descriptor validation,
+  cancellation/failure, zero-mutation mismatch, focus, and announcement tests
+  pass. Remote recovery uses `bookObjectPath()` and `replaceVariantSource()` and
+  does not mutate membership, preference, or the journal.
+- T128–T131 — backup schema 4 validates logical covers and reconciliation
+  references, reports all ownership/occupied-format conflicts before writes,
+  and publishes compatible restore state through one revision-checked IndexedDB
+  transaction. Data-access has 60/60 passing tests; app Settings conflict-report
+  tests are included in the 172/172 passing app suite. The Chromium conflict,
+  zero-partial-mutation, corrected-file retry journey passes.
+- A synchronization regression found during T134 was fixed: logical-state
+  reconciliation now honors exact-edition remote-backup exclusions, retaining
+  logical membership without recreating deleted remote bytes. Sync-core passes
+  188/188 tests; the previously failing remote-backup deletion journey passes
+  in Chromium and WebKit (2/2), and the complete Chromium sync file passes 14
+  active journeys with two credentialed two-device cases skipped by design.
+- Broad unit command for reader-domain, library-data-access, sync-core, sync-git,
+  sync-mega, and omnia-reader — PASS, 61 files / 505 tests (37 + 60 + 188 + 38
+  - 10 + 172). Broad lint — PASS, seven projects. Production build — PASS,
+    394.46 kB raw / 87.56 kB estimated initial transfer.
+- Chromium library/accessibility — 21/22 on the combined run; the unrelated
+  guarded-touch-swipe timing case failed once and passed immediately in its
+  focused rerun. PWA cold PDF/EPUB restart — PASS, 1/1. Earlier focused new
+  journeys pass in Firefox and WebKit (3/3 each); automated Chromium WCAG,
+  storage/recovery, exact-object sync recovery, backup-conflict retry, and the
+  three immutable performance profiles pass as recorded in the result files.
+- Changed files pass Prettier and `git diff --check`. Repository-wide
+  `npx nx format:check` remains non-clean because it lists pre-existing files
+  outside this feature diff; those unrelated files were not rewritten.
+- T132 — PASS. The test-only closed inventory contains exactly 48 unique
+  recovery rows and 14 unique compatibility rows. Every row requires comparison
+  of membership, exact hash/size, availability, preferred format, progress,
+  per-device progress, bookmarks, annotations, tombstones, exclusions, and
+  pending journal operations, plus covers/catalog ownership. `npx nx test
+library-data-access` passes 6 files / 63 tests; `npx nx test sync-core` passes
+  23 files / 188 tests. The exact Chromium matrix command from T107 passes 18 active tests;
+  the production-service-worker cold start and two credentialed two-device
+  cases are skipped by their existing explicit gates. The separately executed
+  production PWA cold-start journey remains PASS as recorded above.
+- T135 is explicitly retained as an external release gate. The 40-participant
+  study, live credentialed GitHub/MEGA matrix, packaged desktop, Android, and
+  all 24 manual assistive-technology cells are `UNVERIFIED`; automated or
+  simulated evidence does not substitute for them.
+- T136 verification and review found and resolved three actionable issues: an
+  axe contrast failure caused by dimming unavailable badges, stale test
+  navigation that clicked non-interactive title text, and remote publication
+  resurrection caused by logical reconciliation ignoring a book exclusion.
+  Review confirmed that recovery remains provider-neutral and exact-object
+  scoped, backup conflict discovery precedes mutation, atomic restore covers all
+  schema-4 state stores, and no native/provider claim exceeds the evidence.
+  `docs/universal-reader-plan.md` now records only verified schema-9, backup-v4,
+  multi-format management, recovery, and atomic-restore delivery. The Spec Kit
+  pointer was restored to `specs/010-provider-filenames`.
+
+### T132 fixed recovery matrix — 48/48 PASS
+
+All rows use the canonical inventory named above. `before` means no partial
+mutation; `after` means the complete requested local state is durable and any
+remaining synchronization work is represented in the journal.
+
+| Row                                                  | Expected | Result |
+| ---------------------------------------------------- | -------: | -----: |
+| REC-add-before-transaction                           |   before |   PASS |
+| REC-add-transaction-abort                            |   before |   PASS |
+| REC-add-post-commit-pre-journal                      |    after |   PASS |
+| REC-associate-before-transaction                     |   before |   PASS |
+| REC-associate-transaction-abort                      |   before |   PASS |
+| REC-associate-post-commit-pre-journal                |    after |   PASS |
+| REC-detach-before-transaction                        |   before |   PASS |
+| REC-detach-transaction-abort                         |   before |   PASS |
+| REC-detach-post-commit-pre-journal                   |    after |   PASS |
+| REC-delete-non-last-before-transaction               |   before |   PASS |
+| REC-delete-non-last-transaction-abort                |   before |   PASS |
+| REC-delete-non-last-post-commit-pre-journal          |    after |   PASS |
+| REC-preference-change-before-transaction             |   before |   PASS |
+| REC-preference-change-transaction-abort              |   before |   PASS |
+| REC-preference-change-post-commit-pre-journal        |    after |   PASS |
+| REC-exact-source-replacement-before-transaction      |   before |   PASS |
+| REC-exact-source-replacement-transaction-abort       |   before |   PASS |
+| REC-exact-source-replacement-post-commit-pre-journal |    after |   PASS |
+| REC-add-interrupted-upload                           |    after |   PASS |
+| REC-add-interrupted-download                         |    after |   PASS |
+| REC-associate-interrupted-upload                     |    after |   PASS |
+| REC-associate-interrupted-download                   |    after |   PASS |
+| REC-detach-interrupted-upload                        |    after |   PASS |
+| REC-detach-interrupted-download                      |    after |   PASS |
+| REC-delete-non-last-interrupted-upload               |    after |   PASS |
+| REC-delete-non-last-interrupted-download             |    after |   PASS |
+| REC-preference-change-interrupted-upload             |    after |   PASS |
+| REC-preference-change-interrupted-download           |    after |   PASS |
+| REC-exact-source-replacement-interrupted-upload      |    after |   PASS |
+| REC-exact-source-replacement-interrupted-download    |    after |   PASS |
+| REC-add-offline-restart                              |    after |   PASS |
+| REC-associate-offline-restart                        |    after |   PASS |
+| REC-detach-offline-restart                           |    after |   PASS |
+| REC-delete-non-last-offline-restart                  |    after |   PASS |
+| REC-preference-change-offline-restart                |    after |   PASS |
+| REC-exact-source-replacement-offline-restart         |    after |   PASS |
+| REC-picker-cancelled                                 |   before |   PASS |
+| REC-association-cancelled                            |   before |   PASS |
+| REC-detach-cancelled                                 |   before |   PASS |
+| REC-delete-cancelled                                 |   before |   PASS |
+| REC-replace-source-cancelled                         |   before |   PASS |
+| REC-validation-unsupported                           |   before |   PASS |
+| REC-validation-corrupt                               |   before |   PASS |
+| REC-validation-duplicate-here                        |   before |   PASS |
+| REC-validation-duplicate-elsewhere                   |   before |   PASS |
+| REC-validation-occupied-format                       |   before |   PASS |
+| REC-validation-replacement-identity-mismatch         |   before |   PASS |
+| REC-validation-replacement-format-mismatch           |   before |   PASS |
+
+### T132 fixed compatibility matrix — 14/14 PASS
+
+The three v8 rows use real fake-indexeddb upgrades, schemas 1–4 use real backup
+archives, and the seven logical synchronization rows are provider-neutral with
+the simulated Git and MEGA transport suites as the browser boundary.
+
+| Row                                               | Result |
+| ------------------------------------------------- | -----: |
+| COMP-v8-singleton-epub                            |   PASS |
+| COMP-v8-singleton-pdf                             |   PASS |
+| COMP-v8-mixed-library                             |   PASS |
+| COMP-backup-schema-1                              |   PASS |
+| COMP-backup-schema-2                              |   PASS |
+| COMP-backup-schema-3                              |   PASS |
+| COMP-backup-schema-4                              |   PASS |
+| COMP-sync-interrupted-association-restart         |   PASS |
+| COMP-sync-new-new-non-conflicting-membership      |   PASS |
+| COMP-sync-new-new-conflicting-membership          |   PASS |
+| COMP-sync-concurrent-preferred-formats            |   PASS |
+| COMP-sync-legacy-sync-read                        |   PASS |
+| COMP-sync-unsupported-newer-mixed-refusal         |   PASS |
+| COMP-sync-membership-deletion-tombstone-exclusion |   PASS |

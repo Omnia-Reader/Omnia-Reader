@@ -23,6 +23,10 @@ import {
 import { SYNC_ROOT } from './library-sync-manifest';
 import { bookObjectPath } from './book-sync-manifest';
 import {
+  BookSyncExclusions,
+  NO_BOOK_SYNC_EXCLUSIONS,
+} from './book-sync-exclusions';
+import {
   emptyLogicalBookState,
   LOGICAL_BOOK_STATE_PATH,
   logicalBookStateView,
@@ -51,6 +55,7 @@ export class LogicalBookSyncService implements SyncWorker {
     private readonly remote: LibrarySyncTransport,
     private readonly journal: SyncOperationJournal,
     private readonly repository: LogicalBookStateRepository,
+    private readonly exclusions: BookSyncExclusions = NO_BOOK_SYNC_EXCLUSIONS,
   ) {}
 
   synchronize(): Promise<SyncWorkerResult> {
@@ -189,6 +194,11 @@ export class LogicalBookSyncService implements SyncWorker {
     legacyVariantPaths: ReadonlyMap<string, string>,
   ): Promise<void> {
     for (const entry of state.variants) {
+      // Logical membership remains synchronized when a device deliberately
+      // removes only the remote publication backup. The book tombstone and
+      // device-local exclusion own whether the corresponding bytes may exist
+      // remotely, so reconciliation must not re-upload or re-download them.
+      if (this.exclusions.isExcluded(entry.variant.id)) continue;
       let local = await this.repository.getBook(entry.variant.id);
       let descriptor = await this.remote.headObject(entry.objectPath);
       if (descriptor) validateRemoteVariant(entry.variant, descriptor);

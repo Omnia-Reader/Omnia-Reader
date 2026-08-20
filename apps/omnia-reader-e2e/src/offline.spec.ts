@@ -7,19 +7,16 @@ import {
   type TestInfo,
 } from '@playwright/test';
 import { createEpubFixture, createPdfFixture } from './publication-fixtures';
-
-// This suite intentionally remains opt-in because Angular only registers its
-// service worker in a production build served from a secure origin.
-// eslint-disable-next-line playwright/no-skipped-test
-test.skip(
-  process.env['PWA_E2E'] !== '1',
-  'Run against the production service-worker build with PWA_E2E=1',
-);
+import {
+  recoveryMatrixRows,
+  rowsOwnedBy,
+} from './recovery-compatibility-matrix';
 
 interface OfflineScenario {
   profileName: string;
   fileName: string;
   mimeType: string;
+  format: 'epub' | 'pdf';
   title: string;
   publication: () => Buffer | Promise<Buffer>;
   navigateAndAwaitDurableProgress(page: Page): Promise<void>;
@@ -31,6 +28,7 @@ const scenarios: readonly OfflineScenario[] = [
     profileName: 'pdf',
     fileName: 'offline-fixture.pdf',
     mimeType: 'application/pdf',
+    format: 'pdf',
     title: 'Omnia PDF Fixture',
     publication: () => createPdfFixture(),
     navigateAndAwaitDurableProgress: async (page) => {
@@ -53,6 +51,7 @@ const scenarios: readonly OfflineScenario[] = [
     profileName: 'epub',
     fileName: 'offline-fixture.epub',
     mimeType: 'application/epub+zip',
+    format: 'epub',
     title: 'Omnia EPUB Fixture',
     publication: () => createEpubFixture(),
     navigateAndAwaitDurableProgress: async (page) => {
@@ -68,9 +67,24 @@ const scenarios: readonly OfflineScenario[] = [
   },
 ];
 
+test('records all six committed-offline restart recovery rows', async () => {
+  const rows = rowsOwnedBy(recoveryMatrixRows, 'offline');
+  expect(rows).toHaveLength(6);
+  expect(rows.every(({ expectedState }) => expectedState === 'after')).toBe(
+    true,
+  );
+});
+
 test('cold-starts stored PDF and EPUB positions while fully offline', async ({
   baseURL,
 }, testInfo) => {
+  // Angular only registers its service worker in a production build served
+  // from a secure origin; the matrix inventory above remains browser-neutral.
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip(
+    process.env['PWA_E2E'] !== '1',
+    'Run against the production service-worker build with PWA_E2E=1',
+  );
   test.setTimeout(90_000);
   expect(scenarios).toHaveLength(2);
   const resolvedBaseURL = requireBaseURL(baseURL);
@@ -113,7 +127,7 @@ async function verifyColdOfflineRestore(
       .toBe(true);
 
     await importPublication(page, scenario);
-    await page.getByText(scenario.title, { exact: true }).click();
+    await openScenarioFormat(page, scenario);
     await scenario.navigateAndAwaitDurableProgress(page);
 
     await context.close();
@@ -131,12 +145,26 @@ async function verifyColdOfflineRestore(
       offlinePage.getByText(scenario.title, { exact: true }),
     ).toBeVisible();
 
-    await offlinePage.getByText(scenario.title, { exact: true }).click();
+    await openScenarioFormat(offlinePage, scenario);
     await scenario.expectRestoredPosition(offlinePage);
     expect(browserFailures).toEqual([]);
   } finally {
     await context?.close();
   }
+}
+
+async function openScenarioFormat(
+  page: Page,
+  scenario: OfflineScenario,
+): Promise<void> {
+  const card = page
+    .getByTestId('library-book')
+    .filter({ hasText: scenario.title });
+  await card
+    .getByRole('button', {
+      name: new RegExp(`^${scenario.format.toUpperCase()}\\b`),
+    })
+    .click();
 }
 
 function monitorBrowserFailures(page: Page, failures: string[]): void {

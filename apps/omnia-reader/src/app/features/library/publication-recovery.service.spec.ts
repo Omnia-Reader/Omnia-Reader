@@ -2,16 +2,21 @@ import { TestBed } from '@angular/core/testing';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import { BookRecord, BookSource } from '@omnia-reader/reader/domain';
+import { REMOTE_VARIANT_RECOVERY } from '@omnia-reader/sync/core';
 import { PublicationRecoveryService } from './publication-recovery.service';
 
 describe('PublicationRecoveryService', () => {
   const replaceVariantSource = vi.fn();
   const pickPublications = vi.fn();
+  const probe = vi.fn();
+  const recover = vi.fn();
   const source = publicationSource('replacement.epub');
 
   beforeEach(() => {
     vi.clearAllMocks();
     replaceVariantSource.mockResolvedValue(undefined);
+    probe.mockResolvedValue(null);
+    recover.mockResolvedValue(undefined);
     TestBed.configureTestingModule({
       providers: [
         PublicationRecoveryService,
@@ -22,6 +27,10 @@ describe('PublicationRecoveryService', () => {
         {
           provide: PLATFORM_PORT,
           useValue: { pickPublications },
+        },
+        {
+          provide: REMOTE_VARIANT_RECOVERY,
+          useValue: { probe, recover },
         },
       ],
     });
@@ -54,6 +63,43 @@ describe('PublicationRecoveryService', () => {
       status: 'replaced',
     });
     expect(replaceVariantSource).toHaveBeenCalledWith(record.id, source);
+  });
+
+  it('exposes synchronized recovery only when the exact object is advertised', async () => {
+    const descriptor = {
+      path: '.omnia-reader/library/book.epub',
+      revision: 'revision',
+      size: 4,
+      sha256: 'a'.repeat(64),
+    };
+    probe.mockResolvedValue(descriptor);
+    const record = book();
+
+    await expect(service().synchronizedReplacement(record)).resolves.toEqual(
+      descriptor,
+    );
+    expect(probe).toHaveBeenCalledWith(record);
+  });
+
+  it('treats unavailable provider probing as no synchronized recovery', async () => {
+    probe.mockRejectedValue(
+      new Error('Choose a synchronization provider first'),
+    );
+
+    await expect(service().synchronizedReplacement(book())).resolves.toBeNull();
+  });
+
+  it('delegates synchronized replacement with cancellation and progress', async () => {
+    const options = {
+      signal: new AbortController().signal,
+      onProgress: vi.fn(),
+    };
+    const record = book();
+
+    await service().replaceFromSynchronization(record, options);
+
+    expect(recover).toHaveBeenCalledWith(record, options);
+    expect(replaceVariantSource).not.toHaveBeenCalled();
   });
 });
 

@@ -41,6 +41,10 @@ state.
 
 ## Clarifications
 
+### Session 2026-08-20
+
+- Q: Which synchronization representation is authoritative after feature 010? → A: Preserve this feature's multi-format membership, preference, reconciliation, exact-object recovery, and convergence outcomes, but use the current `.omnia-reader/manifest.json` schema-2 gate and the single canonical `.omnia-reader/logical-books/state.json` document. The former append-only `logical-books/changes/` and checkpoint persistence described by the original implementation design is compatibility input only and MUST NOT be reintroduced.
+
 ### Session 2026-07-31
 
 - Q: Where should focus go after a missing-format add or association finishes? → A: Cancellation or failure returns focus to the originating missing badge; success focuses the same slot after it becomes the newly present format badge.

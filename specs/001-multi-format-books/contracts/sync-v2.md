@@ -1,174 +1,131 @@
-# Provider-Neutral Synchronization Contract: Root Schema 2
+# Provider-Neutral Multi-Format Synchronization Contract
 
-## Compatibility Gate
+## Compatibility Gate and Current Layout
 
-The root remains `.omnia-reader/v1/manifest.json` so every sync begins at the
-same known gate.
+The current root is `.omnia-reader/`. Every synchronization validates
+`.omnia-reader/manifest.json` before reading or writing child state. The root
+manifest uses schema version 2 and requires the `logical-books` capability;
+unsupported schemas fail closed without affecting the local library.
 
-Schema 2:
-
-- declares `schemaVersion: 2` and the required `logical-books` capability;
-- is rejected by schema-1 clients through the existing version check;
-- may be created from schema 1 only by a new client that first verifies legacy
-  exact objects, builds singleton logical state, publishes all v2 prerequisites,
-  and compare-and-swaps the root;
-- is re-read before publishing or applying membership changes.
-
-Adding only an unknown feature string is not a compatibility gate.
-
-## Safe Provider Layout
-
-All paths remain confined beneath `.omnia-reader/v1/library/`:
+Logical-library state is authoritative in exactly one bounded document:
 
 ```text
-objects/<digest-prefix>/<digest>.<epub|pdf>
-logical/changes/<change-id>.json
-logical/checkpoints/<checkpoint-id>/page-<number>.json
-logical/checkpoints/<checkpoint-id>/index.json
+.omnia-reader/logical-books/state.json
 ```
 
-Variant objects are immutable, declared, size-bounded, SHA-256 verified, and
-published before a referencing change. JSON paths never use user filenames.
-Existing Git LFS matching and MEGA staging apply to EPUB/PDF objects without
-expanding gateway path or credential authority.
+The state contains validated logical books, active exact-variant descriptors,
+preferred-format registers, membership reconciliations, causal heads,
+per-record deterministic clocks, and book/variant/preference tombstones.
+Equivalent state serializes canonically. Current clients never create remote
+`logical-books/changes/` or checkpoint pages.
 
-Health and availability are device-local derived results, never provider
-fields. A receiving device verifies downloaded exact bytes and derives its own
-status; missing/evicted local bytes do not change remote membership or
-preference.
+The former `.omnia-reader/v1/` root and remote change/checkpoint entries are
+compatibility inputs only. A full synchronization inventories them, validates
+and folds supported changes into canonical state, verifies copied publications
+and documents at their current paths, rereads and semantically verifies
+`state.json`, and only then batch-deletes the legacy entries. Interrupted or
+conflicting migration retains legacy input and local journal work for retry.
 
-The validated exact-variant descriptor may advertise `Retry synchronized
-download` for a locally unavailable or quarantined variant. Retry downloads the
-immutable object, verifies declared size, SHA-256, and detected format, then
-passes it to the repository replacement boundary. It creates no logical change,
-preference effect, or variant-state merge. Missing/malformed descriptors,
-provider failure, or mismatch leave the prior local source/evidence unchanged.
+## Local Mutation and Journal Contract
 
-Legacy v1 objects/manifests remain during migration but are not mutated into v2
-association documents. A schema-1 sync already past its preflight cannot be
-recalled; distinct roots prevent it from understanding new membership, and a
-later upgraded client reconciles any legacy singleton it imported without
-discarding exact data.
+`LogicalBookChange` remains the atomic local mutation and durable journal
+payload. It contains complete resulting logical records, removals, exact
+variant effects, preference effects, reconciliation resolutions, causal
+parents, and an immutable change identity.
 
-## Logical Change Document
+- Append the change only after the corresponding local repository transaction
+  commits.
+- Do not coalesce distinct logical changes by logical-book ID.
+- Progress, bookmark, annotation, and exact-variant state remain keyed by the
+  publication SHA-256 ID.
+- A provider failure leaves the local result usable and the journal operation
+  pending.
+- A journal operation is acknowledged only after a reread canonical state
+  proves that its complete effect is covered.
 
-An immutable schema-1 change contains the fields defined in
-`data-model.md#entity-logical-book-change`. Additional wire rules:
+## Canonical Merge
 
-- maximum serialized size: 256 KiB;
-- at most 32 sorted unique parents;
-- at most two resulting/removed logical books and two variant effects;
-- at most two preferred-format effects and a bounded sorted set of resolved
-  reconciliation IDs;
-- all strings, metadata arrays, timestamps, identifiers, paths, and effect
-  payloads use existing bounded validation;
-- every upsert descriptor repeats variant ID, format, filename, media type,
-  size, digest, object path, import audit data, and required catalog source
-  metadata;
-- every tombstone names exact variant/logical membership and the dominating
-  change; deletion does not immediately erase immutable provider bytes;
-- a preference-only change has kind `preference`, no membership/variant effects,
-  one `{ logicalBookId, preferredFormat, previousPreferenceHeads }` effect, and
-  parents containing its observed preference heads;
-- a reconciliation change has kind `reconcile-membership`, complete resulting
-  membership, every resolved conflict ID, and parents containing all conflicting
-  changes plus current heads for every touched logical book;
-- `createdAt` and device-local journal revision are audit fields only.
+1. Read and validate the canonical state and its optimistic provider revision.
+2. Validate every pending local change, including bounds, paths, identities,
+   membership cardinality, and immutable variant descriptors.
+3. Apply ancestors before descendants. Concurrent records use the existing
+   deterministic change-clock comparison; device clocks and journal revisions
+   never decide authority.
+4. Preserve safe accepted membership and create a deterministic durable
+   `MembershipReconciliation` when concurrent proposals cannot both satisfy
+   unique ownership or one-variant-per-format invariants.
+5. Fold preferred-format changes in an independent causal register. A locally
+   unavailable winning format remains durable and automatic fallback emits no
+   preference change.
+6. Apply deletion and preference-clear tombstones so a stale device cannot
+   resurrect or regress accepted state.
+7. Upload and verify missing immutable publication objects before writing a
+   state that references them.
+8. Write `state.json` with its expected revision, reread it, and verify
+   canonical semantic equality. On conflict, reread, deterministically reapply
+   pending work, and retry within the configured bound.
+9. Atomically apply the accepted state locally and acknowledge only the journal
+   operations proven present in the verified remote state.
 
-The change document is published last and is the commit marker. A missing,
-partial, malformed, or object-incomplete change has no membership effect and
-stays retryable.
+Malformed state, conflicting immutable identities, exhausted retries, or an
+interrupted transfer fails the pass while preserving local authority, pending
+journal work, and any required legacy migration input.
 
-## Causal Merge
+## Exact Variant Descriptors and Recovery
 
-1. Load and validate the latest complete checkpoint, then all reachable changes.
-2. Reject cycles, missing required parents not covered by the checkpoint, unsafe
-   paths, invalid objects, and bound violations before local mutation.
-3. Topologically apply ancestors before descendants.
-4. For concurrent ready changes, use lexicographically ordered change ID as the
-   deterministic tie-break; timestamps and journal revisions never decide.
-5. Apply each accepted change as a unit to the candidate graph.
-6. If a concurrent change would assign one variant to two logical books or add a
-   second same-format variant, the higher change ID selects the safe accepted
-   projection. The loser remains in its last accepted membership and produces a
-   deterministic durable `MembershipReconciliation` containing both proposals;
-   it is never deleted, duplicated, silently reassigned, or dismissed by retry.
-7. Only an explicit `reconcile-membership` child that observes every conflicting
-   and current head may change that association and mark the record resolved. A
-   stale choice fails while leaving the action open.
-8. Variant/logical tombstones follow the same dominance rules. Reimport is
-   allowed only as an explicit later child change.
-9. Validate the complete candidate graph and referenced objects, then apply the
-   whole accepted batch in one local repository transaction.
+Every active remote variant descriptor repeats the exact `BookRecord`, its
+canonical provider object path, declared size, media type, and complete SHA-256
+identity. Health is derived locally and is never synchronized.
 
-Repeated pull or retry is idempotent and yields byte-equivalent logical state on
-all providers/devices given the same valid change set.
+For a locally unavailable or quarantined variant, the provider-neutral recovery
+boundary may expose `Retry synchronized download` only after `headObject()`
+returns a descriptor whose size and SHA-256 match that exact variant. Recovery:
 
-Provider outage, provider retry, transport replacement, or switching between
-configured providers never dismisses an open reconciliation. The next
-provider-neutral fold carries the same open record or its causally valid
-resolution; a provider switch cannot manufacture resolution authority.
+1. recomputes the canonical object path from the validated `BookRecord`;
+2. rereads and validates remote metadata immediately before transfer;
+3. downloads with the declared-size bound and transfer cancellation/progress;
+4. passes the downloaded source to `LibraryRepository.replaceVariantSource()`,
+   which verifies detected format, size, and SHA-256 before replacing the
+   device-local source/reference.
 
-### Preferred-format fold
+Recovery creates no logical change, preference effect, membership mutation, or
+journal operation. Missing metadata, cancellation, provider failure, or any
+identity/format mismatch leaves the previous local source/evidence unchanged.
+Provider descriptor lookup and transfer remain in `sync-core`; browser
+persistence never acquires provider or credential authority.
 
-Preferred format is an independent causal register per logical book. Descendant
-effects dominate ancestors; concurrent effects choose lexicographically greater
-change ID. Timestamp, device ID, journal revision, progress, and locator state
-never decide or participate. The winner remains durable when its member is
-locally unavailable; opening a healthy fallback emits no preference change. A
-membership change that removes the preferred format must carry a valid
-remaining preference or tombstone. A concurrently stale preference is dormant
-and cannot change membership or any variant state.
+## Provider and Security Semantics
 
-## Checkpoints and Bounds
+- Git/LFS and MEGA carry the same provider-neutral paths and state semantics.
+- Credentials and reusable sessions remain in the same-origin gateway.
+- Paths are confined beneath `.omnia-reader/`; filenames are treated as hostile
+  and the shared canonical safe-name policy remains authoritative.
+- Immutable objects are published before state references them and are verified
+  by size and SHA-256 on upload and download.
+- State writes use optimistic revisions. Conflicts are bounded and retryable.
+- Provider switching, interruption, or restart never clears an open membership
+  reconciliation or pending local mutation.
+- Remote backup presentation distinguishes exact-variant deletion from
+  whole-logical-book removal without changing local-first deletion semantics.
 
-- Create a checkpoint after 500 accepted logical changes or before provider
-  listing/document bounds would be exceeded.
-- Partition canonical state into immutable pages no larger than the existing
-  validated JSON-document limit; sort by logical ID and include page size/digest
-  in the index.
-- Publish/verify all pages before the immutable index. The index contains folded
-  heads, preferred-format winners/heads, open reconciliation records, resolved
-  authority, and retained tombstone/membership authority and is the checkpoint
-  commit marker.
-- A client ignores incomplete checkpoints. Once a checkpoint is accepted,
-  pending local changes with pruned parents are revalidated/rebased against its
-  heads rather than applied as stale ancestors.
-- Delete obsolete change pages only after the checkpoint and every retained
-  descendant are verified. Keep the newest prior complete checkpoint until a
-  subsequent full sync proves recovery.
-- If safe compaction cannot complete before hard provider bounds, stop optional
-  remote association sync with an actionable error while preserving local
-  library operation and pending journal entries.
+## Change-Aware Fast Path
 
-## Journal and Provider Semantics
+The device-local Git revision checkpoint is performance evidence only. Schema 3
+is the first checkpoint format that trusts canonical logical state. Older
+checkpoint schemas are ignored once so the full migration and verification pass
+runs before an unchanged revision may bypass provider listing. Any local pending
+operation, untrusted checkpoint, provider without revision support, or requested
+exact-object recovery uses the authoritative path rather than the fast path.
 
-- Add `logical-book-change` to the closed sync entity set.
-- `entityId` is the change ID; do not coalesce by logical ID.
-- Append only after local durable commit. Acknowledgement names the exact
-  operation/change and cannot acknowledge another format's pending work.
-- Existing progress/bookmark/annotation operations remain keyed by exact variant
-  ID. Existing exclusions remain exact-variant exclusions.
-- Preference-only and reconciliation changes use the same immutable change
-  transport and acknowledgement rules. A repeated same-format open creates no
-  operation. Losing membership proposals remain represented until their durable
-  reconciliation authority is checkpoint-visible.
-- Whole-book and membership deletion use logical changes; remote backup UI must
-  distinguish variant deletion from logical-book deletion.
-- Git and MEGA transports remain opaque carriers and must pass identical
-  interruption, retry, conflict, object-before-change, and convergence fixtures.
+## Required Verification
 
-## Migration Sequence
-
-1. Read root schema 1 and acquire its provider revision.
-2. Verify legacy exact manifests and objects without changing local membership.
-3. Create deterministic singleton logical state and v2 object descriptors. Do
-   not infer synchronized preference from legacy last-opened timestamps.
-4. Upload/verify missing v2 objects and bootstrap checkpoint pages/index.
-5. Compare-and-swap the root to schema 2.
-6. If the compare-and-swap loses, discard no objects; reload and reconcile.
-7. Only after observing schema 2 may the client publish logical changes.
-
-Any interruption before step 5 leaves schema-1 behavior authoritative; orphaned
-immutable v2 objects are safe and retryable. No legacy object is garbage
-collected as part of this feature rollout.
+- canonical-state parsing, bounds, deterministic serialization, clocks,
+  tombstones, preference clears, reconciliation, and idempotent replay;
+- legacy change folding, semantic verification, batch cleanup, interruption,
+  and retry;
+- optimistic conflict convergence and retry exhaustion without journal loss;
+- remote-only variant restoration and locally missing-source restoration;
+- exact-object recovery success, cancellation, provider failure, and
+  descriptor/size/digest/format mismatch;
+- identical Git and MEGA behavior plus explicit live-provider gates where
+  credentials are available.

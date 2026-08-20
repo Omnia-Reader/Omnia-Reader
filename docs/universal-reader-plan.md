@@ -30,7 +30,7 @@ fallback handling remains in place. Lost installation access clears only the
 stale repository choice.
 MEGA deployment and Tauri/native packaging remain secondary until the Angular
 and GitHub journeys are production-ready.
-Last updated: 2026-07-27
+Last updated: 2026-08-20
 
 ## 1. Goal
 
@@ -93,6 +93,13 @@ implemented:
   cannot silently restore the edition on the next pull. Explicitly importing
   the same exact edition clears that exclusion and adds it back to
   synchronization.
+- EPUB and PDF editions can be grouped into one explicit logical book while
+  retaining exact SHA-256 variant identity and independent reading state. The
+  compact format row opens a healthy preferred edition with a healthy fallback,
+  supports non-destructive detach, per-variant export/delete, and exact-source
+  recovery from either a local file or the configured synchronization
+  destination. Unavailable variants remain visible and manageable, with stable
+  keyboard focus and announced recovery outcomes.
 - Imported EPUB/PDF binaries, extracted metadata, normalized cover artwork,
   progress, bookmarks, highlights, notes, and format preferences are durable.
   Publication bytes use OPFS where available with a versioned, byte-backed
@@ -104,19 +111,22 @@ implemented:
   explicitly request protection from automatic browser eviction. A denied or
   unavailable browser permission remains non-fatal and points the user to the
   portable backup path.
-- The browser library database is at schema version 8. Every persisted domain
+- The browser library database is at schema version 9. Every persisted domain
   record is validated when read or written. Malformed books, binary
   references, covers, merged progress, per-device progress documents,
   bookmarks, annotations, and preferences are atomically moved into a lossless
   quarantine store instead of crashing the library or contaminating
-  synchronization; healthy records remain available. The version 7-to-8
-  migration adds the progress-document cache without losing an existing
-  library.
+  synchronization; healthy records remain available. The version 8-to-9
+  migration creates deterministic singleton logical books and adds logical
+  covers, synchronized format preferences, and membership reconciliations
+  without re-keying exact-variant reading state.
 - Exact-edition SHA-256 hashing is incremental and runs in a dedicated worker
   through the pinned `hash-wasm` implementation. The bounded main-thread
   fallback is used only when a host cannot create workers.
 - Settings can export and restore a provider-neutral `.omnia-backup` archive.
-  Its version 3 manifest covers exact publication bytes, metadata, the merged
+  Its version 4 manifest covers exact publication bytes, metadata, logical-book
+  membership and covers, synchronized format preferences and reconciliations,
+  the merged
   resume view, provider-neutral per-device progress history, bookmarks,
   highlights, notes, deletion tombstones, and reader preferences.
   Export streams directly to File System Access destinations where available
@@ -124,12 +134,14 @@ implemented:
   aborts the browser write or removes the native temporary file before commit.
   Browsers without File System Access retain the interoperable Blob-download
   fallback.
-  Restore remains compatible with version 1 bookmark archives and version 2
-  archives without progress history, validates strict ZIP structure, declared
-  paths, bounded expanded sizes, CRC signatures, schemas, and every publication
-  SHA-256 before mutating the library; it merges without deleting local books
-  and retains newer local merged progress, per-device progress, bookmark, and
-  annotation records.
+  Restore remains compatible with versions 1–3, validates strict ZIP structure,
+  declared paths, bounded expanded sizes, CRC signatures, schemas, logical
+  cover digests, and every publication SHA-256 before mutating the library. A
+  complete deterministic ownership/occupied-format conflict report is produced
+  before writes. Compatible restores publish books, binaries, logical state,
+  covers, progress, reader preferences, bookmarks, and annotations in one
+  revision-checked IndexedDB transaction, so stale revisions or failures expose
+  no partial restore.
 - The exact-pinned `@likecoin/epub-ts` runtime renders EPUB content in its own
   iframe with scripts disabled. It retains the EPUB.js API while replacing the
   obsolete `unload` lifecycle listener with `pagehide`. The adapter waits for
@@ -390,7 +402,7 @@ npm run release:verify                                  PASS (122 files; 33 npm 
 cargo test --manifest-path src-tauri/Cargo.toml           PASS (2/2)
 npm run native:build                                     PASS (deb + rpm + AppImage)
 Initial production bundle                                499.98 kB (122.78 kB estimated transfer)
-Schema-v8 migration and corrupt-record recovery tests     PASS
+Schema-v9 migration and corrupt-record recovery tests     PASS
 Cross-provider per-device progress migration tests        PASS
 Git LFS/MEGA interrupted-publication recovery tests       PASS
 Chromium layered PDF/EPUB reader and resume E2E          PASS
@@ -1307,9 +1319,10 @@ conformance remains a release gate.
   single-instance forwarding, and drag-and-drop ingestion.
 - Implemented: provider-neutral, versioned backup archives for complete local
   publication bytes, metadata, merged and per-device progress, bookmark and
-  annotation tombstones, highlights/notes, and reader preferences, with strict
-  preflight validation, version 1 and 2 migration, and recoverable merge
-  behavior.
+  annotation tombstones, highlights/notes, reader preferences, logical-book
+  membership/covers, synchronized format preferences, and reconciliation
+  records, with strict preflight validation, version 1–3 migration, complete
+  conflict reporting, and atomic revision-checked merge behavior.
 - Implemented: deterministic mobile back handling with transient-panel
   priority, explicit route parents, and root-only native exit.
 - Implemented: direct File System Access and native archive save targets,

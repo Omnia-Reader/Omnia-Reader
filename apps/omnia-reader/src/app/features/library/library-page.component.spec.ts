@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import { PLATFORM_PORT } from '@omnia-reader/platform';
 import {
@@ -71,12 +71,15 @@ describe('LibraryPageComponent', () => {
   };
   const recovery = {
     replaceFromPicker: vi.fn(),
+    synchronizedReplacement: vi.fn(),
+    replaceFromSynchronization: vi.fn(),
   };
   const associations = {
     addFormat: vi.fn(),
     compatibleCandidates: vi.fn(),
     associate: vi.fn(),
     deleteVariant: vi.fn(),
+    detach: vi.fn(),
     reconcile: vi.fn(),
   };
   beforeEach(async () => {
@@ -113,10 +116,14 @@ describe('LibraryPageComponent', () => {
     publicationImports.removePublication.mockResolvedValue(undefined);
     platform.pickPublications.mockResolvedValue([]);
     exporter.exportPublication.mockResolvedValue('saved');
+    recovery.synchronizedReplacement.mockResolvedValue(null);
+    recovery.replaceFromPicker.mockResolvedValue({ status: 'replaced' });
+    recovery.replaceFromSynchronization.mockResolvedValue(undefined);
     associations.deleteVariant.mockResolvedValue({
       mutation: {},
       syncPending: false,
     });
+    associations.detach.mockResolvedValue({ mutation: {}, syncPending: false });
     associations.compatibleCandidates.mockResolvedValue([]);
     associations.associate.mockResolvedValue({
       mutation: {},
@@ -156,6 +163,7 @@ describe('LibraryPageComponent', () => {
         },
       ],
     }).compileComponents();
+    vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
   });
 
   it('exports a publication from compact format actions', async () => {
@@ -685,6 +693,142 @@ describe('LibraryPageComponent', () => {
     ).toBeFalsy();
   });
 
+  it('opens a healthy fallback when the preferred synchronized format is unavailable', async () => {
+    const logicalBook = {
+      ...logicalBookFromVariant(book),
+      id: 'logical:sha256:fallback',
+      variants: { epub: book.id, pdf: secondBook.id },
+    };
+    repository.listBooks.mockResolvedValue([book, secondBook]);
+    repository.listLogicalBooks.mockResolvedValue([logicalBook]);
+    repository.getLogicalBookFormatPreference.mockResolvedValue({
+      schemaVersion: 1,
+      logicalBookId: logicalBook.id,
+      preferredFormat: 'pdf',
+      updatedAt: '2026-08-20T00:00:00.000Z',
+      deviceId: 'device-a',
+      appVersion: '0.0.0',
+    });
+    repository.resolveVariantAvailability.mockResolvedValue(
+      new Map([
+        [book.id, { status: 'healthy' }],
+        [secondBook.id, { status: 'unavailable', cause: 'missing' }],
+      ]),
+    );
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.openPreferredFormat(
+      fixture.componentInstance.displayedBooks[0],
+    );
+
+    expect(repository.openHealthyVariant).toHaveBeenCalledWith(book.id);
+    expect(repository.openHealthyVariant).not.toHaveBeenCalledWith(
+      secondBook.id,
+    );
+  });
+
+  it('keeps all-unavailable entries manageable and explains recovery', async () => {
+    repository.resolveVariantAvailability.mockResolvedValue(
+      new Map([[book.id, { status: 'unavailable', cause: 'missing' }]]),
+    );
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.openPreferredFormat(
+      fixture.componentInstance.displayedBooks[0],
+    );
+    fixture.detectChanges();
+
+    expect(repository.openHealthyVariant).not.toHaveBeenCalled();
+    expect(fixture.nativeElement.textContent).toContain(
+      'No readable format is currently available',
+    );
+    expect(
+      fixture.nativeElement.querySelector(
+        'button[aria-label="Replace EPUB for Owned book from this device"]',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('offers synchronized recovery only after an exact remote descriptor probe', async () => {
+    repository.resolveVariantAvailability.mockResolvedValue(
+      new Map([[book.id, { status: 'unavailable', cause: 'evicted' }]]),
+    );
+    recovery.synchronizedReplacement.mockResolvedValue({
+      path: '.omnia-reader/library/book.epub',
+      revision: 'remote',
+      size: book.size,
+      sha256: book.id.slice('sha256:'.length),
+    });
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector(
+          'button[aria-label="Download synchronized EPUB for Owned book"]',
+        ),
+      ).toBeTruthy();
+    });
+
+    const button = fixture.nativeElement.querySelector(
+      'button[aria-label="Download synchronized EPUB for Owned book"]',
+    ) as HTMLButtonElement;
+    button.click();
+    await vi.waitFor(() =>
+      expect(recovery.replaceFromSynchronization).toHaveBeenCalledWith(
+        book,
+        expect.objectContaining({ onProgress: expect.any(Function) }),
+      ),
+    );
+  });
+
+  it('separates one of two formats without deleting either publication', async () => {
+    const logicalBook = {
+      ...logicalBookFromVariant(book),
+      id: 'logical:sha256:detach',
+      variants: { epub: book.id, pdf: secondBook.id },
+    };
+    repository.listBooks.mockResolvedValue([book, secondBook]);
+    repository.listLogicalBooks.mockResolvedValue([logicalBook]);
+    repository.resolveVariantAvailability.mockResolvedValue(
+      new Map([
+        [book.id, { status: 'healthy' }],
+        [secondBook.id, { status: 'healthy' }],
+      ]),
+    );
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.componentInstance.loading).toBe(false);
+    });
+
+    (
+      fixture.nativeElement.querySelector(
+        'button[aria-label="Separate EPUB from Owned book"]',
+      ) as HTMLButtonElement
+    ).click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="dialog"]')).toBeTruthy(),
+    );
+    const confirm = Array.from(document.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent?.trim() === 'Separate format',
+    ) as HTMLButtonElement;
+    confirm.click();
+    await vi.waitFor(() =>
+      expect(associations.detach).toHaveBeenCalledWith(logicalBook.id, book.id),
+    );
+    expect(associations.deleteVariant).not.toHaveBeenCalled();
+  });
+
   it.each([
     [{ status: 'checking' }, 'Checking'],
     [{ status: 'healthy' }, '(open)'],
@@ -918,8 +1062,13 @@ describe('LibraryPageComponent', () => {
     repository.listProgress.mockRejectedValueOnce(new Error('offline'));
     await fixture.componentInstance['reload']();
     fixture.detectChanges();
-    expect(refreshedBadge.getAttribute('aria-label')).toContain('(open)');
-    expect(document.activeElement).toBe(refreshedBadge);
+    const retainedBadge = fixture.nativeElement.querySelector(
+      '[data-format-badge="epub"]',
+    ) as HTMLElement;
+    expect(retainedBadge.getAttribute('aria-label')).toContain('60% read');
+    expect(document.activeElement).toBe(
+      fixture.nativeElement.querySelector('button[id$="-epub"]'),
+    );
   });
 
   it('reports duplicate and mixed multi-book import outcomes', async () => {

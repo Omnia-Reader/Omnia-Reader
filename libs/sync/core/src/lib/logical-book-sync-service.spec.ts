@@ -21,6 +21,7 @@ import {
   serializeLogicalBookState,
 } from './logical-book-state';
 import { bookObjectPath } from './book-sync-manifest';
+import { BookSyncExclusions } from './book-sync-exclusions';
 
 const change = {
   schemaVersion: 1 as const,
@@ -275,6 +276,58 @@ describe('LogicalBookSyncService', () => {
       publication.variant,
       expect.anything(),
     );
+    expect(repository.replaceLogicalBookState).toHaveBeenCalledWith(
+      [publication.logicalBook],
+      [],
+      [],
+    );
+  });
+
+  it('retains logical membership without recreating an excluded remote backup', async () => {
+    const remote = new MemoryTransport();
+    const publication = publicationFixture();
+    const state = mergeLogicalBookChangesIntoState(emptyLogicalBookState(), [
+      publication.change,
+    ]);
+    remote.documents.set(LOGICAL_BOOK_STATE_PATH, {
+      path: LOGICAL_BOOK_STATE_PATH,
+      content: serializeLogicalBookState(state),
+      revision: 'state-1',
+    });
+    const repository = {
+      getBook: vi.fn().mockResolvedValue(publication.variant),
+      getBookSource: vi.fn().mockResolvedValue({
+        name: publication.variant.fileName,
+        mediaType: publication.variant.mediaType,
+        size: publication.variant.size,
+        open: () => Promise.resolve(new Blob(['book'])),
+      }),
+      replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
+    } as unknown as LogicalBookStateRepository;
+    const journal = {
+      pending: vi.fn().mockResolvedValue([]),
+      acknowledge: vi.fn(),
+    } as unknown as SyncOperationJournal;
+    const exclusions = {
+      isExcluded: vi
+        .fn()
+        .mockImplementation(
+          (bookId: string) => bookId === publication.variant.id,
+        ),
+      exclude: vi.fn(),
+      include: vi.fn(),
+    } satisfies BookSyncExclusions;
+
+    await new LogicalBookSyncService(
+      remote,
+      journal,
+      repository,
+      exclusions,
+    ).synchronize();
+
+    expect(remote.objects.has(bookObjectPath(publication.variant))).toBe(false);
+    expect(repository.getBook).not.toHaveBeenCalled();
+    expect(repository.getBookSource).not.toHaveBeenCalled();
     expect(repository.replaceLogicalBookState).toHaveBeenCalledWith(
       [publication.logicalBook],
       [],

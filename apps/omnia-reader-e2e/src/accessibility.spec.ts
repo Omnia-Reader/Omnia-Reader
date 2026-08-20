@@ -59,6 +59,16 @@ test('library has no automated WCAG A or AA violations', async ({ page }) => {
   ).toBeVisible();
   await expectAccessible(page);
 
+  await clearStoredPublicationBinaries(page);
+  await page.reload();
+  const recovery = page.getByRole('button', {
+    name: 'Replace EPUB for Omnia EPUB Fixture from this device',
+  });
+  await expect(recovery).toBeVisible();
+  await recovery.focus();
+  await expect(recovery).toBeFocused();
+  await expectAccessible(page);
+
   await page
     .getByRole('button', {
       name: 'Remove EPUB for Omnia EPUB Fixture',
@@ -216,6 +226,23 @@ function libraryFormatButton(
   const card = page.getByTestId('library-book').filter({ hasText: title });
   return card.getByRole('button', {
     name: new RegExp(`^${format.toUpperCase()}\\b`),
+  });
+}
+
+async function clearStoredPublicationBinaries(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('omnia-reader');
+      request.addEventListener('success', () => resolve(request.result));
+      request.addEventListener('error', () => reject(request.error));
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('binaries', 'readwrite');
+      transaction.objectStore('binaries').clear();
+      transaction.addEventListener('complete', () => resolve());
+      transaction.addEventListener('error', () => reject(transaction.error));
+    });
+    database.close();
   });
 }
 

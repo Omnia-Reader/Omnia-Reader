@@ -1,5 +1,11 @@
 # Data Model: Multi-Format Books
 
+> **Current provider representation (2026-08-20):** `LogicalBookChange`
+> remains the local atomic mutation and journal payload, while feature 010
+> folds accepted changes into the canonical provider document
+> `.omnia-reader/logical-books/state.json`. Remote change/checkpoint trees are
+> legacy migration inputs, not current durable entities.
+
 ## Identity Vocabulary
 
 - **Variant ID / existing `bookId`**: `sha256:<64 lowercase hex>`. It is the
@@ -172,7 +178,12 @@ variant to the competing book, or make it standalone when cardinality remains
 valid. A stale choice fails without clearing the open record. Checkpoints retain
 open records and resolved authority so pruning cannot resurrect an action.
 
-## Entity: Association Checkpoint
+## Legacy Entity: Association Checkpoint
+
+Association checkpoints are accepted only as feature-010 migration input.
+Current clients retain the same authority in canonical-state clocks,
+tombstones, preferences, and reconciliation records and do not create new
+checkpoint pages.
 
 A materialized, immutable fold of accepted logical changes:
 
@@ -197,7 +208,7 @@ LogicalBookRecord 1 ── has  ── 0..1 LogicalBookCover
 LogicalBookRecord 1 ── has  ── 0..1 synchronized LogicalBookFormatPreference
 PublicationVariant 1 ── has  ── 1 binary metadata/object
 PublicationVariant 1 ── has  ── 0..n progress documents/bookmarks/annotations
-LogicalBookChange n ── folds into ── AssociationCheckpoint
+LogicalBookChange n ── folds into ── CanonicalLogicalBookState
 MembershipReconciliation n ── concerns ── 1..n PublicationVariant
 ```
 
@@ -292,10 +303,10 @@ mutation when any conflict exists. A conflict-free restore rechecks the local
 revision at commit and atomically restores synchronized preferences and
 reconciliation authority. Unknown newer schemas fail before mutation.
 
-### Sync root 1 → 2
+### Legacy sync root → current canonical state
 
 Verify legacy exact manifests/objects, construct deterministic singleton state,
-publish v2 objects/checkpoint, then compare-and-swap the root manifest. New
-association changes are forbidden until schema 2 is confirmed. Schema-1 clients
-reject schema 2 on their next preflight; distinct roots prevent them from
-interpreting v2 membership documents.
+publish missing current objects, then compare-and-swap the current schema-2 root
+manifest. Fold legacy changes/checkpoints into `logical-books/state.json`,
+reread and semantically verify it, and only then batch-delete the legacy input.
+New association state is never acknowledged before canonical verification.

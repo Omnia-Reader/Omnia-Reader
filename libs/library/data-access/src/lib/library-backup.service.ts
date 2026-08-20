@@ -15,6 +15,7 @@ import {
   LogicalBookFormatPreference,
   LogicalBookId,
   LogicalBookRecord,
+  LogicalLibrarySnapshot,
   MembershipReconciliation,
   preferredAnnotation,
   preferredBookmark,
@@ -28,6 +29,11 @@ import {
 import type { Entry, FileEntry } from '@zip.js/zip.js';
 import { LIBRARY_REPOSITORY } from './library-repository.token';
 import { publicationFingerprint } from './publication-fingerprint';
+import {
+  AtomicLibraryRestoreRepository,
+  AtomicLibraryRestoreRequest,
+  LibraryRestoreStaleRevisionError,
+} from './library-restore';
 
 export const LIBRARY_BACKUP_MEDIA_TYPE =
   'application/vnd.omnia-reader.backup+zip';
@@ -79,6 +85,32 @@ export interface LibraryBackupImportResult {
   annotationsRestored: number;
 }
 
+export type LibraryBackupRestoreConflictKind =
+  | 'variant-owned-by-another-logical-book'
+  | 'format-slot-occupied';
+
+export interface LibraryBackupRestoreConflict {
+  kind: LibraryBackupRestoreConflictKind;
+  archiveLogicalBookId: LogicalBookId;
+  format: PublicationFormat;
+  archiveVariantId: string;
+  currentLogicalBookId?: LogicalBookId;
+  currentVariantId?: string;
+}
+
+export class LibraryBackupRestoreConflictError extends Error {
+  constructor(readonly conflicts: readonly LibraryBackupRestoreConflict[]) {
+    super(
+      `${conflicts.length} backup membership ${
+        conflicts.length === 1 ? 'conflict was' : 'conflicts were'
+      } found`,
+    );
+    this.name = 'LibraryBackupRestoreConflictError';
+  }
+}
+
+export { LibraryRestoreStaleRevisionError };
+
 interface BackupBook {
   record: BookRecord;
   path: string;
@@ -106,6 +138,7 @@ interface BackupLogicalBookCover {
   path: string;
   mediaType: string;
   size: number;
+  sha256: string;
 }
 
 interface VersionThreeLibraryBackupManifest {
@@ -305,9 +338,19 @@ export class LibraryBackupService {
       (left, right) => left.conflictId.localeCompare(right.conflictId),
     );
     const logicalBookCovers = new Map<LogicalBookId, Blob>();
+    const logicalBookCoverRecords: BackupLogicalBookCover[] = [];
     for (const logicalBook of logicalBooks) {
       const cover = await this.repository.getLogicalBookCover(logicalBook.id);
-      if (cover) logicalBookCovers.set(logicalBook.id, cover);
+      if (cover) {
+        logicalBookCovers.set(logicalBook.id, cover);
+        logicalBookCoverRecords.push({
+          logicalBookId: logicalBook.id,
+          path: logicalCoverPath(logicalBook.id),
+          mediaType: cover.type || 'application/octet-stream',
+          size: cover.size,
+          sha256: await this.fingerprinter(cover),
+        });
+      }
     }
     const manifest: LibraryBackupManifest = {
       schemaVersion: 4,
@@ -328,16 +371,9 @@ export class LibraryBackupService {
       logicalBooks,
       logicalBookPreferences,
       membershipReconciliations,
-      logicalBookCovers: [...logicalBookCovers]
-        .map(([logicalBookId, cover]) => ({
-          logicalBookId,
-          path: logicalCoverPath(logicalBookId),
-          mediaType: cover.type || 'application/octet-stream',
-          size: cover.size,
-        }))
-        .sort((left, right) =>
-          left.logicalBookId.localeCompare(right.logicalBookId),
-        ),
+      logicalBookCovers: logicalBookCoverRecords.sort((left, right) =>
+        left.logicalBookId.localeCompare(right.logicalBookId),
+      ),
     };
     return {
       books,
@@ -416,9 +452,37 @@ export class LibraryBackupService {
 
   async importArchive(archive: Blob): Promise<LibraryBackupImportResult> {
     const validated = await this.validateArchive(archive);
-    const existingBookIds = new Set(
-      (await this.repository.listBooks()).map((book) => book.id),
+    const [existingBooks, logicalSnapshot] = await Promise.all([
+      this.repository.listBooks(),
+      this.repository.getLogicalLibrarySnapshot(),
+    ]);
+    const conflicts = collectRestoreConflicts(
+      validated.manifest.logicalBooks,
+      logicalSnapshot.logicalBooks,
     );
+    if (conflicts.length > 0) {
+      throw new LibraryBackupRestoreConflictError(conflicts);
+    }
+    const atomicRepository = this.repository as LibraryRepository &
+      ProgressDocumentRepository &
+      Partial<AtomicLibraryRestoreRepository>;
+    if (atomicRepository.restoreLibraryBackupAtomically) {
+      return this.importArchiveAtomically(
+        validated,
+        existingBooks,
+        logicalSnapshot,
+        atomicRepository as LibraryRepository &
+          ProgressDocumentRepository &
+          AtomicLibraryRestoreRepository,
+      );
+    }
+    if (
+      (await this.repository.getLogicalLibrarySnapshot()).revision !==
+      logicalSnapshot.revision
+    ) {
+      throw new LibraryRestoreStaleRevisionError();
+    }
+    const existingBookIds = new Set(existingBooks.map((book) => book.id));
     const addedBookIds: string[] = [];
     let booksUpdated = 0;
     let progressRestored = 0;
@@ -536,6 +600,109 @@ export class LibraryBackupService {
     };
   }
 
+  private async importArchiveAtomically(
+    validated: ValidatedBackup,
+    existingBooks: readonly BookRecord[],
+    logicalSnapshot: LogicalLibrarySnapshot,
+    repository: LibraryRepository &
+      ProgressDocumentRepository &
+      AtomicLibraryRestoreRepository,
+  ): Promise<LibraryBackupImportResult> {
+    const existingBookIds = new Set(existingBooks.map((book) => book.id));
+    const progress: ReadingProgress[] = [];
+    for (const imported of validated.manifest.progress) {
+      const current = await repository.getProgress(imported.bookId);
+      const selected = preferredProgress(current, imported);
+      if (!current || !sameProgress(current, selected)) progress.push(selected);
+    }
+    const currentDocuments = new Map(
+      (await repository.listProgressDocuments()).map((record) => [
+        progressDocumentKey(record),
+        record,
+      ]),
+    );
+    const progressDocuments: ReadingProgress[] = [];
+    for (const imported of mergeProgressDocuments([
+      ...validated.manifest.progressDocuments,
+      ...validated.manifest.progress,
+    ])) {
+      const current = currentDocuments.get(progressDocumentKey(imported));
+      const selected = current
+        ? mergeProgressDocument(current, imported)
+        : imported;
+      if (!current || !sameProgress(current, selected)) {
+        progressDocuments.push(selected);
+      }
+    }
+    const bookmarks: PublicationBookmark[] = [];
+    for (const imported of validated.manifest.bookmarks) {
+      const current = await repository.getBookmark(imported.id);
+      if (preferredBookmark(current, imported) === imported) {
+        bookmarks.push(imported);
+      }
+    }
+    const annotations: PublicationAnnotation[] = [];
+    for (const imported of validated.manifest.annotations) {
+      const current = await repository.getAnnotation(imported.id);
+      if (preferredAnnotation(current, imported) === imported) {
+        annotations.push(imported);
+      }
+    }
+    const logicalBooks = mergeLogicalBooks(
+      logicalSnapshot.logicalBooks,
+      validated.manifest.logicalBooks,
+    );
+    const logicalBookPreferences = mergeLogicalPreferences(
+      logicalSnapshot.preferences,
+      validated.manifest.logicalBookPreferences,
+    );
+    const membershipReconciliations = mergeReconciliations(
+      logicalSnapshot.reconciliations,
+      validated.manifest.membershipReconciliations,
+    );
+    const logicalBookCovers = new Map<LogicalBookId, Blob>();
+    for (const logicalBook of logicalSnapshot.logicalBooks) {
+      const cover = await repository.getLogicalBookCover(logicalBook.id);
+      if (cover) logicalBookCovers.set(logicalBook.id, cover);
+    }
+    validated.logicalBookCovers.forEach((cover, logicalBookId) =>
+      logicalBookCovers.set(logicalBookId, cover),
+    );
+    const request: AtomicLibraryRestoreRequest = {
+      expectedLogicalRevision: logicalSnapshot.revision,
+      publications: validated.manifest.books.map((book) => ({
+        record: mergeRestoredBook(
+          existingBooks.find((current) => current.id === book.record.id),
+          book.record,
+        ),
+        content: validated.publications.get(book.path) as Blob,
+      })),
+      logicalBooks,
+      logicalBookPreferences,
+      membershipReconciliations,
+      logicalBookCovers,
+      progress,
+      progressDocuments,
+      readerPreferences: validated.manifest.preferences,
+      bookmarks,
+      annotations,
+    };
+    await repository.restoreLibraryBackupAtomically(request);
+    return {
+      booksAdded: validated.manifest.books.filter(
+        (book) => !existingBookIds.has(book.record.id),
+      ).length,
+      booksUpdated: validated.manifest.books.filter((book) =>
+        existingBookIds.has(book.record.id),
+      ).length,
+      progressRestored: progress.length,
+      progressDocumentsRestored: progressDocuments.length,
+      preferencesRestored: validated.manifest.preferences.length,
+      bookmarksRestored: bookmarks.length,
+      annotationsRestored: annotations.length,
+    };
+  }
+
   private async validateArchive(archive: Blob): Promise<ValidatedBackup> {
     if (archive.size === 0) {
       throw new Error('The selected backup is empty');
@@ -604,7 +771,10 @@ export class LibraryBackupService {
           checkAmbiguity: true,
           checkOverlappingEntry: true,
         });
-        if (blob.size !== cover.size) {
+        if (
+          blob.size !== cover.size ||
+          (await this.fingerprinter(blob)) !== cover.sha256
+        ) {
           throw new Error(
             `Backup logical-book cover "${cover.path}" has an invalid size`,
           );
@@ -652,6 +822,154 @@ function validateEntryTable(entries: readonly Entry[]): void {
       throw new Error('Backup expands beyond the supported size limit');
     }
   }
+}
+
+function collectRestoreConflicts(
+  archived: readonly LogicalBookRecord[],
+  current: readonly LogicalBookRecord[],
+): LibraryBackupRestoreConflict[] {
+  const currentById = new Map(current.map((book) => [book.id, book]));
+  const ownerByVariant = new Map<string, LogicalBookRecord>();
+  current.forEach((book) =>
+    Object.values(book.variants).forEach((variantId) => {
+      if (variantId) ownerByVariant.set(variantId, book);
+    }),
+  );
+  const conflicts: LibraryBackupRestoreConflict[] = [];
+  for (const archiveBook of archived) {
+    for (const [format, archiveVariantId] of Object.entries(
+      archiveBook.variants,
+    ) as [PublicationFormat, string][]) {
+      const owner = ownerByVariant.get(archiveVariantId);
+      if (owner && owner.id !== archiveBook.id) {
+        conflicts.push({
+          kind: 'variant-owned-by-another-logical-book',
+          archiveLogicalBookId: archiveBook.id,
+          format,
+          archiveVariantId,
+          currentLogicalBookId: owner.id,
+          currentVariantId: archiveVariantId,
+        });
+      }
+      const occupied = currentById.get(archiveBook.id)?.variants[format];
+      if (occupied && occupied !== archiveVariantId) {
+        conflicts.push({
+          kind: 'format-slot-occupied',
+          archiveLogicalBookId: archiveBook.id,
+          format,
+          archiveVariantId,
+          currentLogicalBookId: archiveBook.id,
+          currentVariantId: occupied,
+        });
+      }
+    }
+  }
+  const unique = new Map(
+    conflicts.map((conflict) => [JSON.stringify(conflict), conflict]),
+  );
+  return [...unique.values()].sort(
+    (left, right) =>
+      left.archiveLogicalBookId.localeCompare(right.archiveLogicalBookId) ||
+      left.format.localeCompare(right.format) ||
+      left.archiveVariantId.localeCompare(right.archiveVariantId) ||
+      left.kind.localeCompare(right.kind),
+  );
+}
+
+function mergeLogicalBooks(
+  current: readonly LogicalBookRecord[],
+  archived: readonly LogicalBookRecord[],
+): LogicalBookRecord[] {
+  const merged = new Map(current.map((book) => [book.id, book]));
+  for (const imported of archived) {
+    const existing = merged.get(imported.id);
+    merged.set(
+      imported.id,
+      existing
+        ? {
+            ...imported,
+            variants: { ...existing.variants, ...imported.variants },
+          }
+        : imported,
+    );
+  }
+  return [...merged.values()].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  );
+}
+
+function mergeLogicalPreferences(
+  current: readonly LogicalBookFormatPreference[],
+  archived: readonly LogicalBookFormatPreference[],
+): LogicalBookFormatPreference[] {
+  const merged = new Map(current.map((value) => [value.logicalBookId, value]));
+  for (const imported of archived) {
+    const existing = merged.get(imported.logicalBookId);
+    if (!existing) {
+      merged.set(imported.logicalBookId, imported);
+      continue;
+    }
+    const importedDescendsExisting = imported.preferenceHeads.includes(
+      existing.winningChangeId,
+    );
+    const existingDescendsImported = existing.preferenceHeads.includes(
+      imported.winningChangeId,
+    );
+    const winner =
+      importedDescendsExisting && !existingDescendsImported
+        ? imported
+        : existingDescendsImported && !importedDescendsExisting
+          ? existing
+          : imported.winningChangeId.localeCompare(existing.winningChangeId) >=
+              0
+            ? imported
+            : existing;
+    merged.set(imported.logicalBookId, {
+      ...winner,
+      preferenceHeads: [
+        ...new Set([...existing.preferenceHeads, ...imported.preferenceHeads]),
+      ].sort(),
+    });
+  }
+  return [...merged.values()].sort((left, right) =>
+    left.logicalBookId.localeCompare(right.logicalBookId),
+  );
+}
+
+function mergeRestoredBook(
+  current: BookRecord | undefined,
+  archived: BookRecord,
+): BookRecord {
+  if (!current) return archived;
+  return {
+    ...current,
+    title: archived.title,
+    authors: archived.authors,
+    language: archived.language,
+    publisher: archived.publisher,
+    identifier: archived.identifier,
+  };
+}
+
+function mergeReconciliations(
+  current: readonly MembershipReconciliation[],
+  archived: readonly MembershipReconciliation[],
+): MembershipReconciliation[] {
+  const merged = new Map(current.map((value) => [value.conflictId, value]));
+  for (const imported of archived) {
+    const existing = merged.get(imported.conflictId);
+    if (
+      !existing ||
+      (existing.status === 'open' && imported.status === 'resolved') ||
+      (existing.status === imported.status &&
+        JSON.stringify(imported).localeCompare(JSON.stringify(existing)) > 0)
+    ) {
+      merged.set(imported.conflictId, imported);
+    }
+  }
+  return [...merged.values()].sort((left, right) =>
+    left.conflictId.localeCompare(right.conflictId),
+  );
 }
 
 function fileEntry(entry: Entry | undefined, message: string): FileEntry {
@@ -879,7 +1197,15 @@ function parseManifest(text: string): LibraryBackupManifest {
       manifest.membershipReconciliations.map(
         (reconciliation) => reconciliation.conflictId,
       ),
-    ).size !== manifest.membershipReconciliations.length
+    ).size !== manifest.membershipReconciliations.length ||
+    manifest.membershipReconciliations.some(
+      (reconciliation) =>
+        !isConsistentBackupReconciliation(
+          reconciliation,
+          manifest.logicalBooks,
+          bookFormats,
+        ),
+    )
   ) {
     throw new Error('Backup logical-book state is inconsistent');
   }
@@ -939,6 +1265,37 @@ function parseManifest(text: string): LibraryBackupManifest {
   return manifest;
 }
 
+function isConsistentBackupReconciliation(
+  reconciliation: MembershipReconciliation,
+  logicalBooks: readonly LogicalBookRecord[],
+  bookFormats: ReadonlyMap<string, PublicationFormat>,
+): boolean {
+  const booksById = new Map(logicalBooks.map((book) => [book.id, book]));
+  const tuples = [
+    ...reconciliation.acceptedMembership,
+    ...reconciliation.rejectedMembership,
+  ];
+  const tupleKeys = tuples.map(
+    (membership) =>
+      `${membership.logicalBookId}\u0000${membership.format}\u0000${membership.variantId}`,
+  );
+  return (
+    reconciliation.affectedVariantIds.every((variantId) =>
+      bookFormats.has(variantId),
+    ) &&
+    tuples.every(
+      (membership) =>
+        bookFormats.get(membership.variantId) === membership.format,
+    ) &&
+    reconciliation.acceptedMembership.every(
+      (membership) =>
+        booksById.get(membership.logicalBookId)?.variants[membership.format] ===
+        membership.variantId,
+    ) &&
+    new Set(tupleKeys).size === tupleKeys.length
+  );
+}
+
 function isBackupBook(value: unknown): value is BackupBook {
   return (
     isRecord(value) &&
@@ -963,7 +1320,9 @@ function isBackupLogicalBookCover(
     value['mediaType'].length > 0 &&
     value['mediaType'].length <= 255 &&
     Number.isSafeInteger(value['size']) &&
-    (value['size'] as number) >= 0
+    (value['size'] as number) >= 0 &&
+    typeof value['sha256'] === 'string' &&
+    /^sha256:[a-f0-9]{64}$/.test(value['sha256'])
   );
 }
 

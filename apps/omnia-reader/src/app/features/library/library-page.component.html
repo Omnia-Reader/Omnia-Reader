@@ -45,6 +45,12 @@
     </p>
   }
 
+  @if (refreshing) {
+    <p class="sr-only" role="status" aria-live="polite">
+      Updating library… Existing reading progress remains available.
+    </p>
+  }
+
   @if (loading) {
     <p class="mx-auto my-18 max-w-xl text-center" aria-live="polite">
       Loading your library…
@@ -327,7 +333,6 @@
                           [class]="formatBadgeButtonClass"
                           [id]="formatBadgeId(book, format)"
                           [attr.data-format-badge]="format"
-                          [class.opacity-60]="formatBadgeDisabled(book, format)"
                           [attr.aria-label]="
                             formatBadgeLabel(book, format) +
                             (progressPercent === null || progressPercent === 0
@@ -373,6 +378,48 @@
                           }
                         </div>
                         <span [class]="formatActionContainerClass">
+                          @if (formatBadgeDisabled(book, format)) {
+                            <button
+                              matIconButton
+                              [class]="formatActionButtonClass"
+                              type="button"
+                              [disabled]="isFormatActionDisabled()"
+                              [attr.aria-label]="
+                                formatActionAriaLabel(
+                                  format,
+                                  'replace',
+                                  book.title
+                                )
+                              "
+                              (click)="
+                                $event.stopPropagation();
+                                replaceVariantLocally(variant)
+                              "
+                            >
+                              <mat-icon>upload_file</mat-icon>
+                            </button>
+                            @if (canRecoverFromSynchronization(variant)) {
+                              <button
+                                matIconButton
+                                [class]="formatActionButtonClass"
+                                type="button"
+                                [disabled]="isFormatActionDisabled()"
+                                [attr.aria-label]="
+                                  formatActionAriaLabel(
+                                    format,
+                                    'download',
+                                    book.title
+                                  )
+                                "
+                                (click)="
+                                  $event.stopPropagation();
+                                  recoverVariantFromSynchronization(variant)
+                                "
+                              >
+                                <mat-icon>cloud_download</mat-icon>
+                              </button>
+                            }
+                          }
                           <button
                             matIconButton
                             [class]="formatActionButtonClass"
@@ -394,6 +441,27 @@
                           >
                             <mat-icon>download</mat-icon>
                           </button>
+                          @if (hasMultipleVariants(book)) {
+                            <button
+                              matIconButton
+                              [class]="formatActionButtonClass"
+                              type="button"
+                              [disabled]="isFormatActionDisabled()"
+                              [attr.aria-label]="
+                                formatActionAriaLabel(
+                                  format,
+                                  'detach',
+                                  book.title
+                                )
+                              "
+                              (click)="
+                                $event.stopPropagation();
+                                requestVariantDetach(book, variant)
+                              "
+                            >
+                              <mat-icon>call_split</mat-icon>
+                            </button>
+                          }
                           <button
                             matIconButton
                             [class]="formatActionButtonClass"
@@ -414,6 +482,19 @@
                             <mat-icon>delete</mat-icon>
                           </button>
                         </span>
+                        @if (
+                          recoveringVariantId === variant.id &&
+                          recoveryProgress(variant) !== null
+                        ) {
+                          <span
+                            class="sr-only"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            Downloading {{ format.toUpperCase() }}:
+                            {{ recoveryProgress(variant) }}%
+                          </span>
+                        }
                       </div>
                     } @else {
                       <div [class]="formatRowClass">

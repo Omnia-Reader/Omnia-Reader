@@ -40,6 +40,10 @@ import {
   StoredPublicationBinary,
 } from './publication-binary-storage';
 import { publicationFingerprint } from './publication-fingerprint';
+import {
+  AtomicLibraryRestoreRequest,
+  LibraryRestoreStaleRevisionError,
+} from './library-restore';
 
 export { publicationFingerprint } from './publication-fingerprint';
 
@@ -355,6 +359,121 @@ export class BrowserLibraryRepository
         );
       },
     );
+  }
+
+  async restoreLibraryBackupAtomically(
+    request: AtomicLibraryRestoreRequest,
+  ): Promise<void> {
+    const publicationBinaries = await Promise.all(
+      request.publications.map(async ({ record, content }) => ({
+        schemaVersion: 2 as const,
+        storage: 'indexeddb' as const,
+        bookId: record.id,
+        fileName: record.fileName,
+        mediaType: record.mediaType,
+        size: content.size,
+        bytes: await blobBytes(content),
+      })),
+    );
+    const logicalCovers = await Promise.all(
+      [...request.logicalBookCovers].map(async ([logicalBookId, cover]) => ({
+        logicalBookId,
+        mediaType: cover.type || 'application/octet-stream',
+        bytes: await blobBytes(cover),
+      })),
+    );
+    const database = await this.database();
+    const storeNames: ActiveLibraryStore[] = [
+      BOOKS_STORE,
+      BINARIES_STORE,
+      PROGRESS_STORE,
+      PROGRESS_DOCUMENTS_STORE,
+      PREFERENCES_STORE,
+      BOOKMARKS_STORE,
+      ANNOTATIONS_STORE,
+      LOGICAL_BOOKS_STORE,
+      LOGICAL_BOOK_COVERS_STORE,
+      LOGICAL_BOOK_PREFERENCES_STORE,
+      LOGICAL_BOOK_RECONCILIATIONS_STORE,
+    ];
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(storeNames, 'readwrite');
+      let staleRevision = false;
+      const logicalBooksStore = transaction.objectStore(LOGICAL_BOOKS_STORE);
+      const logicalPreferencesStore = transaction.objectStore(
+        LOGICAL_BOOK_PREFERENCES_STORE,
+      );
+      const reconciliationsStore = transaction.objectStore(
+        LOGICAL_BOOK_RECONCILIATIONS_STORE,
+      );
+      const booksRequest = logicalBooksStore.getAll();
+      const preferencesRequest = logicalPreferencesStore.getAll();
+      const reconciliationsRequest = reconciliationsStore.getAll();
+      let prepared = 0;
+      const prepare = () => {
+        prepared += 1;
+        if (prepared !== 3) return;
+        const revision = logicalRevision(
+          booksRequest.result,
+          preferencesRequest.result,
+          reconciliationsRequest.result,
+        );
+        if (revision !== request.expectedLogicalRevision) {
+          staleRevision = true;
+          transaction.abort();
+          return;
+        }
+        request.publications.forEach(({ record }) =>
+          transaction.objectStore(BOOKS_STORE).put(record),
+        );
+        publicationBinaries.forEach((binary) =>
+          transaction.objectStore(BINARIES_STORE).put(binary),
+        );
+        logicalBooksStore.clear();
+        logicalPreferencesStore.clear();
+        reconciliationsStore.clear();
+        transaction.objectStore(LOGICAL_BOOK_COVERS_STORE).clear();
+        request.logicalBooks.forEach((book) => logicalBooksStore.put(book));
+        request.logicalBookPreferences.forEach((preference) =>
+          logicalPreferencesStore.put(preference),
+        );
+        request.membershipReconciliations.forEach((reconciliation) =>
+          reconciliationsStore.put(reconciliation),
+        );
+        logicalCovers.forEach((cover) =>
+          transaction.objectStore(LOGICAL_BOOK_COVERS_STORE).put(cover),
+        );
+        request.progress.forEach((record) =>
+          transaction.objectStore(PROGRESS_STORE).put(record),
+        );
+        request.progressDocuments.forEach((record) =>
+          transaction.objectStore(PROGRESS_DOCUMENTS_STORE).put(record),
+        );
+        request.readerPreferences.forEach((record) =>
+          transaction.objectStore(PREFERENCES_STORE).put(record),
+        );
+        request.bookmarks.forEach((record) =>
+          transaction.objectStore(BOOKMARKS_STORE).put(record),
+        );
+        request.annotations.forEach((record) =>
+          transaction.objectStore(ANNOTATIONS_STORE).put(record),
+        );
+      };
+      booksRequest.addEventListener('success', prepare);
+      preferencesRequest.addEventListener('success', prepare);
+      reconciliationsRequest.addEventListener('success', prepare);
+      transaction.addEventListener('complete', () => resolve());
+      transaction.addEventListener('abort', () =>
+        reject(
+          staleRevision
+            ? new LibraryRestoreStaleRevisionError()
+            : (transaction.error ?? new Error('Library restore was aborted')),
+        ),
+      );
+      transaction.addEventListener('error', () =>
+        reject(transaction.error ?? new Error('Library restore failed')),
+      );
+    });
   }
 
   async addVariant(
@@ -2072,6 +2191,25 @@ async function detectPublicationBlobFormat(
     return 'epub';
   }
   return null;
+}
+
+function logicalRevision(
+  rawBooks: unknown[],
+  rawPreferences: unknown[],
+  rawReconciliations: unknown[],
+): string {
+  const logicalBooks = rawBooks
+    .filter(isLogicalBookRecord)
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const preferences = rawPreferences
+    .filter(isLogicalBookFormatPreference)
+    .sort((left, right) =>
+      left.logicalBookId.localeCompare(right.logicalBookId),
+    );
+  const reconciliations = rawReconciliations
+    .filter(isMembershipReconciliation)
+    .sort((left, right) => left.conflictId.localeCompare(right.conflictId));
+  return JSON.stringify({ logicalBooks, preferences, reconciliations });
 }
 
 function logicalChange(

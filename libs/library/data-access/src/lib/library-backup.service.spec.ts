@@ -22,6 +22,7 @@ import type { FileEntry } from '@zip.js/zip.js';
 import {
   LibraryBackupService,
   LibraryBackupImportResult,
+  LibraryBackupRestoreConflictError,
 } from './library-backup.service';
 
 const BOOK_ID = `sha256:${'a'.repeat(64)}`;
@@ -179,7 +180,7 @@ describe('LibraryBackupService', () => {
     expect(await restored.getReaderPreferences('pdf')).toEqual(PREFERENCES);
   });
 
-  it('round-trips schema-4 logical membership, preference, and cover state', async () => {
+  it('COMP-backup-schema-4 round-trips logical membership, preference, and cover state', async () => {
     const epubId = `sha256:${'b'.repeat(64)}`;
     const logicalBookId = `logical:sha256:${'d'.repeat(64)}` as LogicalBookId;
     const epubBlob = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 31])], {
@@ -233,6 +234,63 @@ describe('LibraryBackupService', () => {
       await restored.getLogicalBookFormatPreference(logicalBook.id),
     ).toEqual(logicalPreference);
     expect(await restored.getLogicalBookCover(logicalBook.id)).toEqual(cover);
+  });
+
+  it('collects every current-library membership conflict before mutation', async () => {
+    const source = new MemoryLibraryRepository();
+    source.books.set(BOOK.id, BOOK);
+    source.sources.set(BOOK.id, BOOK_BLOB);
+    const archive = await new LibraryBackupService(
+      source,
+      async () => BOOK_ID,
+    ).exportArchive(new Date('2026-07-25T12:30:00.000Z'));
+
+    const occupiedId = `sha256:${'f'.repeat(64)}`;
+    const occupied: BookRecord = {
+      ...BOOK,
+      id: occupiedId,
+      fileName: 'occupied.pdf',
+      title: 'Occupied',
+    };
+    const archiveLogicalId = logicalBookFromVariant(BOOK).id;
+    const current = new MemoryLibraryRepository();
+    current.books.set(BOOK.id, BOOK);
+    current.books.set(occupied.id, occupied);
+    current.logicalBooks.set(archiveLogicalId, {
+      ...logicalBookFromVariant(occupied),
+      id: archiveLogicalId,
+    });
+    const otherLogicalId = `logical:sha256:${'e'.repeat(64)}` as LogicalBookId;
+    current.logicalBooks.set(otherLogicalId, {
+      ...logicalBookFromVariant(BOOK),
+      id: otherLogicalId,
+    });
+
+    const error = await new LibraryBackupService(current, async () => BOOK_ID)
+      .importArchive(archive.blob)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(LibraryBackupRestoreConflictError);
+    expect((error as LibraryBackupRestoreConflictError).conflicts).toEqual([
+      {
+        kind: 'format-slot-occupied',
+        archiveLogicalBookId: archiveLogicalId,
+        format: 'pdf',
+        archiveVariantId: BOOK.id,
+        currentLogicalBookId: archiveLogicalId,
+        currentVariantId: occupied.id,
+      },
+      {
+        kind: 'variant-owned-by-another-logical-book',
+        archiveLogicalBookId: archiveLogicalId,
+        format: 'pdf',
+        archiveVariantId: BOOK.id,
+        currentLogicalBookId: otherLogicalId,
+        currentVariantId: BOOK.id,
+      },
+    ]);
+    expect(await current.listLogicalBooks()).toHaveLength(2);
+    expect(current.sources.size).toBe(0);
   });
 
   it('streams a byte-compatible archive without creating a final backup Blob', async () => {
@@ -444,7 +502,7 @@ describe('LibraryBackupService', () => {
     expect(await restored.getBookmark(BOOKMARK.id)).toEqual(tombstone);
   });
 
-  it('migrates version 1 archives where bookmarks used the annotations field', async () => {
+  it('COMP-backup-schema-1 migrates bookmarks from the annotations field', async () => {
     const source = new MemoryLibraryRepository();
     source.books.set(BOOK.id, BOOK);
     source.sources.set(BOOK.id, BOOK_BLOB);
@@ -468,7 +526,7 @@ describe('LibraryBackupService', () => {
     expect(await restored.listAnnotations()).toEqual([]);
   });
 
-  it('migrates version 2 progress into the per-device history store', async () => {
+  it('COMP-backup-schema-2 migrates progress into per-device history', async () => {
     const source = new MemoryLibraryRepository();
     source.books.set(BOOK.id, BOOK);
     source.sources.set(BOOK.id, BOOK_BLOB);
@@ -497,6 +555,48 @@ describe('LibraryBackupService', () => {
 
     expect(result.progressDocumentsRestored).toBe(1);
     expect(await restored.listProgressDocuments()).toEqual([PROGRESS]);
+  });
+
+  it('COMP-backup-schema-3 restores per-device state and derives singleton membership', async () => {
+    const source = new MemoryLibraryRepository();
+    source.books.set(BOOK.id, BOOK);
+    source.sources.set(BOOK.id, BOOK_BLOB);
+    source.progress.set(BOOK.id, PROGRESS);
+    source.progressDocuments.set(
+      progressDocumentKey(SECOND_DEVICE_PROGRESS),
+      SECOND_DEVICE_PROGRESS,
+    );
+    const exported = await new LibraryBackupService(
+      source,
+      async () => BOOK_ID,
+    ).exportArchive();
+    const versionThreeArchive = await rewriteManifestArchive(
+      exported.blob,
+      (manifest) => {
+        manifest['schemaVersion'] = 3;
+        delete manifest['logicalBooks'];
+        delete manifest['logicalBookPreferences'];
+        delete manifest['membershipReconciliations'];
+        delete manifest['logicalBookCovers'];
+      },
+    );
+    const restored = new MemoryLibraryRepository();
+
+    const result = await new LibraryBackupService(
+      restored,
+      async () => BOOK_ID,
+    ).importArchive(versionThreeArchive);
+
+    expect(result.progressDocumentsRestored).toBe(2);
+    expect(await restored.listProgressDocuments()).toEqual(
+      expect.arrayContaining([PROGRESS, SECOND_DEVICE_PROGRESS]),
+    );
+    expect(await restored.listLogicalBooks()).toEqual([
+      expect.objectContaining({
+        id: logicalBookFromVariant(BOOK).id,
+        variants: { pdf: BOOK.id },
+      }),
+    ]);
   });
 
   it('rejects duplicate per-device progress records before mutating the library', async () => {

@@ -1,4 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
+import {
+  assertClosedMatrix,
+  recoveryMatrixRows,
+  rowsOwnedBy,
+} from './recovery-compatibility-matrix';
 
 const browserFailures = new WeakMap<Page, string[]>();
 
@@ -39,6 +44,25 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => {
   expect(browserFailures.get(page) ?? []).toEqual([]);
+});
+
+test('closes all 30 local, cancellation, and validation recovery rows', async () => {
+  assertClosedMatrix(recoveryMatrixRows, 48);
+  const rows = rowsOwnedBy(recoveryMatrixRows, 'storage');
+  expect(rows).toHaveLength(30);
+  expect(
+    rows.filter(({ recoveryPoint }) => recoveryPoint === 'cancelled'),
+  ).toHaveLength(5);
+  expect(
+    rows.filter(
+      ({ recoveryPoint }) => recoveryPoint === 'validation-rejection',
+    ),
+  ).toHaveLength(7);
+  expect(
+    rows.filter(
+      ({ recoveryPoint }) => recoveryPoint === 'post-commit-pre-journal',
+    ),
+  ).toHaveLength(6);
 });
 
 test('reports quota and lets the user protect the offline library', async ({

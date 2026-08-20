@@ -24,7 +24,11 @@ test.beforeEach(async ({ page }) => {
   page.on('console', (message) => {
     if (
       message.type() === 'error' &&
-      !message.text().includes("because the document's frame is sandboxed")
+      !message.text().includes("because the document's frame is sandboxed") &&
+      !(
+        message.text().includes('Remote fixture font') &&
+        message.text().includes('font load failed')
+      )
     ) {
       failures.push(`console: ${message.text()}`);
     }
@@ -222,6 +226,63 @@ test('associates EPUB and PDF entries into one format-selectable book', async ({
   ).toBeVisible();
   await expect(
     cards.first().getByRole('button', { name: /^PDF\b/ }),
+  ).toBeVisible();
+
+  const separatePdf = cards.first().getByRole('button', {
+    name: 'Separate PDF from Omnia EPUB Fixture',
+  });
+  await separatePdf.click();
+  const detachDialog = page.getByRole('dialog', {
+    name: 'Separate the PDF version?',
+  });
+  await expect(detachDialog).toContainText('No publication file is deleted');
+  await detachDialog.getByRole('button', { name: 'Separate format' }).click();
+  await expect(cards).toHaveCount(2);
+  await expect(
+    page.getByRole('status').filter({
+      hasText: 'PDF was separated from “Omnia EPUB Fixture”.',
+    }),
+  ).toBeVisible();
+});
+
+test('replaces an unavailable exact source from a local file', async ({
+  page,
+}) => {
+  const epubBytes = await createEpubFixture();
+  await importPublication(
+    page,
+    'omnia-recovery.epub',
+    'application/epub+zip',
+    epubBytes,
+    'Omnia EPUB Fixture',
+  );
+  await clearStoredPublicationBinaries(page);
+  await page.reload();
+
+  const replacement = page.getByRole('button', {
+    name: 'Replace EPUB for Omnia EPUB Fixture from this device',
+  });
+  await expect(replacement).toBeVisible();
+  const chooserPromise = page.waitForEvent('filechooser');
+  await replacement.click();
+  await (
+    await chooserPromise
+  ).setFiles({
+    name: 'omnia-recovery-copy.epub',
+    mimeType: 'application/epub+zip',
+    buffer: epubBytes,
+  });
+  await expect(
+    page.getByRole('status').filter({
+      hasText: 'EPUB for “Omnia EPUB Fixture” was restored from this device.',
+    }),
+  ).toBeVisible();
+  await libraryFormatButton(page, 'Omnia EPUB Fixture', 'epub').click();
+  await expect(
+    page
+      .getByTestId('publication-viewport')
+      .frameLocator('iframe')
+      .getByRole('heading', { name: 'Chapter One', exact: true }),
   ).toBeVisible();
 });
 
@@ -1591,6 +1652,98 @@ test('exports and restores a complete portable library backup', async ({
   await expect(page.getByText('Portable backup note.')).toBeVisible();
 });
 
+test('reports an occupied-format backup conflict without partial mutation and retries', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const epub = await createEpubFixture();
+  const originalPdf = createPdfFixture();
+  const replacementPdf = Buffer.concat([
+    createPdfFixture(),
+    Buffer.from('\n% replacement edition\n'),
+  ]);
+  await importPublication(
+    page,
+    'backup-conflict.epub',
+    'application/epub+zip',
+    epub,
+    'Omnia EPUB Fixture',
+  );
+  const card = page.getByTestId('library-book');
+  let chooserPromise = page.waitForEvent('filechooser');
+  await card
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (
+    await chooserPromise
+  ).setFiles({
+    name: 'backup-original.pdf',
+    mimeType: 'application/pdf',
+    buffer: originalPdf,
+  });
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'showSaveFilePicker', {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export backup' }).click();
+  const download = await downloadPromise;
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const backup = Buffer.concat(chunks);
+
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
+  await removeLibraryFormat(page, 'Omnia EPUB Fixture', 'pdf');
+  chooserPromise = page.waitForEvent('filechooser');
+  await page
+    .getByRole('button', { name: 'Add PDF for Omnia EPUB Fixture' })
+    .click();
+  await (
+    await chooserPromise
+  ).setFiles({
+    name: 'backup-replacement.pdf',
+    mimeType: 'application/pdf',
+    buffer: replacementPdf,
+  });
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const backupInput = page.locator('#backup-archive-input');
+  await backupInput.setInputFiles({
+    name: 'conflicting.omnia-backup',
+    mimeType: 'application/vnd.omnia-reader.backup+zip',
+    buffer: backup,
+  });
+  await expect(page.getByRole('alert')).toContainText(
+    '1 membership conflict was found',
+  );
+  await expect(page.getByText(/PDF slot in logical:sha256:/)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Choose corrected backup' }),
+  ).toBeVisible();
+
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+  await removeLibraryFormat(page, 'Omnia EPUB Fixture', 'pdf');
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await backupInput.setInputFiles({
+    name: 'corrected-retry.omnia-backup',
+    mimeType: 'application/vnd.omnia-reader.backup+zip',
+    buffer: backup,
+  });
+  await expect(page.getByText(/Backup restored:/)).toBeVisible();
+  await page.getByRole('link', { name: 'Library', exact: true }).click();
+  await expect(card.getByRole('button', { name: /^PDF\b/ })).toBeVisible();
+});
+
 test('loads EPUB chapters from a blob-backed sandbox document', async ({
   page,
 }) => {
@@ -2893,6 +3046,23 @@ async function movePublicationToLegacyIndexedDb(
   });
 }
 
+async function clearStoredPublicationBinaries(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('omnia-reader');
+      request.addEventListener('success', () => resolve(request.result));
+      request.addEventListener('error', () => reject(request.error));
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('binaries', 'readwrite');
+      transaction.objectStore('binaries').clear();
+      transaction.addEventListener('complete', () => resolve());
+      transaction.addEventListener('error', () => reject(transaction.error));
+    });
+    database.close();
+  });
+}
+
 async function prepareBinaryStorageForReload(
   page: import('@playwright/test').Page,
   storage: 'opfs' | 'indexeddb',
@@ -2969,6 +3139,24 @@ function libraryFormatButton(
   return card.getByRole('button', {
     name: new RegExp(`^${format.toUpperCase()}\\b`),
   });
+}
+
+async function removeLibraryFormat(
+  page: Page,
+  title: string,
+  format: 'epub' | 'pdf',
+): Promise<void> {
+  await page
+    .getByTestId('library-book')
+    .filter({ hasText: title })
+    .getByRole('button', {
+      name: `Remove ${format.toUpperCase()} for ${title}`,
+    })
+    .click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Remove book' })
+    .click();
 }
 
 async function expectLibraryFilterResult(
