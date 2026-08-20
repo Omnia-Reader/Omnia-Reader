@@ -993,6 +993,50 @@ describe('LibraryPageComponent', () => {
     expect(badge.getAttribute('aria-label')).toContain('(open)');
   });
 
+  it('prioritizes filtered checking variants ahead of background verification', async () => {
+    const prioritizedBook: BookRecord = {
+      ...secondBook,
+      title: 'Priority result',
+    };
+    const fixture = TestBed.createComponent(LibraryPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.componentInstance.loading).toBe(false);
+    });
+    const component = fixture.componentInstance;
+    component.books = [book, prioritizedBook];
+    component.logicalBooks = [
+      logicalBookFromVariant(book),
+      logicalBookFromVariant(prioritizedBook),
+    ];
+    component['availability'] = new Map([
+      [book.id, { status: 'checking' }],
+      [prioritizedBook.id, { status: 'checking' }],
+    ]);
+    component['availabilityVerificationQueue'].splice(
+      0,
+      component['availabilityVerificationQueue'].length,
+      book.id,
+      prioritizedBook.id,
+    );
+    component.searchQuery = 'Priority result';
+    const originalIntersectionObserver = window.IntersectionObserver;
+    window.IntersectionObserver =
+      class {} as unknown as typeof IntersectionObserver;
+    try {
+      component['updateDisplayedBooks']();
+      expect(component['availabilityVerificationQueue'][0]).toBe(
+        prioritizedBook.id,
+      );
+    } finally {
+      const timer = component['availabilityVerificationTimer'];
+      if (timer !== null) window.clearTimeout(timer);
+      component['availabilityVerificationTimer'] = null;
+      window.IntersectionObserver = originalIntersectionObserver;
+    }
+  });
+
   it('filters the loaded library by durable reading status', async () => {
     const unreadBook: BookRecord = {
       ...book,

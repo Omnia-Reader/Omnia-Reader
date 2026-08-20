@@ -893,6 +893,7 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         ? `Showing ${shown} of ${total} ${total === 1 ? 'book' : 'books'}`
         : `${total} ${total === 1 ? 'book' : 'books'}`;
     this.changeDetector.markForCheck();
+    this.enqueueCheckingAvailabilityVerification();
   }
 
   private rebuildLogicalCards(): void {
@@ -931,15 +932,30 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
 
   private enqueueCheckingAvailabilityVerification(): void {
     if (!this.document.defaultView?.IntersectionObserver) return;
-    for (const [variantId, availability] of this.availability) {
-      if (
-        availability.status === 'checking' &&
-        !this.availabilityVerificationInFlight.has(variantId) &&
-        !this.availabilityVerificationQueue.includes(variantId)
-      ) {
-        this.availabilityVerificationQueue.push(variantId);
-      }
-    }
+    const priorityVariantIds = this.displayedBooks.flatMap((card) =>
+      Object.values(card.variants)
+        .filter((variant): variant is BookRecord => !!variant)
+        .map((variant) => variant.id),
+    );
+    const eligible = (variantId: string) =>
+      this.availability.get(variantId)?.status === 'checking' &&
+      !this.availabilityVerificationInFlight.has(variantId);
+    const priority = [...new Set(priorityVariantIds)].filter(eligible);
+    const prioritySet = new Set(priority);
+    const queued = this.availabilityVerificationQueue.filter(
+      (variantId) => eligible(variantId) && !prioritySet.has(variantId),
+    );
+    const queuedSet = new Set([...priority, ...queued]);
+    const remaining = [...this.availability.keys()].filter(
+      (variantId) => eligible(variantId) && !queuedSet.has(variantId),
+    );
+    this.availabilityVerificationQueue.splice(
+      0,
+      this.availabilityVerificationQueue.length,
+      ...priority,
+      ...queued,
+      ...remaining,
+    );
     this.scheduleNextAvailabilityVerification();
   }
 

@@ -59,6 +59,19 @@
         "command": "PERFORMANCE_MANAGEMENT_DATASET_SMOKE=1 playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 performance-management.spec.ts"
       }
     },
+    "performance-management-branch-smoke": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "dependsOn": [
+        {
+          "projects": ["omnia-reader"],
+          "target": "build"
+        }
+      ],
+      "options": {
+        "command": "PERFORMANCE_MANAGEMENT_BRANCH_SMOKE=1 node node_modules/@playwright/test/cli.js test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 performance-management.spec.ts"
+      }
+    },
     "performance-desktop-web": {
       "executor": "nx:run-commands",
       "parallelism": false,
@@ -70,7 +83,7 @@
       "executor": "nx:run-commands",
       "parallelism": false,
       "options": {
-        "command": "node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs apps/omnia-reader-e2e/performance/management-workload.spec.mjs apps/omnia-reader-e2e/performance/management-dataset.spec.mjs apps/omnia-reader-e2e/performance/page-measurement.spec.mjs apps/omnia-reader-e2e/performance/primary-management-run.spec.mjs apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs"
+        "command": "node --test apps/omnia-reader-e2e/performance/validate-profile.spec.mjs apps/omnia-reader-e2e/performance/performance-evidence.spec.mjs apps/omnia-reader-e2e/performance/management-workload.spec.mjs apps/omnia-reader-e2e/performance/management-dataset.spec.mjs apps/omnia-reader-e2e/performance/page-measurement.spec.mjs apps/omnia-reader-e2e/performance/primary-management-run.spec.mjs apps/omnia-reader-e2e/performance/sampling-identity.spec.mjs apps/omnia-reader-e2e/performance/run-desktop-web.spec.mjs"
       }
     },
     "native": {

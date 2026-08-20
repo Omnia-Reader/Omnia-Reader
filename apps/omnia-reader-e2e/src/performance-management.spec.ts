@@ -1,7 +1,30 @@
+import { writeFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
-import { seedManagementDataset } from '../performance/management-dataset.mjs';
-import { measurePageAction } from '../performance/page-measurement.mjs';
+import {
+  createManagementSampleFixture,
+  prepareManagementBranchDataset,
+  seedManagementDataset,
+} from '../performance/management-dataset.mjs';
+import {
+  MANAGEMENT_BRANCHES,
+  MANAGEMENT_DISTRIBUTIONS,
+} from '../performance/management-branches.mjs';
+import {
+  PageMeasurementError,
+  measurePageAction,
+} from '../performance/page-measurement.mjs';
+import {
+  canonicalStringify,
+  readJsonFile,
+} from '../performance/performance-contract.mjs';
+import { runPrimaryManagementMeasurement } from '../performance/primary-management-run.mjs';
+import { captureSamplingIdentity } from '../performance/sampling-identity.mjs';
 import { createManagementWorkload } from '../performance/management-workload.mjs';
+import {
+  createManagementRestoreBackup,
+  runManagementBranchSample,
+} from './management-branch-driver';
+import { runManagementDistributionSample } from './management-distribution-driver';
 import { createEpubFixture, createPdfFixture } from './publication-fixtures';
 
 test('measures labelled management feedback and unpooled open/switch states', async ({
@@ -256,6 +279,227 @@ test('loads the exact full-cardinality dataset through repository validation', a
   ).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
 });
+
+test('exercises every management branch through labelled product controls', async ({
+  page,
+  browserName,
+}) => {
+  // This one-sample-per-branch journey proves real UI reachability and failure
+  // setup. It remains supplemental and cannot satisfy primary cardinality.
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip(
+    process.env['PERFORMANCE_MANAGEMENT_BRANCH_SMOKE'] !== '1',
+    'Run with the dedicated performance-management-branch-smoke target',
+  );
+  test.setTimeout(600_000);
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip(browserName !== 'chromium', 'The desktop profile uses Chromium');
+
+  const consoleErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => consoleErrors.push(error.message));
+
+  await page.goto('/');
+  const workload = createManagementWorkload();
+  await seedManagementDataset(page, workload);
+  const fixtures = await prepareManagementBranchDataset(page, workload);
+  const distributionFixture = await createManagementSampleFixture(
+    workload,
+    900,
+  );
+  const backup = await createManagementRestoreBackup(
+    fixtures['detach-failure'][0],
+  );
+  await page.reload();
+  await expect(page.getByTestId('library-book')).toHaveCount(1_040, {
+    timeout: 60_000,
+  });
+  for (const branch of MANAGEMENT_BRANCHES) {
+    await test.step(branch.id, async () => {
+      const measurement = await runManagementBranchSample(
+        page,
+        branch,
+        fixtures[branch.id][0],
+        backup,
+      );
+      expect(measurement.acknowledgementMs).toBeGreaterThanOrEqual(0);
+      expect(measurement.finalResultMs).toBeGreaterThanOrEqual(
+        measurement.acknowledgementMs,
+      );
+    });
+  }
+  for (const distribution of MANAGEMENT_DISTRIBUTIONS) {
+    await test.step(distribution.id, async () => {
+      const measurement = await runManagementDistributionSample(
+        page,
+        distribution,
+        distributionFixture,
+      );
+      expect(measurement.finalResultMs).toBeGreaterThanOrEqual(0);
+    });
+  }
+  expect(consoleErrors).toEqual([]);
+});
+
+test('writes the complete qualified desktop management result', async ({
+  page,
+  browser,
+  browserName,
+}) => {
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip(
+    process.env['PERFORMANCE_DESKTOP_WEB'] !== '1',
+    'Run through the qualified performance-desktop-web launcher',
+  );
+  test.setTimeout(4 * 60 * 60 * 1_000);
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip(browserName !== 'chromium', 'The desktop profile uses Chromium');
+
+  const profilePath = requiredEnvironmentPath(
+    'PERFORMANCE_DESKTOP_PROFILE_SET',
+  );
+  const environmentPath = requiredEnvironmentPath(
+    'PERFORMANCE_DESKTOP_ENVIRONMENT',
+  );
+  const workloadPath = requiredEnvironmentPath('PERFORMANCE_DESKTOP_WORKLOAD');
+  const rawResultPath = requiredEnvironmentPath(
+    'PERFORMANCE_DESKTOP_RAW_RESULT',
+  );
+  const [profileSet, environment, workload] = await Promise.all([
+    readJsonFile(profilePath),
+    readJsonFile(environmentPath),
+    readJsonFile(workloadPath),
+  ]);
+  const [width, height] = String(environment.values['environment.viewport'])
+    .split('x')
+    .map(Number);
+  await page.setViewportSize({ width, height });
+
+  const consoleErrors: string[] = [];
+  let missingAcknowledgements = 0;
+  let wrongResults = 0;
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => consoleErrors.push(error.message));
+  await installOverlapCounter(page);
+
+  await page.goto('/');
+  await seedManagementDataset(page, workload);
+  const fixtures = await prepareManagementBranchDataset(page, workload);
+  const distributionFixture = await createManagementSampleFixture(
+    workload,
+    900,
+  );
+  const backup = await createManagementRestoreBackup(
+    fixtures['detach-failure'][0],
+  );
+  await page.reload();
+  await expect(page.getByTestId('library-book')).toHaveCount(1_040, {
+    timeout: 60_000,
+  });
+
+  const samplingIdentity = await captureSamplingIdentity({
+    profileSet,
+    environment,
+    workload,
+    browserName,
+    browserVersion: browser.version(),
+    viewport: page.viewportSize(),
+    deviceScaleFactor: await page.evaluate(() => window.devicePixelRatio),
+  });
+  const counted = async <Result>(operation: () => Promise<Result>) => {
+    try {
+      return await operation();
+    } catch (error) {
+      const missingAcknowledgement = error instanceof PageMeasurementError;
+      missingAcknowledgements += Number(missingAcknowledgement);
+      wrongResults += Number(!missingAcknowledgement);
+      throw error;
+    }
+  };
+  const result = await runPrimaryManagementMeasurement({
+    profileSet,
+    environment,
+    workload,
+    samplingIdentity,
+    command:
+      'npx nx run omnia-reader-e2e:e2e -- --project=chromium --workers=1 performance-management.spec.ts',
+    runBranchSample: ({ branch, sampleIndex }) =>
+      counted(() =>
+        runManagementBranchSample(
+          page,
+          branch,
+          fixtures[branch.id][sampleIndex],
+          backup,
+        ),
+      ),
+    runDistributionSample: ({ distribution }) =>
+      counted(() =>
+        runManagementDistributionSample(
+          page,
+          distribution,
+          distributionFixture,
+        ),
+      ),
+    readCounters: async () => ({
+      consoleErrors: consoleErrors.length,
+      missingAcknowledgements,
+      overlappingEngines: await readOverlapCounter(page),
+      wrongResults,
+    }),
+  });
+  await writeFile(rawResultPath, `${canonicalStringify(result)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+    mode: 0o600,
+  });
+});
+
+function requiredEnvironmentPath(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+async function installOverlapCounter(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const storageKey = 'omnia.performance.overlapping-engines';
+    const start = () => {
+      let overlapping = false;
+      const inspect = () => {
+        const current =
+          document.querySelector(
+            '[data-testid="publication-viewport"] iframe',
+          ) !== null && document.querySelector('.pdfViewer canvas') !== null;
+        if (current && !overlapping) {
+          const count = Number(sessionStorage.getItem(storageKey) ?? '0');
+          sessionStorage.setItem(storageKey, String(count + 1));
+        }
+        overlapping = current;
+      };
+      const observer = new MutationObserver(inspect);
+      observer.observe(document.documentElement, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
+      inspect();
+    };
+    if (document.documentElement) start();
+    else addEventListener('DOMContentLoaded', start, { once: true });
+  });
+}
+
+function readOverlapCounter(page: Page): Promise<number> {
+  return page.evaluate(() =>
+    Number(
+      sessionStorage.getItem('omnia.performance.overlapping-engines') ?? '0',
+    ),
+  );
+}
 
 function readerSwitchSpec(format: 'epub' | 'pdf') {
   return {

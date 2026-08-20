@@ -131,6 +131,7 @@ export async function prepareManagementBranchDataset(page, workloadInput) {
       ordinal: start + index,
       title: logicalBook.title,
       logicalBookId: logicalBook.id,
+      logicalBook,
       epub: {
         record: batch.books[index * 2],
         binary: batch.binaries[index * 2],
@@ -282,6 +283,24 @@ export async function prepareManagementBranchDataset(page, workloadInput) {
     },
   );
   return fixtures;
+}
+
+export async function createManagementSampleFixture(workloadInput, ordinal) {
+  const workload = assertManagementWorkload(workloadInput);
+  if (!Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= 1_000) {
+    throw new RangeError('Invalid management sample fixture ordinal');
+  }
+  const template = await createPerformanceEpubTemplate();
+  const batch = createSeedBatch(workload, template, ordinal, 1);
+  const logicalBook = batch.logicalBooks[0];
+  return {
+    ordinal,
+    title: logicalBook.title,
+    logicalBookId: logicalBook.id,
+    logicalBook,
+    epub: { record: batch.books[0], binary: batch.binaries[0] },
+    pdf: { record: batch.books[1], binary: batch.binaries[1] },
+  };
 }
 
 function createSeedBatch(workload, epubTemplate, start, count) {

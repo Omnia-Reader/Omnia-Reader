@@ -310,9 +310,10 @@ function installMeasurement(spec) {
     if (state.startedAt === null) {
       finishError('page measurement timed out before activation');
     } else {
-      finishError(
-        'page measurement timed out before acknowledgement and final state',
-      );
+      const missing = [];
+      if (state.acknowledgementMs === null) missing.push('acknowledgement');
+      if (state.finalResultMs === null) missing.push('final state');
+      finishError(`page measurement timed out before ${missing.join(' and ')}`);
     }
   }, spec.timeoutMs);
   state.cleanup = () => {

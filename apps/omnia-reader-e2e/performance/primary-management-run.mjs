@@ -16,7 +16,7 @@ import {
   assertManagementContract,
 } from './management-branches.mjs';
 import { assertManagementWorkload } from './management-workload.mjs';
-import { evaluatePreflight } from './validate-profile.mjs';
+import { evaluatePreflight } from './profile-preflight.mjs';
 
 const RESULT_MAX_MS = 86_400_000;
 

@@ -21,7 +21,7 @@ import {
 } from './management-workload.mjs';
 
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
-const DEFAULT_PROCESS_TIMEOUT_MS = 30 * 60 * 1_000;
+const DEFAULT_PROCESS_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const TERMINATION_GRACE_MS = 1_000;
 const REPOSITORY_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
