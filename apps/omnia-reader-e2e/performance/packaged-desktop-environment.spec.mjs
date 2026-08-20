@@ -88,6 +88,26 @@ test('rejects debug substitution, archive packages, and embedded debug automatio
   }
 });
 
+test('rejects a raw ELF binary mislabeled as an AppImage', async () => {
+  const root = await temporaryDirectory('omnia-packaged-raw-elf-');
+  const bytes = Buffer.concat([
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+    Buffer.from('raw tauri binary'),
+  ]);
+  const sourcePath = join(root, 'mislabeled.AppImage');
+  await writeFile(sourcePath, bytes, { mode: 0o700 });
+  await assert.rejects(
+    preparePackagedDesktopApplication({
+      sourcePath,
+      destinationRoot: join(root, 'sessions'),
+      provenance: provenanceFixture(sourcePath, bytes),
+      platform: 'linux',
+      architecture: 'x64',
+    }),
+    /AppImage type-2 headers/,
+  );
+});
+
 test(
   'rejects source and destination link attacks without touching their targets',
   { skip: process.platform === 'win32' },
@@ -310,7 +330,9 @@ function observationFixture() {
 
 function appImageBytes(marker) {
   return Buffer.concat([
-    Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+    Buffer.from([
+      0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x41, 0x49, 0x02,
+    ]),
     Buffer.from(marker),
   ]);
 }

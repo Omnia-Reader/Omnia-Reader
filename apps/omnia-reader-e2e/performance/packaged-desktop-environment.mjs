@@ -354,14 +354,15 @@ async function assertReleaseApplicationBytes(path) {
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
   );
   try {
-    const header = Buffer.alloc(4);
+    const header = Buffer.alloc(11);
     const { bytesRead } = await handle.read(header, 0, header.length, 0);
     if (
-      bytesRead !== 4 ||
-      !header.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+      bytesRead !== header.length ||
+      !header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+      !header.subarray(8, 11).equals(Buffer.from([0x41, 0x49, 0x02]))
     ) {
       throw new EvidenceValidationError(
-        'AppImage must be an ELF executable',
+        'AppImage must contain the ELF and AppImage type-2 headers',
         'artifact',
       );
     }
