@@ -129,10 +129,12 @@ export function mergeLogicalBookChangesIntoState(
     }
     identities.set(change.changeId, identity);
   }
-  for (const change of orderChanges(
-    [...identities.values()].map(parseLogicalBookChange),
-  )) {
-    state = applyChange(state, change);
+  const parsedChanges = [...identities.values()].map(parseLogicalBookChange);
+  const changesById = new Map(
+    parsedChanges.map((change) => [change.changeId, change]),
+  );
+  for (const change of orderChanges(parsedChanges)) {
+    state = applyChange(state, change, changesById);
   }
   return canonicalizeLogicalBookState(state);
 }
@@ -154,6 +156,7 @@ export function logicalBookStateView(state: LogicalBookStateDocument): {
 function applyChange(
   state: LogicalBookStateDocument,
   change: LogicalBookChange,
+  changes: ReadonlyMap<string, LogicalBookChange>,
 ): LogicalBookStateDocument {
   const clock = clockOf(change);
   const books = new Map(state.books.map((entry) => [entry.book.id, entry]));
@@ -165,8 +168,14 @@ function applyChange(
 
   for (const logicalBookId of change.removedLogicalBookIds) {
     if (
-      !clockWins(clock, books.get(logicalBookId)?.clock) ||
-      !clockWins(clock, removedBooks.get(logicalBookId)?.clock)
+      !tombstoneClockWins(
+        clock,
+        books.get(logicalBookId)?.clock,
+        changes,
+        true,
+        false,
+      ) ||
+      !clockWins(clock, removedBooks.get(logicalBookId)?.clock, changes)
     )
       continue;
     candidateBooks.delete(logicalBookId);
@@ -179,8 +188,14 @@ function applyChange(
   }> = [];
   for (const proposed of change.resultingBooks) {
     if (
-      !clockWins(clock, books.get(proposed.id)?.clock) ||
-      !clockWins(clock, removedBooks.get(proposed.id)?.clock)
+      !clockWins(clock, books.get(proposed.id)?.clock, changes) ||
+      !tombstoneClockWins(
+        clock,
+        removedBooks.get(proposed.id)?.clock,
+        changes,
+        false,
+        true,
+      )
     )
       continue;
     const conflicts = membershipConflicts(proposed, candidateBooks);
@@ -234,7 +249,7 @@ function applyChange(
       conflictingChangeIds,
       affectedVariantIds,
     );
-    if (clockWins(clock, reconciliations.get(conflictId)?.clock)) {
+    if (clockWins(clock, reconciliations.get(conflictId)?.clock, changes)) {
       reconciliations.set(conflictId, {
         clock,
         reconciliation: {
@@ -255,7 +270,16 @@ function applyChange(
     state.preferences.map((entry) => [entry.logicalBookId, entry]),
   );
   for (const effect of change.preferenceEffects ?? []) {
-    if (clockWins(clock, preferences.get(effect.logicalBookId)?.clock)) {
+    const current = preferences.get(effect.logicalBookId);
+    if (
+      tombstoneClockWins(
+        clock,
+        current?.clock,
+        changes,
+        effect.preference === null,
+        current?.preference === null,
+      )
+    ) {
       preferences.set(effect.logicalBookId, {
         logicalBookId: effect.logicalBookId,
         preference: effect.preference,
@@ -265,7 +289,7 @@ function applyChange(
   }
   for (const conflictId of change.resolvesConflictIds ?? []) {
     const current = reconciliations.get(conflictId);
-    if (current && clockWins(clock, current.clock)) {
+    if (current && clockWins(clock, current.clock, changes)) {
       reconciliations.set(conflictId, {
         clock,
         reconciliation: {
@@ -290,8 +314,20 @@ function applyChange(
     const variantId =
       effect.operation === 'upsert' ? effect.variant.id : effect.variantId;
     if (
-      !clockWins(clock, variants.get(variantId)?.clock) ||
-      !clockWins(clock, removedVariants.get(variantId)?.clock)
+      !tombstoneClockWins(
+        clock,
+        variants.get(variantId)?.clock,
+        changes,
+        effect.operation === 'delete',
+        false,
+      ) ||
+      !tombstoneClockWins(
+        clock,
+        removedVariants.get(variantId)?.clock,
+        changes,
+        effect.operation === 'delete',
+        true,
+      )
     )
       continue;
     if (effect.operation === 'delete') {
@@ -548,7 +584,7 @@ function orderChanges(changes: LogicalBookChange[]): LogicalBookChange[] {
       ? -1
       : isAncestor(right.changeId, left.changeId, byId)
         ? 1
-        : compareClocks(clockOf(left), clockOf(right)),
+        : left.changeId.localeCompare(right.changeId),
   );
 }
 
@@ -578,8 +614,28 @@ function clockOf(change: LogicalBookChange): LogicalBookStateClock {
 function clockWins(
   candidate: LogicalBookStateClock,
   current?: LogicalBookStateClock,
+  changes: ReadonlyMap<string, LogicalBookChange> = new Map(),
 ): boolean {
-  return !current || compareClocks(candidate, current) > 0;
+  if (!current) return true;
+  if (candidate.changeId === current.changeId) return false;
+  if (isAncestor(current.changeId, candidate.changeId, changes)) return true;
+  if (isAncestor(candidate.changeId, current.changeId, changes)) return false;
+  return candidate.changeId.localeCompare(current.changeId) > 0;
+}
+
+function tombstoneClockWins(
+  candidate: LogicalBookStateClock,
+  current: LogicalBookStateClock | undefined,
+  changes: ReadonlyMap<string, LogicalBookChange>,
+  candidateIsTombstone: boolean,
+  currentIsTombstone: boolean,
+): boolean {
+  if (!current) return true;
+  if (candidate.changeId === current.changeId) return false;
+  if (isAncestor(current.changeId, candidate.changeId, changes)) return true;
+  if (isAncestor(candidate.changeId, current.changeId, changes)) return false;
+  if (candidateIsTombstone !== currentIsTombstone) return candidateIsTombstone;
+  return candidate.changeId.localeCompare(current.changeId) > 0;
 }
 
 function compareClocks(
@@ -587,10 +643,7 @@ function compareClocks(
   right?: LogicalBookStateClock,
 ): number {
   if (!right) return 1;
-  return (
-    left.createdAt.localeCompare(right.createdAt) ||
-    left.changeId.localeCompare(right.changeId)
-  );
+  return left.changeId.localeCompare(right.changeId);
 }
 
 function isClock(value: unknown): value is LogicalBookStateClock {

@@ -65,7 +65,7 @@ describe('canonical logical book state', () => {
     ).toThrow('schema validation');
   });
 
-  it('keeps deletion and preference-clear tombstones against stale changes', () => {
+  it('keeps concurrent deletion and preference tombstones against stale changes', () => {
     const preference = {
       schemaVersion: 1 as const,
       logicalBookId: logicalBook.id,
@@ -106,6 +106,34 @@ describe('canonical logical book state', () => {
     expect(state.removedBooks).toHaveLength(1);
     expect(state.removedVariants).toHaveLength(1);
     expect(state.preferences).toMatchObject([{ preference: null }]);
+  });
+
+  it('allows an explicit causal reimport after deletion', () => {
+    const removed: LogicalBookChange = {
+      ...baseChange('change:z-remove', '2026-08-03T10:00:00.000Z'),
+      kind: 'delete-book',
+      removedLogicalBookIds: [logicalBook.id],
+      variantEffects: [
+        { operation: 'delete', variantId: variant.id, format: 'epub' },
+      ],
+    };
+    const reimport: LogicalBookChange = {
+      ...upsertChange(),
+      changeId: 'change:a-reimport',
+      parents: [removed.changeId],
+      createdAt: '2026-08-03T08:00:00.000Z',
+    };
+    const removedState = mergeLogicalBookChangesIntoState(
+      emptyLogicalBookState(),
+      [upsertChange(), removed],
+    );
+
+    const state = mergeLogicalBookChangesIntoState(removedState, [reimport]);
+
+    expect(state.books).toMatchObject([{ book: logicalBook }]);
+    expect(state.variants).toMatchObject([{ variant }]);
+    expect(state.removedBooks).toEqual([]);
+    expect(state.removedVariants).toEqual([]);
   });
 
   it('replays the same immutable change idempotently', () => {
@@ -167,6 +195,58 @@ describe('canonical logical book state', () => {
         },
       },
     ]);
+  });
+
+  it('orders concurrent updates by change ID instead of untrusted device time', () => {
+    const lexicographicWinner = {
+      ...upsertChange(),
+      changeId: 'change:z-device',
+      createdAt: '2026-08-03T08:00:00.000Z',
+      resultingBooks: [{ ...logicalBook, title: 'Lexicographic winner' }],
+    };
+    const clockSkewedLoser = {
+      ...upsertChange(),
+      changeId: 'change:a-device',
+      createdAt: '2026-08-03T23:00:00.000Z',
+      resultingBooks: [{ ...logicalBook, title: 'Clock-skewed loser' }],
+    };
+
+    const forward = mergeLogicalBookChangesIntoState(emptyLogicalBookState(), [
+      lexicographicWinner,
+      clockSkewedLoser,
+    ]);
+    const reversed = mergeLogicalBookChangesIntoState(emptyLogicalBookState(), [
+      clockSkewedLoser,
+      lexicographicWinner,
+    ]);
+
+    expect(reversed).toEqual(forward);
+    expect(forward.books[0]?.book.title).toBe('Lexicographic winner');
+    expect(forward.books[0]?.clock.changeId).toBe('change:z-device');
+  });
+
+  it('lets a causal descendant win despite an older device timestamp and ID', () => {
+    const parent = {
+      ...upsertChange(),
+      changeId: 'change:z-parent',
+      createdAt: '2026-08-03T23:00:00.000Z',
+      resultingBooks: [{ ...logicalBook, title: 'Parent' }],
+    };
+    const descendant = {
+      ...upsertChange(),
+      changeId: 'change:a-descendant',
+      parents: [parent.changeId],
+      createdAt: '2026-08-03T08:00:00.000Z',
+      resultingBooks: [{ ...logicalBook, title: 'Descendant' }],
+    };
+
+    const state = mergeLogicalBookChangesIntoState(emptyLogicalBookState(), [
+      descendant,
+      parent,
+    ]);
+
+    expect(state.books[0]?.book.title).toBe('Descendant');
+    expect(state.books[0]?.clock.changeId).toBe(descendant.changeId);
   });
 });
 

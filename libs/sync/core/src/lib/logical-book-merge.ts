@@ -26,12 +26,12 @@ export function foldLogicalBookChanges(
       ? -1
       : isAncestor(right.changeId, left.changeId, byId)
         ? 1
-        : left.createdAt.localeCompare(right.createdAt) ||
-          left.changeId.localeCompare(right.changeId),
+        : left.changeId.localeCompare(right.changeId),
   );
   const books = new Map<string, LogicalBookRecord>();
   const preferences = new Map<string, LogicalBookFormatPreference>();
   const reconciliations = new Map<string, MembershipReconciliation>();
+  const applied: LogicalBookChange[] = [];
 
   for (const change of ordered) {
     const candidateBooks = new Map(books);
@@ -69,7 +69,7 @@ export function foldLogicalBookChanges(
       const conflictingChanges = [
         change.changeId,
         ...acceptedMembership.map((membership) =>
-          ownerChangeId(membership.logicalBookId, ordered),
+          ownerChangeId(membership.logicalBookId, applied),
         ),
       ];
       const affectedVariantIds = [
@@ -108,6 +108,7 @@ export function foldLogicalBookChanges(
         });
       }
     }
+    applied.push(change);
   }
 
   const parentIds = new Set(ordered.flatMap((change) => change.parents));

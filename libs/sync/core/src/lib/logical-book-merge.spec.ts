@@ -94,6 +94,34 @@ describe('logical book causal merge', () => {
       { logicalBookId: thirdId, format: 'pdf', variantId: pdfVariantId },
     ]);
   });
+
+  it('uses only already-applied ownership when deriving conflict identity', () => {
+    const accepted = change('change:a', [], [book(firstId)]);
+    const competing = change('change:m', [], [book(secondId)]);
+    const futureMetadata = {
+      ...change(
+        'change:z',
+        ['change:a'],
+        [{ ...book(firstId), title: 'Later metadata' }],
+      ),
+      kind: 'metadata' as const,
+    };
+
+    const prefix = foldLogicalBookChanges([accepted, competing]);
+    const complete = foldLogicalBookChanges([
+      accepted,
+      competing,
+      futureMetadata,
+    ]);
+
+    expect(complete.reconciliations[0]?.conflictId).toBe(
+      prefix.reconciliations[0]?.conflictId,
+    );
+    expect(complete.reconciliations[0]?.conflictingChangeIds).toEqual([
+      'change:a',
+      'change:m',
+    ]);
+  });
 });
 
 function book(id: LogicalBookRecord['id']): LogicalBookRecord {
