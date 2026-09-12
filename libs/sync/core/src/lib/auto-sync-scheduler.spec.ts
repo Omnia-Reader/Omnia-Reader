@@ -433,6 +433,47 @@ describe('AutoSyncScheduler', () => {
     expect(scheduler.status().phase).toBe('idle');
   });
 
+  it('coalesces a burst behind the retry deadline without creating a hot loop', async () => {
+    const environment = new FakeEnvironment();
+    const activity = new SyncActivityNotifier();
+    const synchronize = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Rate limited'), {
+          status: 429,
+          retryAfterSeconds: 120,
+        }),
+      )
+      .mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(environment, activity, synchronize);
+
+    scheduler.start();
+    environment.advance(0);
+    await flushPromises();
+
+    for (let index = 0; index < 100; index += 1) {
+      activity.notify({ kind: 'progress', entityId: `book-${index}` });
+      activity.notify({ kind: 'annotation', entityId: `annotation-${index}` });
+      activity.notify({ kind: 'book', entityId: `book-${index}` });
+    }
+
+    expect(scheduler.status()).toMatchObject({
+      phase: 'scheduled',
+      scheduledFor: new Date(120_000).toISOString(),
+    });
+    environment.advance(119_999);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(1);
+
+    environment.advance(1);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    expect(scheduler.status()).toMatchObject({
+      phase: 'idle',
+      reason: 'book-change',
+    });
+  });
+
   it('persists provider backoff across scheduler restarts', async () => {
     const rateLimitStore = new MemoryRateLimitStore();
     const firstEnvironment = new FakeEnvironment();
@@ -525,6 +566,48 @@ describe('AutoSyncScheduler', () => {
     expect(scheduler.status().transferProgress).toBeUndefined();
     expect(synchronize).toHaveBeenCalledTimes(1);
     expect(scheduler.cancelActive()).toBe(false);
+  });
+
+  it('starts one fresh attempt after cancellation and a scheduler restart', async () => {
+    const environment = new FakeEnvironment();
+    let firstSignal: AbortSignal | undefined;
+    const synchronize = vi
+      .fn<SyncWorker['synchronize']>()
+      .mockImplementationOnce(async (options) => {
+        firstSignal = options?.signal;
+        await new Promise<void>((_resolve, reject) => {
+          firstSignal?.addEventListener(
+            'abort',
+            () => reject(firstSignal?.reason),
+            { once: true },
+          );
+        });
+        return EMPTY_RESULT;
+      })
+      .mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(
+      environment,
+      new SyncActivityNotifier(),
+      synchronize,
+    );
+
+    scheduler.start();
+    environment.advance(0);
+    await flushPromises();
+    expect(scheduler.cancelActive()).toBe(true);
+    await flushPromises();
+    expect(scheduler.status().phase).toBe('cancelled');
+
+    scheduler.stop();
+    scheduler.start();
+    environment.advance(0);
+    await flushPromises();
+
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    expect(scheduler.status()).toMatchObject({
+      phase: 'idle',
+      reason: 'startup',
+    });
   });
 
   it('aborts an active transfer when the scheduler stops', async () => {

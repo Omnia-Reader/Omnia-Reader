@@ -341,22 +341,24 @@ describe('ChangeAwareSyncWorker', () => {
     );
   });
 
-  it('does not checkpoint a destination that keeps changing during convergence', async () => {
+  it('stops after one verification pass when the destination keeps changing', async () => {
     const delegate = worker();
     const checkpoints = checkpointStore('repository:main:old');
+    const remote = revisionTransport(
+      'repository:main:a',
+      'repository:main:b',
+      'repository:main:c',
+    );
     const sync = createWorker({
       delegate,
-      remote: revisionTransport(
-        'repository:main:a',
-        'repository:main:b',
-        'repository:main:c',
-      ),
+      remote,
       checkpoints,
     });
 
     await sync.synchronize();
 
     expect(delegate.synchronize).toHaveBeenCalledTimes(2);
+    expect(remote.destinationRevision).toHaveBeenCalledTimes(3);
     expect(checkpoints.write).toHaveBeenLastCalledWith('git', null);
   });
 
@@ -479,6 +481,46 @@ describe('ChangeAwareSyncWorker', () => {
       UNCHANGED_RESULT,
     ]);
     expect(remote.destinationRevision).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares cancellation across coalesced callers and permits a clean retry', async () => {
+    let firstProbe = true;
+    const controller = new AbortController();
+    const remote = revisionTransport('repository:main:a');
+    remote.destinationRevision.mockImplementation(async () => {
+      if (!firstProbe) {
+        return 'repository:main:a';
+      }
+      firstProbe = false;
+      await new Promise<void>((_resolve, reject) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => reject(controller.signal.reason),
+          { once: true },
+        );
+      });
+      return 'repository:main:a';
+    });
+    const sync = createWorker({
+      remote,
+      checkpoints: checkpointStore('repository:main:a'),
+    });
+
+    const first = sync.synchronize({ signal: controller.signal });
+    const coalesced = sync.synchronize();
+    await vi.waitFor(() => {
+      expect(remote.destinationRevision).toHaveBeenCalledTimes(1);
+    });
+    controller.abort(new DOMException('Cancelled', 'AbortError'));
+
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(coalesced).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(sync.synchronize()).resolves.toEqual(UNCHANGED_RESULT);
+
+    expect(remote.destinationRevision).toHaveBeenCalledTimes(2);
+    expect(remote.destinationRevision).toHaveBeenNthCalledWith(1, {
+      signal: controller.signal,
+    });
   });
 });
 

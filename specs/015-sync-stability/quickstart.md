@@ -131,6 +131,12 @@ Feature 015 preparation evidence on 2026-09-12:
   after-suite cardinality assertion turns any skipped convergence scenario into
   a failure. Workflow YAML parsing and Prettier validation passed locally; the
   new GitHub Actions jobs have not yet run remotely.
+- Retry-deadline coverage now coalesces 300 mixed local-change notifications
+  behind one 120-second provider deadline and proves exactly one retry starts at
+  the deadline. Cancellation is shared by coalesced change-aware callers, a
+  scheduler restart starts one clean attempt, and an unstable destination stops
+  after one bounded verification pass. `npx nx test sync-core --skip-nx-cache`
+  passed 214/214 tests.
 
 ## 2. Deterministic browser convergence
 
