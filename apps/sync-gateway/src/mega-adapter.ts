@@ -116,6 +116,13 @@ export class MegaSyncGatewayAdapter implements CredentialSyncGatewayAdapter {
     return url.toString();
   }
 
+  async pendingAuthorizationReturnTo(
+    sessionId: string,
+  ): Promise<string | null> {
+    const pending = await this.options.sessions.get(sessionId);
+    return typeof pending?.returnTo === 'string' ? pending.returnTo : null;
+  }
+
   async credentialAuthorizationPage(
     sessionId: string,
     parameters: Readonly<Record<string, string>>,

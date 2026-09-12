@@ -2,6 +2,7 @@
 identifier = "allow-sync-broker"
 description = "Allows the main reader window to use the provider-scoped native synchronization broker."
 commands.allow = [
+  "sync_authorization_begin",
   "sync_broker_status",
   "sync_destination_revision",
   "sync_list_documents",

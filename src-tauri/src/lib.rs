@@ -15,6 +15,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_fs::{FsExt, OpenOptions};
 use uuid::Uuid;
 
+mod native_handoff;
 mod sync_broker;
 
 #[cfg(desktop)]
@@ -528,13 +529,13 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
         let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
         let paths = desktop_argument_paths(arguments.iter().map(PathBuf::from), Path::new(&cwd));
+        let urls = arguments
+            .iter()
+            .filter_map(|argument| tauri::Url::parse(argument).ok())
+            .collect::<Vec<_>>();
         emit_opened_publications(app, paths);
-        emit_opened_book_deep_links(
-            app,
-            arguments
-                .iter()
-                .filter_map(|argument| tauri::Url::parse(argument).ok()),
-        );
+        emit_opened_book_deep_links(app, urls.iter().cloned());
+        native_handoff::emit_native_authorization_deep_links(app, urls);
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
             let _ = window.set_focus();
@@ -548,6 +549,7 @@ pub fn run() {
         .manage(PublicationSources::default())
         .manage(BookDeepLinks::default())
         .manage(BackupExports::default())
+        .manage(native_handoff::NativeAuthorizationState::default())
         .manage(sync_broker);
     #[cfg(all(desktop, feature = "native-e2e"))]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
@@ -558,16 +560,23 @@ pub fn run() {
                 let paths = startup_publication_paths();
                 let _ = register_opened_publications(app.handle(), paths);
                 let urls = startup_book_deep_links();
-                let _ = register_book_deep_links(app.handle(), urls);
+                let _ = register_book_deep_links(app.handle(), urls.iter().cloned());
+                native_handoff::emit_native_authorization_deep_links(app.handle(), urls);
             }
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
             if let Some(urls) = app.deep_link().get_current()? {
-                let _ = register_book_deep_links(app.handle(), urls);
+                let _ = register_book_deep_links(app.handle(), urls.iter().cloned());
+                native_handoff::emit_native_authorization_deep_links(app.handle(), urls);
             }
             let deep_link_app = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
-                emit_opened_book_deep_links(&deep_link_app, event.urls().iter().cloned());
+                let urls = event.urls();
+                emit_opened_book_deep_links(&deep_link_app, urls.iter().cloned());
+                native_handoff::emit_native_authorization_deep_links(
+                    &deep_link_app,
+                    urls.iter().cloned(),
+                );
             });
             Ok(())
         })
@@ -585,6 +594,7 @@ pub fn run() {
             commit_backup_export,
             pick_publications,
             read_publication,
+            native_handoff::sync_authorization_begin,
             sync_broker::sync_broker_status,
             sync_broker::sync_cancel_request,
             sync_broker::sync_delete_document,
@@ -615,6 +625,7 @@ pub fn run() {
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
         if let tauri::RunEvent::Opened { urls } = _event {
             emit_opened_book_deep_links(_app, urls.iter().cloned());
+            native_handoff::emit_native_authorization_deep_links(_app, urls.iter().cloned());
             emit_opened_publications(_app, urls.into_iter().map(FilePath::Url));
         }
     });

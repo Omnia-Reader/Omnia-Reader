@@ -48,6 +48,13 @@ hard-coded encryption secret.
 The handoff never contains provider tokens, gateway cookies, reusable session
 material, account passwords, or publication content.
 
+The system-browser flow uses a dedicated provider-scoped pending cookie, so it
+does not overwrite an existing browser/PWA session. Successful callbacks move
+the authenticated replacement session identifier directly into an encrypted
+five-minute handoff record and clear the pending browser cookie. Redemption is
+an atomic get-and-delete operation in memory, the single-node encrypted file
+store, or Redis; a replay cannot produce another provider cookie.
+
 ## Proof-first gate
 
 Before completing the full transport, a packaged Linux application and Android

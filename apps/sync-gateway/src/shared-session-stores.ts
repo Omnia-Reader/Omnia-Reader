@@ -8,6 +8,10 @@ import {
 import type { GitHubSessionState } from './github-adapter.js';
 import type { MegaSessionState } from './mega-adapter.js';
 import {
+  NativeAuthorizationHandoffs,
+  type NativeHandoffRecord,
+} from './native-handoff.js';
+import {
   EncryptedFileSessionStore,
   EncryptedMemorySessionStore,
   EncryptedRedisSessionStore,
@@ -20,6 +24,7 @@ export interface GatewaySessionStores {
   github?: GatewaySessionStore<GitHubSessionState>;
   githubRevocations?: GitHubAuthorizationRevocationStore;
   mega?: GatewaySessionStore<MegaSessionState>;
+  nativeHandoffs?: NativeAuthorizationHandoffs;
   ready(): Promise<void>;
   close(): Promise<void>;
 }
@@ -75,6 +80,7 @@ export async function gatewaySessionStoresFromEnvironment(
   );
   const redisUrl = environment['OMNIA_SYNC_REDIS_URL'];
   const sessionDirectory = environment['OMNIA_SYNC_SESSION_DIRECTORY'];
+  const nativeRedirectScheme = environment['OMNIA_SYNC_NATIVE_REDIRECT_SCHEME'];
   if (redisUrl && sessionDirectory) {
     throw new TypeError(
       'Configure either OMNIA_SYNC_REDIS_URL or OMNIA_SYNC_SESSION_DIRECTORY, not both',
@@ -90,6 +96,15 @@ export async function gatewaySessionStoresFromEnvironment(
       );
     }
     const directory = resolve(sessionDirectory);
+    const nativeHandoffs = nativeRedirectScheme
+      ? new NativeAuthorizationHandoffs({
+          store: new EncryptedFileSessionStore<NativeHandoffRecord>(keys, {
+            filePath: resolve(directory, 'native-handoffs.json'),
+            ttlMs: 10 * 60 * 1000,
+          }),
+          redirectScheme: nativeRedirectScheme,
+        })
+      : undefined;
     return {
       github: new EncryptedFileSessionStore(keys, {
         filePath: resolve(directory, 'github-sessions.json'),
@@ -100,15 +115,25 @@ export async function gatewaySessionStoresFromEnvironment(
         filePath: resolve(directory, 'mega-sessions.json'),
         ttlMs,
       }),
+      ...(nativeHandoffs ? { nativeHandoffs } : {}),
       ready: async () => undefined,
       close: async () => undefined,
     };
   }
   if (!redisUrl) {
+    const nativeHandoffs = nativeRedirectScheme
+      ? new NativeAuthorizationHandoffs({
+          store: new EncryptedMemorySessionStore<NativeHandoffRecord>(keys, {
+            ttlMs: 10 * 60 * 1000,
+          }),
+          redirectScheme: nativeRedirectScheme,
+        })
+      : undefined;
     return {
       github: new EncryptedMemorySessionStore(keys, { ttlMs }),
       githubRevocations: new MemoryGitHubAuthorizationRevocationStore(),
       mega: new EncryptedMemorySessionStore(keys, { ttlMs }),
+      ...(nativeHandoffs ? { nativeHandoffs } : {}),
       ready: async () => undefined,
       close: async () => undefined,
     };
@@ -144,6 +169,19 @@ export async function gatewaySessionStoresFromEnvironment(
 
   const prefix = environment['OMNIA_SYNC_REDIS_PREFIX'] ?? 'omnia:sync:v1';
   let closed = false;
+  const nativeHandoffs = nativeRedirectScheme
+    ? new NativeAuthorizationHandoffs({
+        store: new EncryptedRedisSessionStore<NativeHandoffRecord>(
+          client,
+          keys,
+          {
+            prefix: `${prefix}:native-handoffs`,
+            ttlMs: 10 * 60 * 1000,
+          },
+        ),
+        redirectScheme: nativeRedirectScheme,
+      })
+    : undefined;
   return {
     github: new EncryptedRedisSessionStore(client, keys, {
       prefix: `${prefix}:github`,
@@ -156,6 +194,7 @@ export async function gatewaySessionStoresFromEnvironment(
       prefix: `${prefix}:mega`,
       ttlMs,
     }),
+    ...(nativeHandoffs ? { nativeHandoffs } : {}),
     ready: async () => {
       await client.ping();
     },

@@ -54,6 +54,13 @@ pub(crate) enum Provider {
 }
 
 impl Provider {
+    pub(crate) fn ipc_name(self) -> &'static str {
+        match self {
+            Self::Git => "git",
+            Self::Mega => "mega",
+        }
+    }
+
     fn base_path(self) -> &'static str {
         match self {
             Self::Git => "/api/sync/github",
@@ -99,11 +106,15 @@ pub(crate) struct BrokerError {
 }
 
 impl BrokerError {
-    fn new(code: &'static str) -> Self {
+    pub(crate) fn new(code: &'static str) -> Self {
         Self {
             code,
             retry_after_seconds: None,
         }
+    }
+
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
     }
 
     fn rate_limited(seconds: Option<u64>) -> Self {
@@ -114,7 +125,7 @@ impl BrokerError {
     }
 }
 
-type BrokerResult<T> = Result<T, BrokerError>;
+pub(crate) type BrokerResult<T> = Result<T, BrokerError>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -184,6 +195,21 @@ pub(crate) struct RemoteObject {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrokerStatus {
     gateway_origin: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativeHandoffResponse {
+    authenticated: bool,
+    outcome: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeAuthorizationOutcome {
+    Authorized,
+    Denied,
+    Invalid,
+    Failed,
 }
 
 #[derive(Debug, Serialize)]
@@ -351,7 +377,7 @@ impl SyncBroker {
         broker
     }
 
-    fn from_origin(value: &str, allow_insecure_loopback: bool) -> BrokerResult<Self> {
+    pub(crate) fn from_origin(value: &str, allow_insecure_loopback: bool) -> BrokerResult<Self> {
         let origin = exact_origin(value, allow_insecure_loopback)?;
         let origin_string = origin.origin().ascii_serialization();
         let origin_header = HeaderValue::from_str(&origin_string)
@@ -374,6 +400,57 @@ impl SyncBroker {
         Ok(BrokerStatus {
             gateway_origin: self.origin.origin().ascii_serialization(),
         })
+    }
+
+    pub(crate) fn native_authorization_url(
+        &self,
+        provider: Provider,
+        request_id: &str,
+    ) -> BrokerResult<String> {
+        validate_request_id(request_id)?;
+        Ok(self
+            .url(provider, "/native/auth/start", &[("requestId", request_id)])?
+            .to_string())
+    }
+
+    pub(crate) async fn redeem_native_authorization(
+        &self,
+        provider: Provider,
+        request_id: &str,
+        handoff_id: &str,
+    ) -> BrokerResult<NativeAuthorizationOutcome> {
+        validate_request_id(request_id)?;
+        if handoff_id.len() != 43
+            || !handoff_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(BrokerError::new("authentication-required"));
+        }
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Redemption<'a> {
+            handoff_id: &'a str,
+            native_request_id: &'a str,
+        }
+
+        let builder = self
+            .request(Method::POST, provider, "/native/auth/redeem", &[])?
+            .json(&Redemption {
+                handoff_id,
+                native_request_id: request_id,
+            });
+        let broker_request_id = format!("native-handoff-{}", Uuid::new_v4());
+        let (_, response): (_, NativeHandoffResponse) = self
+            .json(&broker_request_id, builder, &[], MAX_DOCUMENT_BYTES)
+            .await?;
+        match (response.authenticated, response.outcome.as_deref()) {
+            (true, None) => Ok(NativeAuthorizationOutcome::Authorized),
+            (false, Some("denied")) => Ok(NativeAuthorizationOutcome::Denied),
+            (false, Some("invalid")) => Ok(NativeAuthorizationOutcome::Invalid),
+            (false, Some("failed")) => Ok(NativeAuthorizationOutcome::Failed),
+            _ => Err(BrokerError::new("invalid-response")),
+        }
     }
 
     fn ensure_open(&self) -> BrokerResult<()> {
@@ -1231,7 +1308,11 @@ pub(crate) fn sync_cancel_request(
 }
 
 #[tauri::command]
-pub(crate) fn sync_teardown(broker: State<'_, SyncBroker>) -> BrokerResult<()> {
+pub(crate) fn sync_teardown(
+    broker: State<'_, SyncBroker>,
+    authorizations: State<'_, crate::native_handoff::NativeAuthorizationState>,
+) -> BrokerResult<()> {
+    authorizations.clear();
     broker.teardown()
 }
 

@@ -30,6 +30,10 @@ describe('EncryptedMemorySessionStore', () => {
     await expect(store.get('session-b')).resolves.toEqual({
       token: 'rotated',
     });
+    await expect(store.take('session-b')).resolves.toEqual({
+      token: 'rotated',
+    });
+    await expect(store.take('session-b')).resolves.toBeNull();
 
     now = 1_101;
     await expect(store.get('session-b')).resolves.toBeNull();
@@ -74,6 +78,12 @@ describe('EncryptedRedisSessionStore', () => {
     await expect(
       first.move('session-a', 'session-c', { token: 'replayed' }),
     ).rejects.toThrow('Provider session is invalid');
+
+    await second.set('single-use', { token: 'consume-once' });
+    await expect(first.take('single-use')).resolves.toEqual({
+      token: 'consume-once',
+    });
+    await expect(second.take('single-use')).resolves.toBeNull();
   });
 
   it('re-encrypts previous-key sessions without extending their TTL', async () => {
@@ -122,6 +132,10 @@ describe('EncryptedFileSessionStore', () => {
       await expect(first.get('session-b')).resolves.toEqual({
         token: 'rotated',
       });
+      await expect(first.take('session-b')).resolves.toEqual({
+        token: 'rotated',
+      });
+      await expect(first.take('session-b')).resolves.toBeNull();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -176,6 +190,12 @@ class FakeRedisClient implements RedisSessionClient {
 
   async get(key: string): Promise<string | null> {
     return this.active(key)?.value ?? null;
+  }
+
+  async getDel(key: string): Promise<string | null> {
+    const value = this.active(key)?.value ?? null;
+    this.records.delete(key);
+    return value;
   }
 
   async set(

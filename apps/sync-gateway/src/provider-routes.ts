@@ -12,6 +12,7 @@ import {
   supportsDestinationCreation,
   supportsDestinationRevision,
 } from './gateway-contract.js';
+import { NativeAuthorizationHandoffs } from './native-handoff.js';
 import {
   logicalSyncPath,
   requireSameOriginFormSubmission,
@@ -24,6 +25,7 @@ interface ProviderRouteOptions {
   adapter: SyncGatewayAdapter;
   secureCookies: boolean;
   maxPublicationBytes: number;
+  nativeHandoffs?: NativeAuthorizationHandoffs;
 }
 
 interface ProviderNames {
@@ -69,20 +71,64 @@ export async function registerProviderRoutes(
 ): Promise<void> {
   const names = NAMES[options.kind];
   const cookieName = `omnia_sync_${options.kind}`;
+  const nativeCookieName = `${cookieName}_native`;
 
   app.get('/session', async (request, reply) => {
     const sessionId = session(request, reply, cookieName, options);
     return options.adapter.session(sessionId);
   });
 
+  if (options.nativeHandoffs) {
+    const nativeHandoffs = options.nativeHandoffs;
+    app.get<{ Querystring: { requestId?: string } }>(
+      '/native/auth/start',
+      async (request, reply) => {
+        const nativeRequestId = request.query.requestId ?? '';
+        const returnTo = nativeHandoffs.authorizationReturnTo(
+          options.kind,
+          nativeRequestId,
+        );
+        const sessionId = randomUUID();
+        setSessionCookie(reply, nativeCookieName, sessionId, options);
+        authorizationHeaders(reply);
+        const target = await options.adapter.authorizationUrl(
+          sessionId,
+          returnTo,
+        );
+        return reply.redirect(target);
+      },
+    );
+
+    app.post('/native/auth/redeem', async (request, reply) => {
+      requireSameOriginMutation(request);
+      authorizationHeaders(reply);
+      const redemption = nativeHandoffRedemption(request.body);
+      const result = await nativeHandoffs.consume(
+        { provider: options.kind, ...redemption },
+        (sessionId) => options.adapter.disconnect(sessionId),
+      );
+      if (result.outcome !== 'authorized' || !result.sessionId) {
+        return { authenticated: false, outcome: result.outcome };
+      }
+      setSessionCookie(reply, cookieName, result.sessionId, options);
+      return { authenticated: true };
+    });
+  }
+
   app.get<{ Querystring: { returnTo?: string } }>(
     '/auth/start',
     async (request, reply) => {
       const sessionId = session(request, reply, cookieName, options);
+      if (options.nativeHandoffs) {
+        clearSessionCookie(reply, nativeCookieName, options);
+      }
       authorizationHeaders(reply);
       const target = await options.adapter.authorizationUrl(
         sessionId,
-        safeReturnPath(request.query.returnTo),
+        browserAuthorizationReturnTo(
+          options,
+          safeReturnPath(request.query.returnTo),
+        ),
       );
       return reply.redirect(target);
     },
@@ -93,10 +139,16 @@ export async function registerProviderRoutes(
     app.get<{ Querystring: Record<string, string | undefined> }>(
       '/auth/login',
       async (request, reply) => {
-        const sessionId = session(request, reply, cookieName, options);
+        const authorization = authorizationSession(
+          request,
+          reply,
+          cookieName,
+          nativeCookieName,
+          options,
+        );
         const parameters = boundedStringRecord(request.query);
         const page = await credentialAdapter.credentialAuthorizationPage(
-          sessionId,
+          authorization.sessionId,
           parameters,
         );
         authorizationHeaders(reply);
@@ -108,20 +160,53 @@ export async function registerProviderRoutes(
 
     app.post('/auth/login', async (request, reply) => {
       requireSameOriginFormSubmission(request);
-      const sessionId = session(request, reply, cookieName, options);
+      const authorization = authorizationSession(
+        request,
+        reply,
+        cookieName,
+        nativeCookieName,
+        options,
+      );
+      const sessionId = authorization.sessionId;
       const replacementSessionId = randomUUID();
       const parameters = boundedStringRecord(request.body);
+      const pendingReturnTo = await pendingAuthorizationReturnTo(
+        credentialAdapter,
+        sessionId,
+      );
       try {
         const returnTo = await credentialAdapter.completeAuthorization(
           sessionId,
           replacementSessionId,
           parameters,
         );
+        if (
+          await redirectNativeAuthorizationSuccess(
+            reply,
+            authorization.cookieName,
+            options,
+            returnTo,
+            replacementSessionId,
+          )
+        ) {
+          return reply;
+        }
         setSessionCookie(reply, cookieName, replacementSessionId, options);
         return reply.redirect(safeReturnPath(returnTo), 303);
       } catch (error) {
         if (!(error instanceof GatewayHttpError)) {
           throw error;
+        }
+        if (
+          await redirectNativeAuthorizationFailure(
+            reply,
+            authorization.cookieName,
+            options,
+            pendingReturnTo,
+            error,
+          )
+        ) {
+          return reply;
         }
         const page = await credentialAdapter.credentialAuthorizationPage(
           sessionId,
@@ -141,13 +226,24 @@ export async function registerProviderRoutes(
   app.get<{ Querystring: Record<string, string | undefined> }>(
     '/auth/callback',
     async (request, reply) => {
-      const sessionId = session(request, reply, cookieName, options);
+      const authorization = authorizationSession(
+        request,
+        reply,
+        cookieName,
+        nativeCookieName,
+        options,
+      );
+      const sessionId = authorization.sessionId;
       const replacementSessionId = randomUUID();
       const parameters = Object.fromEntries(
         Object.entries(request.query).filter(
           (entry): entry is [string, string] =>
             typeof entry[1] === 'string' && entry[1].length <= 4096,
         ),
+      );
+      const pendingReturnTo = await pendingAuthorizationReturnTo(
+        options.adapter,
+        sessionId,
       );
       authorizationHeaders(reply);
       try {
@@ -156,11 +252,33 @@ export async function registerProviderRoutes(
           replacementSessionId,
           parameters,
         );
+        if (
+          await redirectNativeAuthorizationSuccess(
+            reply,
+            authorization.cookieName,
+            options,
+            returnTo,
+            replacementSessionId,
+          )
+        ) {
+          return reply;
+        }
         setSessionCookie(reply, cookieName, replacementSessionId, options);
         return reply.redirect(safeReturnPath(returnTo));
       } catch (error) {
         if (!(error instanceof GatewayHttpError)) {
           throw error;
+        }
+        if (
+          await redirectNativeAuthorizationFailure(
+            reply,
+            authorization.cookieName,
+            options,
+            pendingReturnTo,
+            error,
+          )
+        ) {
+          return reply;
         }
         clearSessionCookie(reply, cookieName, options);
         const outcome =
@@ -458,6 +576,115 @@ function optionalLookup(value: string | undefined): boolean {
   return true;
 }
 
+function nativeHandoffRedemption(value: unknown): {
+  handoffId: string;
+  nativeRequestId: string;
+} {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some(
+      (key) => key !== 'handoffId' && key !== 'nativeRequestId',
+    ) ||
+    typeof value['handoffId'] !== 'string' ||
+    typeof value['nativeRequestId'] !== 'string'
+  ) {
+    throw new GatewayHttpError(400, 'Native authorization request is invalid');
+  }
+  return {
+    handoffId: value['handoffId'],
+    nativeRequestId: value['nativeRequestId'],
+  };
+}
+
+function browserAuthorizationReturnTo(
+  options: ProviderRouteOptions,
+  returnTo: string,
+): string {
+  return options.nativeHandoffs?.requestFromReturnTo(options.kind, returnTo)
+    ? '/settings/sync'
+    : returnTo;
+}
+
+function authorizationSession(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  cookieName: string,
+  nativeCookieName: string,
+  options: ProviderRouteOptions,
+): { sessionId: string; cookieName: string } {
+  const nativeSessionId = validSessionId(request.cookies[nativeCookieName]);
+  if (nativeSessionId) {
+    return { sessionId: nativeSessionId, cookieName: nativeCookieName };
+  }
+  return {
+    sessionId: session(request, reply, cookieName, options),
+    cookieName,
+  };
+}
+
+async function pendingAuthorizationReturnTo(
+  adapter: SyncGatewayAdapter,
+  sessionId: string,
+): Promise<string | null> {
+  return adapter.pendingAuthorizationReturnTo?.(sessionId) ?? null;
+}
+
+async function redirectNativeAuthorizationSuccess(
+  reply: FastifyReply,
+  cookieName: string,
+  options: ProviderRouteOptions,
+  returnTo: string,
+  replacementSessionId: string,
+): Promise<boolean> {
+  const nativeRequestId = options.nativeHandoffs?.requestFromReturnTo(
+    options.kind,
+    returnTo,
+  );
+  if (!nativeRequestId || !options.nativeHandoffs) {
+    return false;
+  }
+  try {
+    const issued = await options.nativeHandoffs.issue({
+      provider: options.kind,
+      nativeRequestId,
+      sessionId: replacementSessionId,
+    });
+    clearSessionCookie(reply, cookieName, options);
+    reply.redirect(issued.deepLink, 303);
+    return true;
+  } catch (error) {
+    await options.adapter
+      .disconnect(replacementSessionId)
+      .catch(() => undefined);
+    throw error;
+  }
+}
+
+async function redirectNativeAuthorizationFailure(
+  reply: FastifyReply,
+  cookieName: string,
+  options: ProviderRouteOptions,
+  returnTo: string | null,
+  error: GatewayHttpError,
+): Promise<boolean> {
+  const nativeRequestId = returnTo
+    ? options.nativeHandoffs?.requestFromReturnTo(options.kind, returnTo)
+    : null;
+  if (!nativeRequestId || !options.nativeHandoffs) {
+    return false;
+  }
+  const outcome =
+    error instanceof AuthorizationHttpError ? error.outcome : 'failed';
+  const issued = await options.nativeHandoffs.issueFailure({
+    provider: options.kind,
+    nativeRequestId,
+    outcome,
+  });
+  clearSessionCookie(reply, cookieName, options);
+  reply.redirect(issued.deepLink, 303);
+  return true;
+}
+
 function authorizationHeaders(reply: FastifyReply): void {
   reply.header('Cache-Control', 'no-store');
   reply.header('Pragma', 'no-cache');
@@ -543,18 +770,22 @@ function session(
   cookieName: string,
   options: ProviderRouteOptions,
 ): string {
-  const existing = request.cookies[cookieName];
-  if (
-    existing &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-      existing,
-    )
-  ) {
+  const existing = validSessionId(request.cookies[cookieName]);
+  if (existing) {
     return existing;
   }
   const created = randomUUID();
   setSessionCookie(reply, cookieName, created, options);
   return created;
+}
+
+function validSessionId(value: string | undefined): string | null {
+  return value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value,
+    )
+    ? value
+    : null;
 }
 
 function setSessionCookie(

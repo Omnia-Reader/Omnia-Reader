@@ -116,6 +116,14 @@ by the host platform. A host without that facility keeps authority process-local
 and requires safe reauthentication after restart while retaining local data and
 pending operations.
 
+The implemented authorization handoff reuses the encrypted gateway session
+stores with an atomic consume operation rather than adding a second plaintext
+authority store. OAuth completion places only the random replacement session
+identifier, provider, native request binding, sanitized outcome, and expiry in
+the encrypted handoff. A dedicated pending browser cookie avoids replacing an
+existing browser/PWA session; the callback clears it before opening the exact
+`omnia-reader://sync-auth/<provider>` deep link.
+
 Primary platform references: [Tauri localhost plugin](https://v2.tauri.app/plugin/localhost/),
 [HTTP client plugin](https://v2.tauri.app/plugin/http-client/),
 [HTTP guest-JS source](https://github.com/tauri-apps/plugins-workspace/blob/v2/plugins/http/guest-js/index.ts),

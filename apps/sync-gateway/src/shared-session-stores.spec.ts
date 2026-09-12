@@ -19,6 +19,24 @@ describe('gatewaySessionStoresFromEnvironment', () => {
       authorizationState: 'github-state',
     });
     await expect(stores.mega?.get('session-a')).resolves.toBeNull();
+    const issued = await stores.nativeHandoffs?.issue({
+      provider: 'github',
+      nativeRequestId: 'native-request-1234',
+      sessionId: 'native-session-1234',
+    });
+    const handoffId = new URL(issued?.deepLink as string).searchParams.get(
+      'handoffId',
+    ) as string;
+    await expect(
+      stores.nativeHandoffs?.consume({
+        provider: 'github',
+        nativeRequestId: 'native-request-1234',
+        handoffId,
+      }),
+    ).resolves.toEqual({
+      outcome: 'authorized',
+      sessionId: 'native-session-1234',
+    });
     await expect(
       stores.githubRevocations?.revoke(42, 'delivery-memory'),
     ).resolves.toBe(true);
@@ -56,6 +74,21 @@ describe('gatewaySessionStoresFromEnvironment', () => {
     await expect(stores.mega?.get('session-a')).resolves.toEqual({
       authorizationState: 'mega-state',
     });
+    const issued = await stores.nativeHandoffs?.issue({
+      provider: 'github',
+      nativeRequestId: 'native-request-1234',
+      sessionId: 'native-session-1234',
+    });
+    const handoffId = new URL(issued?.deepLink as string).searchParams.get(
+      'handoffId',
+    ) as string;
+    await expect(
+      stores.nativeHandoffs?.consume({
+        provider: 'github',
+        nativeRequestId: 'native-request-1234',
+        handoffId,
+      }),
+    ).resolves.toMatchObject({ outcome: 'authorized' });
     await expect(
       stores.githubRevocations?.revoke(42, 'delivery-redis'),
     ).resolves.toBe(true);
@@ -166,6 +199,31 @@ describe.skipIf(!process.env['OMNIA_SYNC_REDIS_TEST_URL'])(
         await expect(first.github?.get('session-b')).resolves.toEqual({
           authorizationState: 'rotated-state',
         });
+        const issued = await first.nativeHandoffs?.issue({
+          provider: 'github',
+          nativeRequestId: 'native-request-shared',
+          sessionId: 'native-session-shared',
+        });
+        const handoffId = new URL(issued?.deepLink as string).searchParams.get(
+          'handoffId',
+        ) as string;
+        await expect(
+          second.nativeHandoffs?.consume({
+            provider: 'github',
+            nativeRequestId: 'native-request-shared',
+            handoffId,
+          }),
+        ).resolves.toEqual({
+          outcome: 'authorized',
+          sessionId: 'native-session-shared',
+        });
+        await expect(
+          first.nativeHandoffs?.consume({
+            provider: 'github',
+            nativeRequestId: 'native-request-shared',
+            handoffId,
+          }),
+        ).rejects.toThrow('handoff is unavailable');
         await expect(
           first.github?.move('session-a', 'session-c', {
             authorizationState: 'replayed-state',
@@ -257,6 +315,7 @@ function environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     OMNIA_GITHUB_CLIENT_ID: 'configured',
     OMNIA_SYNC_SESSION_KEY: Buffer.alloc(32, 7).toString('base64'),
+    OMNIA_SYNC_NATIVE_REDIRECT_SCHEME: 'omnia-reader',
     ...overrides,
   };
 }
@@ -301,6 +360,12 @@ class FakeSharedRedisClient implements SharedRedisClient {
 
   async get(key: string): Promise<string | null> {
     return this.records.get(key)?.value ?? null;
+  }
+
+  async getDel(key: string): Promise<string | null> {
+    const value = this.records.get(key)?.value ?? null;
+    this.records.delete(key);
+    return value;
   }
 
   async set(

@@ -85,6 +85,7 @@ OMNIA_GITHUB_REQUEST_TIMEOUT_MS=60000
 OMNIA_GITHUB_TRANSFER_TIMEOUT_MS=21600000
 OMNIA_GITHUB_WEBHOOK_SECRET=<independent random secret; production webhook only>
 OMNIA_SYNC_SESSION_KEY=<base64 encoding of exactly 32 random bytes>
+OMNIA_SYNC_NATIVE_REDIRECT_SCHEME=omnia-reader
 ```
 
 Generate a session key with `openssl rand -base64 32`. The application stores
@@ -190,6 +191,31 @@ The session endpoint reports `{ "configured": false, "authenticated": false }`
 when no GitHub App credentials are present. The Settings page keeps the user in
 the app and explains the missing setup instead of navigating to a failed
 authorization response.
+
+### Packaged-host authorization handoff
+
+When `OMNIA_SYNC_NATIVE_REDIRECT_SCHEME` is configured, each provider exposes a
+native authorization start and redemption route. The configured value must be
+the exact non-HTTP application scheme registered by the packaged host; the
+checked-in Tauri application uses `omnia-reader`.
+
+`GET /api/sync/<provider>/native/auth/start?requestId=<opaque-binding>` starts
+the existing provider authorization flow with a dedicated provider-scoped
+pending cookie. It does not reuse or replace the normal browser/PWA session.
+After successful provider completion, the gateway stores the authenticated
+replacement session identifier in a five-minute encrypted handoff record,
+clears the pending browser cookie, and redirects to an exact
+`omnia-reader://sync-auth/<provider>` deep link containing only the random
+handoff ID and original request binding. Denied and invalid callbacks use the
+same opaque flow with an application-owned outcome and no provider text.
+
+The native broker redeems with
+`POST /api/sync/<provider>/native/auth/redeem` through its normal exact-origin
+and CSRF boundary. Handoff consumption is atomic in the memory, encrypted file,
+and Redis stores. A successful response sets the provider cookie directly into
+the broker-owned jar and returns only `{ "authenticated": true }`; failures
+return a bounded application-owned outcome. Forged, mismatched, expired, or
+replayed handoffs cannot mint another session cookie.
 
 ### Lightweight GitHub synchronization revision
 
@@ -525,6 +551,8 @@ Base path: `/api/sync/github`
 | `GET`    | `/session`                                        | Provider configuration, authenticated user, and selected repository          |
 | `GET`    | `/auth/start?returnTo=/settings/sync`             | Starts GitHub App authorization                                              |
 | `GET`    | `/auth/callback`                                  | Validates GitHub state, rotates the session, and returns to Sync Settings    |
+| `GET`    | `/native/auth/start?requestId=...`                | Starts a request-bound system-browser authorization                          |
+| `POST`   | `/native/auth/redeem`                             | Atomically redeems one opaque handoff into the native cookie jar             |
 | `POST`   | `/webhook`                                        | Validates a signed revocation and invalidates that user's sessions           |
 | `DELETE` | `/session`                                        | Deletes the local session and revokes its GitHub user token                  |
 | `GET`    | `/repositories`                                   | `{ "repositories": GitHubRepository[] }`                                     |
@@ -574,6 +602,8 @@ Base path: `/api/sync/mega`
 | -------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
 | `GET`    | `/session`                                            | Account label and selected folder, or `{ "authenticated": false }` |
 | `GET`    | `/auth/start?returnTo=/settings/sync`                 | Opens a gateway-owned MEGA login flow                              |
+| `GET`    | `/native/auth/start?requestId=...`                    | Starts a request-bound system-browser authorization                |
+| `POST`   | `/native/auth/redeem`                                 | Atomically redeems one opaque handoff into the native cookie jar   |
 | `DELETE` | `/session`                                            | Logs out and deletes the reusable SDK session                      |
 | `GET`    | `/folders`                                            | `{ "folders": MegaFolder[] }`                                      |
 | `PUT`    | `/folder`                                             | Selects `{ "handle": string }` after server-side authorization     |

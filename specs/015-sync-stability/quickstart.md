@@ -184,6 +184,18 @@ Feature 015 preparation evidence on 2026-09-12:
   `cargo clippy --all-targets --locked -- -D warnings` was unavailable because
   Clippy is not installed for Rust 1.89.0; this remains an explicit local gate
   rather than a claimed pass.
+- Native authorization handoff tests failed first on the absent encrypted
+  atomic-consume and route/native modules. The gateway now uses a dedicated
+  pending browser cookie, five-minute encrypted handoff records, atomic
+  memory/file/Redis consumption, exact provider/request binding, and sanitized
+  denial outcomes. The Rust host validates the exact deep-link shape, consumes
+  one pending request under a lock, redeems directly into its private cookie
+  jar, and emits only application-owned outcomes. Gateway unit tests passed
+  127/127 with two opt-in cases skipped; the same suite passed 128/128 against
+  isolated Redis 7.2, including cross-replica redemption. Gateway lint and its
+  production build passed. Native handoff tests passed 5/5 and the complete
+  Rust suite passed 20/20. Native protected persistence and Settings handoff
+  integration remain open under T025/T034/T035.
 
 ## 2. Deterministic browser convergence
 

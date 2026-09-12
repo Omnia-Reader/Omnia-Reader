@@ -8,6 +8,7 @@ import {
   registerGitHubWebhookRoutes,
   type GitHubWebhookOptions,
 } from './github-webhook.js';
+import type { NativeAuthorizationHandoffs } from './native-handoff.js';
 import { registerProviderRoutes } from './provider-routes.js';
 
 export interface SyncGatewayOptions {
@@ -18,6 +19,7 @@ export interface SyncGatewayOptions {
   secureCookies?: boolean;
   maxPublicationBytes?: number;
   readiness?: () => Promise<void>;
+  nativeHandoffs?: NativeAuthorizationHandoffs;
 }
 
 export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
@@ -93,6 +95,9 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
         adapter: options.github,
         secureCookies,
         maxPublicationBytes,
+        ...(options.nativeHandoffs
+          ? { nativeHandoffs: options.nativeHandoffs }
+          : {}),
       }),
     { prefix: '/api/sync/github' },
   );
@@ -103,6 +108,9 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
         adapter: options.mega,
         secureCookies,
         maxPublicationBytes,
+        ...(options.nativeHandoffs
+          ? { nativeHandoffs: options.nativeHandoffs }
+          : {}),
       }),
     { prefix: '/api/sync/mega' },
   );

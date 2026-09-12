@@ -11,6 +11,7 @@ import { GatewayHttpError } from './gateway-contract.js';
 export interface GatewaySessionStore<T extends object> {
   get(sessionId: string): Promise<T | null>;
   set(sessionId: string, value: T): Promise<void>;
+  take(sessionId: string): Promise<T | null>;
   move(
     sessionId: string,
     replacementSessionId: string,
@@ -21,6 +22,7 @@ export interface GatewaySessionStore<T extends object> {
 
 export interface RedisSessionClient {
   get(key: string): Promise<string | null>;
+  getDel(key: string): Promise<string | null>;
   set(key: string, value: string, options: { PX: number }): Promise<unknown>;
   pTTL(key: string): Promise<number>;
   del(key: string): Promise<unknown>;
@@ -119,6 +121,20 @@ export class EncryptedMemorySessionStore<T extends object>
     });
   }
 
+  async take(sessionId: string): Promise<T | null> {
+    assertSessionId(sessionId);
+    const record = this.records.get(sessionId);
+    this.records.delete(sessionId);
+    if (!record || record.expiresAt <= this.now()) {
+      return null;
+    }
+    try {
+      return this.cipher.decrypt(sessionId, record.ciphertext).value;
+    } catch {
+      throw invalidProviderSession();
+    }
+  }
+
   async move(
     sessionId: string,
     replacementSessionId: string,
@@ -204,6 +220,18 @@ export class EncryptedRedisSessionStore<T extends object>
     await this.client.set(key, this.cipher.encrypt(sessionId, value), {
       PX: this.ttlMs,
     });
+  }
+
+  async take(sessionId: string): Promise<T | null> {
+    const ciphertext = await this.client.getDel(this.storageKey(sessionId));
+    if (ciphertext === null) {
+      return null;
+    }
+    try {
+      return this.cipher.decrypt(sessionId, ciphertext).value;
+    } catch {
+      throw invalidProviderSession();
+    }
   }
 
   async move(
@@ -304,6 +332,28 @@ export class EncryptedFileSessionStore<T extends object>
         expiresAt: this.now() + this.ttlMs,
       };
       await this.write(file);
+    });
+  }
+
+  async take(sessionId: string): Promise<T | null> {
+    assertSessionId(sessionId);
+    return this.serialized(async () => {
+      const file = await this.read();
+      const storageKey = this.storageKey(sessionId);
+      const record = file.records[storageKey];
+      if (!record) {
+        return null;
+      }
+      delete file.records[storageKey];
+      await this.write(file);
+      if (record.expiresAt <= this.now()) {
+        return null;
+      }
+      try {
+        return this.cipher.decrypt(sessionId, record.ciphertext).value;
+      } catch {
+        throw invalidProviderSession();
+      }
     });
   }
 

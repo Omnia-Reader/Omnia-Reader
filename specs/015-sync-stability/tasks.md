@@ -83,7 +83,7 @@ authority, duplicate acknowledgement, or dangling publication reference.
 - [x] T021 [P] [US2] Extend real Redis coverage for two instances, restart, key rotation, unchanged TTL, webhook replay/invalidation, outage, backup, restore, and readiness in `apps/sync-gateway/src/shared-session-stores.spec.ts` and `apps/sync-gateway/src/app.spec.ts`
 - [x] T022 [P] [US2] Add exact-origin, typed-operation, bounded-body, redirect-denial, sanitization, cancellation, and teardown tests in `libs/sync/native/src/lib/native-sync-transport.spec.ts`
 - [x] T023 [P] [US2] Add cookie-opacity, header-filtering, secret-canary, queue-bound, stream-progress, cancellation, and cleanup tests in `src-tauri/src/sync_broker/tests.rs`
-- [ ] T024 [P] [US2] Add handoff binding, provider, expiry, atomic-use, replay, forgery, and sanitized-failure tests in `apps/sync-gateway/src/native-handoff.spec.ts` and `src-tauri/src/native_handoff/tests.rs`
+- [x] T024 [P] [US2] Add handoff binding, provider, expiry, atomic-use, replay, forgery, and sanitized-failure tests in `apps/sync-gateway/src/native-handoff.spec.ts` and `src-tauri/src/native_handoff/tests.rs`
 - [ ] T025 [P] [US2] Add protected-versus-session-only persistence, fail-closed downgrade, and restart tests in `src-tauri/src/sync_session/tests.rs`
 - [ ] T026 [P] [US2] Add packaged Linux/Windows/macOS/Android proof journeys for relative-route failure, broker connection, offline reading, restart, reauthentication, 25 MiB retry, 8 MiB buffer, 64 MiB RSS, and canary absence in `apps/omnia-reader-e2e/src/native/run-native-sync-e2e.mjs`
 
@@ -94,8 +94,8 @@ authority, duplicate acknowledgement, or dangling publication reference.
 - [x] T029 [US2] Select the packaged transport without changing browser/PWA clients in `apps/omnia-reader/src/app/app.config.ts` and `apps/omnia-reader/src/app/app.config.spec.ts`
 - [x] T030 [US2] Pin reviewed native dependencies in `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`, then implement HTTPS origin validation, typed routes, redirect denial, 8 MiB bounded streaming, cancellation, and opaque cookies in `src-tauri/src/sync_broker.rs`
 - [x] T031 [US2] Register only narrow synchronization commands in `src-tauri/src/lib.rs` and `src-tauri/capabilities/default.json`
-- [ ] T032 [US2] Implement single-use native handoff storage and routes in `apps/sync-gateway/src/native-handoff.ts`, `apps/sync-gateway/src/provider-routes.ts`, and `apps/sync-gateway/src/app.ts`
-- [ ] T033 [US2] Implement deep-link validation and direct handoff redemption into the native jar in `src-tauri/src/native_handoff.rs` and `src-tauri/src/lib.rs`
+- [x] T032 [US2] Implement single-use native handoff storage and routes in `apps/sync-gateway/src/native-handoff.ts`, `apps/sync-gateway/src/provider-routes.ts`, and `apps/sync-gateway/src/app.ts`
+- [x] T033 [US2] Implement deep-link validation and direct handoff redemption into the native jar in `src-tauri/src/native_handoff.rs` and `src-tauri/src/lib.rs`
 - [ ] T034 [US2] Implement Rust-only protected session persistence with explicit session-only fallback in `src-tauri/src/sync_session.rs`
 - [ ] T035 [US2] Integrate reconnect, cancellation, expiry, permission-loss, and focus restoration in `apps/omnia-reader/src/app/features/settings/sync-settings-page.component.ts`, `.html`, and `.spec.ts`
 - [ ] T036 [US2] Make Redis-backed production readiness fail closed without memory fallback in `apps/sync-gateway/src/shared-session-stores.ts`, `apps/sync-gateway/src/configuration.ts`, and `apps/sync-gateway/src/app.ts`

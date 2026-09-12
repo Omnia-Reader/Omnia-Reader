@@ -69,6 +69,7 @@ export interface CredentialAuthorizationPage {
 export interface SyncGatewayAdapter {
   session(sessionId: string): Promise<unknown>;
   authorizationUrl(sessionId: string, returnTo: string): Promise<string>;
+  pendingAuthorizationReturnTo?(sessionId: string): Promise<string | null>;
   completeAuthorization(
     sessionId: string,
     replacementSessionId: string,

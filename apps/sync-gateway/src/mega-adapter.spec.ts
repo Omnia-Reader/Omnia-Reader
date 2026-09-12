@@ -403,6 +403,12 @@ class MemorySessionStore<T extends object> implements GatewaySessionStore<T> {
     this.values.set(sessionId, structuredClone(value));
   }
 
+  async take(sessionId: string): Promise<T | null> {
+    const value = this.values.get(sessionId) ?? null;
+    this.values.delete(sessionId);
+    return value;
+  }
+
   async move(
     sessionId: string,
     replacementSessionId: string,
