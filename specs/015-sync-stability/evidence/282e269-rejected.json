@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "candidate": {
+    "commit": "282e2695e95ca7d7119e6db55ef0c71c738978e2",
+    "release": "0.1.0-sync-rc.282e269"
+  },
+  "artifacts": [
+    {
+      "name": "gateway",
+      "digest": "sha256:bca0351149addada376d39742ce24a9c0400e319da72d9b13e033f011d167ff4"
+    },
+    {
+      "name": "web",
+      "digest": "sha256:3e7f110e5a77920b9d338218967f700c70d8311d0f388d8210d828e318358381"
+    }
+  ],
+  "environments": [],
+  "runs": [],
+  "unavailableGates": [
+    {
+      "gateId": "sync-performance-staging",
+      "reason": "protected-staging-unavailable"
+    },
+    {
+      "gateId": "packaged-sync-linux",
+      "reason": "protected-host-unavailable"
+    },
+    {
+      "gateId": "packaged-sync-windows",
+      "reason": "protected-host-unavailable"
+    },
+    {
+      "gateId": "packaged-sync-macos",
+      "reason": "protected-host-unavailable"
+    },
+    {
+      "gateId": "packaged-sync-android-emulator",
+      "reason": "protected-emulator-unavailable"
+    },
+    {
+      "gateId": "live-github-conformance",
+      "reason": "protected-staging-unavailable"
+    },
+    {
+      "gateId": "container-security",
+      "reason": "public-https-and-scan-unavailable"
+    },
+    {
+      "gateId": "artifact-integrity",
+      "reason": "registry-signing-unavailable"
+    },
+    {
+      "gateId": "canary-rollback",
+      "reason": "protected-deployment-unavailable"
+    }
+  ],
+  "startedAt": "2026-09-12T22:25:42.592Z",
+  "completedAt": "2026-09-12T22:25:42.592Z",
+  "result": "rejected"
+}

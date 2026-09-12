@@ -1328,10 +1328,12 @@ gateway alongside it.
   platform backends; Android deliberately remains session-only and requires
   reauthentication after restart. Deterministic unit, real-Redis, native
   contract, release, lint, build, audit, formatting, and diff gates pass.
-  Container runtime, packaged host/emulator, protected live GitHub, registry
-  signing, staging/canary, deployment, and physical-device evidence remain
-  unavailable. GitHub therefore remains experimental and no immutable release
-  candidate is accepted.
+  The exact-commit local container build, readiness/header/proxy smoke, and
+  clean shutdown pass. Public HTTPS and Redis failure injection, packaged
+  host/emulator, protected live GitHub, registry scanning/signing,
+  staging/canary, deployment, and physical-device evidence remain unavailable.
+  The preserved immutable candidate is therefore rejected and GitHub remains
+  experimental.
 - Implemented: shared schema, provider migration, privacy, and recovery
   behavior.
 

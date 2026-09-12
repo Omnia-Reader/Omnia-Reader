@@ -597,3 +597,25 @@ GitHub maturity changes from experimental/recommended to supported only when one
 immutable candidate evidence set is `accepted`. MEGA remains experimental even
 when deterministic tests pass. Any failed or unavailable mandatory gate leaves
 the candidate rejected and records the exact boundary for the next run.
+
+Current immutable-candidate decision on 2026-09-13: Docker server 29.1.3 was
+responsive, but Buildx metadata under the sandboxed home directory remained
+read-only. Running the smoke gate from an 8.2 MB `git archive` of commit
+`282e2695e95ca7d7119e6db55ef0c71c738978e2`, with task-local Buildx metadata,
+built and validated the exact `smoke` images. The gateway image ID is
+`sha256:bca0351149addada376d39742ce24a9c0400e319da72d9b13e033f011d167ff4`;
+the web image ID is
+`sha256:3e7f110e5a77920b9d338218967f700c70d8311d0f388d8210d828e318358381`.
+Both production builds passed, the gateway runtime install audited 0
+vulnerabilities, both containers became healthy, local readiness/header/proxy
+and clean-shutdown assertions passed, and Compose removed both containers and
+the network. Public HTTPS, Redis failure injection, image scanning/signing,
+staging/canary, and deployment were not part of this local smoke.
+
+The sanitized immutable record is
+[`evidence/282e269-rejected.json`](evidence/282e269-rejected.json).
+`assert-sync-release-evidence.mjs` accepted its schema, rejected state, exact
+commit, and release identity. `verify-sync-evidence.mjs` then exited 1 as
+required, reporting seven missing structured gates and nine unavailable
+mandatory gates. GitHub therefore remains `experimental`; this candidate is
+not promotable and must not be reused after any commit or artifact change.
