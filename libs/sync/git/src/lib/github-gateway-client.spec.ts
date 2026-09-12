@@ -521,6 +521,44 @@ describe('GitHubGatewayClient', () => {
     expect(headers.get('X-Omnia-CSRF')).toBe('1');
   });
 
+  it('retries an interrupted publication as a complete new upload', async () => {
+    const content = 'complete-pdf-bytes';
+    const object = {
+      path: '.omnia-reader/v1/books/id/publication.pdf',
+      revision: 'lfs-object',
+      size: content.length,
+      sha256: 'a'.repeat(64),
+    };
+    const uploadedBodies: string[] = [];
+    let attempt = 0;
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      uploadedBodies.push(await blobText(init?.body as Blob));
+      attempt += 1;
+      return attempt === 1
+        ? jsonResponse({ message: 'Publication upload interrupted' }, 502)
+        : jsonResponse(object);
+    });
+    const client = new GitHubGatewayClient({ fetcher });
+    const upload = () =>
+      client.uploadObject({
+        path: object.path,
+        content: new Blob([content]),
+        size: object.size,
+        sha256: object.sha256,
+        mediaType: 'application/pdf',
+      });
+
+    await expect(upload()).rejects.toMatchObject({ status: 502 });
+    await expect(upload()).resolves.toEqual(object);
+
+    expect(uploadedBodies).toEqual([content, content]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map(([, init]) => init?.method)).toEqual([
+      'PUT',
+      'PUT',
+    ]);
+  });
+
   it('streams publication bytes with upload and download progress', async () => {
     const object = {
       path: '.omnia-reader/v1/books/id/publication.pdf',

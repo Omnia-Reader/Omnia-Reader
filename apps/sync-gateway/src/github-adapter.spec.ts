@@ -860,7 +860,7 @@ describe('GitHubSyncGatewayAdapter', () => {
     await expect(readableBuffer(download?.content)).resolves.toEqual(content);
   });
 
-  it('does not publish an LFS pointer after an interrupted object upload', async () => {
+  it('publishes no pointer after interruption and retries the whole LFS upload', async () => {
     const provider = new FakeGitHub();
     provider.failLfsUpload = true;
     const { adapter } = testAdapter(provider);
@@ -882,6 +882,30 @@ describe('GitHubSyncGatewayAdapter', () => {
     expect(provider.events).toEqual(['lfs:batch:upload', 'lfs:upload']);
     expect(provider.files.has(path)).toBe(false);
     expect(provider.files.has('.gitattributes')).toBe(false);
+
+    provider.failLfsUpload = false;
+    const uploaded = await adapter.uploadObject('session', {
+      path,
+      content: Readable.from(content),
+      size: content.byteLength,
+      sha256,
+      mediaType: 'application/pdf',
+    });
+
+    expect(uploaded).toMatchObject({ path, size: content.byteLength, sha256 });
+    expect(provider.lfs.get(sha256)).toEqual(content);
+    expect(provider.events).toEqual([
+      'lfs:batch:upload',
+      'lfs:upload',
+      'lfs:batch:upload',
+      'lfs:upload',
+      'lfs:verify',
+      'git:.gitattributes',
+      `git:${path}`,
+    ]);
+    expect(provider.files.get(path)?.content).toBe(
+      `version https://git-lfs.github.com/spec/v1\noid sha256:${sha256}\nsize ${content.byteLength}\n`,
+    );
   });
 
   it('maps an upstream LFS stream rejection without leaking a gateway 500', async () => {

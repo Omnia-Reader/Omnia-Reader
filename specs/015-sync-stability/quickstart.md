@@ -137,6 +137,12 @@ Feature 015 preparation evidence on 2026-09-12:
   scheduler restart starts one clean attempt, and an unstable destination stops
   after one bounded verification pass. `npx nx test sync-core --skip-nx-cache`
   passed 214/214 tests.
+- Interrupted Git LFS coverage now proves the client resends every publication
+  byte in a fresh `PUT`, while the gateway leaves both the pointer and
+  `.gitattributes` unpublished after failure. A fresh readable then repeats the
+  whole LFS upload, verifies it, and only afterward publishes the attributes and
+  exact pointer. Uncached sync-git passed 41/41; sync-gateway passed 121 tests
+  with its existing opt-in Redis test skipped.
 
 ## 2. Deterministic browser convergence
 
