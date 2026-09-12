@@ -31,7 +31,8 @@ boundary. It provides:
   one-use password for an encrypted reusable SDK session.
 - AES-256-GCM sealed process-local sessions for development and an optional
   Redis-backed store for multi-replica deployments.
-- Non-sensitive JSON errors and a `/healthz` probe.
+- Non-sensitive JSON errors, `/healthz` liveness, `/readyz` dependency
+  readiness, and private low-cardinality Prometheus metrics at `/metrics`.
 
 Run the boundary alone with `npm run gateway:start`, or run it behind the
 Angular development proxy with `npm run start:full`. Both providers fail closed
@@ -64,6 +65,15 @@ session store is configured, and readiness fails whenever that dependency
 cannot be reached. Production still requires an HTTPS edge, credentialed
 provider conformance tests, and deployment-specific image scanning, signing,
 and publication.
+
+The gateway's private `/metrics` endpoint exposes only fixed provider,
+operation, outcome, event, and alert labels. It never includes account,
+repository, publication, credential, or provider-controlled values. Operators
+can inject the alert policy with `OMNIA_SYNC_ALERT_MIN_REQUESTS`,
+`OMNIA_SYNC_ALERT_MAX_FAILURE_RATIO`, `OMNIA_SYNC_ALERT_MAX_P95_MS`, and
+`OMNIA_SYNC_ALERT_MAX_READINESS_FAILURES`; invalid values fail startup. Keep
+this endpoint on the internal gateway network. The public reverse proxy should
+expose `/healthz` and `/readyz`, but not `/metrics`.
 
 ### GitHub App configuration
 

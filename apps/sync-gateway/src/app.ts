@@ -10,6 +10,10 @@ import {
 } from './github-webhook.js';
 import type { NativeAuthorizationHandoffs } from './native-handoff.js';
 import { registerProviderRoutes } from './provider-routes.js';
+import {
+  registerSyncObservability,
+  SyncObservability,
+} from './sync-observability.js';
 
 export interface SyncGatewayOptions {
   github: SyncGatewayAdapter;
@@ -20,6 +24,7 @@ export interface SyncGatewayOptions {
   maxPublicationBytes?: number;
   readiness?: () => Promise<void>;
   nativeHandoffs?: NativeAuthorizationHandoffs;
+  observability?: SyncObservability;
 }
 
 export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
@@ -30,8 +35,10 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
   const secureCookies = options.secureCookies ?? true;
   const maxPublicationBytes =
     options.maxPublicationBytes ?? 2 * 1024 * 1024 * 1024;
+  const observability = options.observability ?? new SyncObservability();
 
   app.register(cookie, { hook: 'onRequest' });
+  registerSyncObservability(app, observability);
   app.addContentTypeParser(
     ['application/epub+zip', 'application/pdf'],
     (request, payload, done) => {
@@ -70,11 +77,13 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
   app.get('/readyz', async (_request, reply) => {
     try {
       await options.readiness?.();
+      observability.recordReadiness(true);
       return {
         status: 'ok',
         service: 'omnia-reader-sync-gateway',
       };
     } catch {
+      observability.recordReadiness(false);
       return reply.code(503).send({
         status: 'unavailable',
         service: 'omnia-reader-sync-gateway',

@@ -5,6 +5,10 @@ import {
   megaAdapterFromEnvironment,
 } from './configuration.js';
 import { gatewaySessionStoresFromEnvironment } from './shared-session-stores.js';
+import {
+  SyncObservability,
+  syncAlertThresholdsFromEnvironment,
+} from './sync-observability.js';
 
 const port = environmentPort(process.env['PORT']);
 const host = process.env['HOST'] ?? '127.0.0.1';
@@ -16,8 +20,12 @@ async function start(): Promise<void> {
     | Awaited<ReturnType<typeof gatewaySessionStoresFromEnvironment>>
     | undefined;
   try {
+    const observability = new SyncObservability(
+      syncAlertThresholdsFromEnvironment(process.env),
+    );
     stores = await gatewaySessionStoresFromEnvironment(process.env, {
       onRedisError: () => {
+        observability.recordReadiness(false);
         console.error(
           'The shared synchronization session store reported an error',
         );
@@ -48,6 +56,7 @@ async function start(): Promise<void> {
         ? { nativeHandoffs: activeStores.nativeHandoffs }
         : {}),
       readiness: () => activeStores.ready(),
+      observability,
       logger: true,
       secureCookies: process.env['NODE_ENV'] === 'production',
     });

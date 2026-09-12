@@ -64,6 +64,16 @@ curl --fail --silent --show-error "${base_url}/healthz" |
     }
   "
 
+curl --fail --silent --show-error "${base_url}/readyz" |
+  node --input-type=module -e "
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    const value = JSON.parse(input);
+    if (value.status !== 'ok' || value.service !== 'omnia-reader-sync-gateway') {
+      process.exit(1);
+    }
+  "
+
 curl --fail --silent --show-error \
   "${base_url}/api/sync/github/session" |
   node --input-type=module -e "
