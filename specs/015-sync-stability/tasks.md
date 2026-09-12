@@ -91,7 +91,7 @@ authority, duplicate acknowledgement, or dangling publication reference.
 
 - [x] T027 [P] [US2] Scaffold `libs/sync/native/project.json`, its TypeScript configs, `libs/sync/native/src/index.ts`, and Nx tags matching existing sync libraries
 - [x] T028 [US2] Implement the typed `LibrarySyncTransport` adapter and sanitized errors in `libs/sync/native/src/lib/native-sync-transport.ts`
-- [ ] T029 [US2] Select the packaged transport without changing browser/PWA clients in `apps/omnia-reader/src/app/app.config.ts` and `apps/omnia-reader/src/app/app.config.spec.ts`
+- [x] T029 [US2] Select the packaged transport without changing browser/PWA clients in `apps/omnia-reader/src/app/app.config.ts` and `apps/omnia-reader/src/app/app.config.spec.ts`
 - [ ] T030 [US2] Pin reviewed native dependencies in `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`, then implement HTTPS origin validation, typed routes, redirect denial, 8 MiB bounded streaming, cancellation, and opaque cookies in `src-tauri/src/sync_broker.rs`
 - [ ] T031 [US2] Register only narrow synchronization commands in `src-tauri/src/lib.rs` and `src-tauri/capabilities/default.json`
 - [ ] T032 [US2] Implement single-use native handoff storage and routes in `apps/sync-gateway/src/native-handoff.ts`, `apps/sync-gateway/src/provider-routes.ts`, and `apps/sync-gateway/src/app.ts`

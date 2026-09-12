@@ -159,6 +159,14 @@ Feature 015 preparation evidence on 2026-09-12:
   errors. Its focused contract passed 7/7 tests; the Nx project and inferred
   lint target were both discovered successfully. This is TypeScript boundary
   evidence only: the matching Rust broker and packaged-host wiring remain open.
+- Application composition now keeps web/PWA synchronization on the existing
+  relative same-origin GitHub and MEGA clients, while both Tauri desktop and
+  Android select provider-scoped native transports. Angular destruction tears
+  down both broker transports. The focused composition cases passed within the
+  full application suite (185/185), and sync-native remained green at 7/7; the
+  production application build passed at 411.33 kB raw / 91.03 kB estimated
+  transfer. The Rust commands are still intentionally unavailable until
+  T030/T031.
 
 ## 2. Deterministic browser convergence
 

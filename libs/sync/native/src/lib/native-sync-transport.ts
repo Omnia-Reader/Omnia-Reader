@@ -42,7 +42,7 @@ export type NativeSyncInvoke = (
 
 export interface NativeSyncTransportOptions {
   provider: NativeSyncProvider;
-  gatewayOrigin: string;
+  gatewayOrigin?: string;
   invoke?: NativeSyncInvoke;
   allowInsecureLoopback?: boolean;
   chunkBytes?: number;
@@ -105,7 +105,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
  */
 export class NativeSyncTransport implements LibrarySyncTransport {
   private readonly invokeNative: NativeSyncInvoke;
-  private readonly gatewayOrigin: string;
+  private readonly gatewayOrigin: string | null;
   private readonly chunkBytes: number;
   private readonly maxDocumentBytes: number;
   private readonly maxListBytes: number;
@@ -116,10 +116,12 @@ export class NativeSyncTransport implements LibrarySyncTransport {
   private requestSequence = 0;
 
   constructor(private readonly options: NativeSyncTransportOptions) {
-    this.gatewayOrigin = exactGatewayOrigin(
-      options.gatewayOrigin,
-      options.allowInsecureLoopback ?? false,
-    );
+    this.gatewayOrigin = options.gatewayOrigin
+      ? exactGatewayOrigin(
+          options.gatewayOrigin,
+          options.allowInsecureLoopback ?? false,
+        )
+      : null;
     this.invokeNative = options.invoke ?? invokeTauri;
     this.chunkBytes = boundedInteger(
       options.chunkBytes ?? DEFAULT_CHUNK_BYTES,
@@ -507,10 +509,14 @@ export class NativeSyncTransport implements LibrarySyncTransport {
     if (!this.readyPromise) {
       this.readyPromise = this.invokeNative('sync_broker_status', {})
         .then((value) => {
-          if (
-            !isRecord(value) ||
-            value['gatewayOrigin'] !== this.gatewayOrigin
-          ) {
+          if (!isRecord(value) || typeof value['gatewayOrigin'] !== 'string') {
+            throw invalidResponse();
+          }
+          const brokerOrigin = exactGatewayOrigin(
+            value['gatewayOrigin'],
+            this.options.allowInsecureLoopback ?? false,
+          );
+          if (this.gatewayOrigin && brokerOrigin !== this.gatewayOrigin) {
             throw new NativeSyncTransportError('origin-mismatch');
           }
         })

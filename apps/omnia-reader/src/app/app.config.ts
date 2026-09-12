@@ -19,6 +19,7 @@ import { ReaderEngineRegistry } from '@omnia-reader/reader/core';
 import {
   LibraryRepository,
   LogicalBookChangeOutbox,
+  PlatformPort,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import {
@@ -67,6 +68,10 @@ import {
   MegaGateway,
   MegaGatewayClient,
 } from '@omnia-reader/sync/mega';
+import {
+  NativeSyncProvider,
+  NativeSyncTransport,
+} from '@omnia-reader/sync/native';
 import {
   clearUnavailableRemoteSyncSelection,
   LocalOnlySyncOperationJournal,
@@ -154,11 +159,31 @@ function createRemoteVariantRecovery(
   return new DefaultRemoteVariantRecovery(remote, repository);
 }
 
-function createSelectedSyncTransport(
+type DisposableSyncTransport = LibrarySyncTransport & {
+  dispose(): Promise<void>;
+};
+
+export function createSelectedSyncTransport(
   selection: SyncProviderSelection,
   git: GitHubGateway,
   mega: MegaGateway,
+  platform: PlatformPort,
+  destroyRef: DestroyRef,
+  createNative: (provider: NativeSyncProvider) => DisposableSyncTransport = (
+    provider,
+  ) => new NativeSyncTransport({ provider }),
 ): LibrarySyncTransport {
+  if (platform.kind !== 'web') {
+    const nativeGit = createNative('git');
+    const nativeMega = createNative('mega');
+    destroyRef.onDestroy(() => {
+      void Promise.allSettled([nativeGit.dispose(), nativeMega.dispose()]);
+    });
+    return new SelectedLibrarySyncTransport(selection, {
+      git: nativeGit,
+      mega: nativeMega,
+    });
+  }
   return new SelectedLibrarySyncTransport(selection, { git, mega });
 }
 
@@ -305,7 +330,13 @@ export const appConfig: ApplicationConfig = {
           {
             provide: ACTIVE_SYNC_TRANSPORT,
             useFactory: createSelectedSyncTransport,
-            deps: [SYNC_PROVIDER_SELECTION, GITHUB_GATEWAY, MEGA_GATEWAY],
+            deps: [
+              SYNC_PROVIDER_SELECTION,
+              GITHUB_GATEWAY,
+              MEGA_GATEWAY,
+              PLATFORM_PORT,
+              DestroyRef,
+            ],
           },
           {
             provide: LIBRARY_SYNC_SERVICE,
