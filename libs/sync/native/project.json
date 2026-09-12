@@ -1,0 +1,16 @@
+{
+  "name": "sync-native",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "libs/sync/native/src",
+  "tags": ["scope:sync", "type:data-access"],
+  "targets": {
+    "test": {
+      "executor": "@angular/build:unit-test",
+      "options": {
+        "buildTarget": "omnia-reader:build:development",
+        "tsConfig": "libs/sync/native/tsconfig.spec.json"
+      }
+    }
+  }
+}

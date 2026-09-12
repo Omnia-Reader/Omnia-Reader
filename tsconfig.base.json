@@ -25,7 +25,8 @@
       "@omnia-reader/reader/pdf": ["libs/reader/pdf/src/index.ts"],
       "@omnia-reader/sync/core": ["libs/sync/core/src/index.ts"],
       "@omnia-reader/sync/git": ["libs/sync/git/src/index.ts"],
-      "@omnia-reader/sync/mega": ["libs/sync/mega/src/index.ts"]
+      "@omnia-reader/sync/mega": ["libs/sync/mega/src/index.ts"],
+      "@omnia-reader/sync/native": ["libs/sync/native/src/index.ts"]
     },
     "strict": false,
     "noUncheckedSideEffectImports": false,

@@ -151,6 +151,14 @@ Feature 015 preparation evidence on 2026-09-12:
   webhook replay/invalidation, and readiness recovery. `/healthz` remains a
   dependency-independent liveness probe; `/readyz` now reflects the shared
   store without exposing connection details.
+- The new `sync-native` Nx library implements the complete provider-neutral
+  transport through enumerated Tauri commands. It verifies the broker's exact
+  HTTPS origin, bounds documents, inventories, deletion batches, objects, and
+  512 KiB transfer chunks, exposes monotonic progress, cancels failed or
+  aborted requests, tears down active work, and maps only application-owned
+  errors. Its focused contract passed 7/7 tests; the Nx project and inferred
+  lint target were both discovered successfully. This is TypeScript boundary
+  evidence only: the matching Rust broker and packaged-host wiring remain open.
 
 ## 2. Deterministic browser convergence
 
