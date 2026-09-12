@@ -327,6 +327,23 @@ Feature 015 preparation evidence on 2026-09-12:
   correlation, and explicit accepted/rejected/trace retention periods. This
   completes T055 as an operator contract; the protected workflow executions
   remain T052/T057.
+- The T056 release gate now includes every Feature 015 evidence, canary-scan,
+  promotion, workflow, SBOM, provenance, and candidate-writer suite in
+  `npm run release:test`; all 67 tests passed. The first full verifier run
+  exposed the newly resolved `zerocopy` and `zerocopy-derive` SPDX expression
+  as unreviewed. Their bundled BSD-2-Clause, Apache-2.0, and MIT license texts
+  were checked, the exact `BSD-2-Clause OR Apache-2.0 OR MIT` expression was
+  added to the fail-closed policy. With `CARGO_HOME` pointed at the writable
+  temporary cache, `npm run release:verify` then passed. It rebuilt both
+  production targets without the Nx cache and verified release 0.1.0 as 132
+  source-only files, 68 npm
+  components, 563 Rust components, four pinned bridge inputs, and twelve
+  pinned CI actions. `npm run container:smoke` could not reach its assertions:
+  the sandboxed attempt was denied by the read-only Docker buildx cache, while
+  the approved attempt and an independent `docker ps` probe both remained
+  blocked on the local Docker daemon for several minutes and were terminated.
+  No smoke process remained afterward; container state could not be queried,
+  so the Docker smoke result is explicitly unavailable rather than passed.
 
 ## 2. Deterministic browser convergence
 
@@ -507,7 +524,7 @@ listed the protected journey successfully, and the existing Chromium
 convergence smoke passed 2/2 with its four extended provider cases explicitly
 skipped. An enabled run without `LIVE_GITHUB_PROTECTED_RUNNER=1` was also
 confirmed to exit non-zero before discovering or running tests. No protected
-GitHub browser state, staging origin, control driver, or cleanup identity is
+No GitHub browser state, staging origin, control driver, or cleanup identity is
 available in this checkout, so the live journey itself remains unavailable
 evidence under T057 and GitHub maturity remains experimental.
 

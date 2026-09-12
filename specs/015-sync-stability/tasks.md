@@ -145,7 +145,7 @@ rebuild.
 
 ### Verification for User Story 3
 
-- [ ] T056 [US3] Run `npm run container:smoke`, `npm run release:test`, `npm run release:verify`, and new evidence/promotion tests; record a persistent Docker blocker in `specs/015-sync-stability/quickstart.md`
+- [x] T056 [US3] Run `npm run container:smoke`, `npm run release:test`, `npm run release:verify`, and new evidence/promotion tests; record a persistent Docker blocker in `specs/015-sync-stability/quickstart.md`
 - [ ] T057 [US3] Run protected GitHub and immutable release workflows for the exact candidate or record unavailable staging, credential, registry, signing, and deployment gates in `specs/015-sync-stability/quickstart.md`
 
 **Checkpoint**: User Story 3 produces a reproducible decision for one candidate
