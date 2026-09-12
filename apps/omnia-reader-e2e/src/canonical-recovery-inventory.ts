@@ -30,6 +30,61 @@ export function inventoryWithoutAvailability(
   );
 }
 
+export async function publicationBinaryEvidence(
+  page: Page,
+): Promise<readonly { bookId: string; size: number; sha256: string }[]> {
+  return page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('omnia-reader');
+      request.addEventListener('success', () => resolve(request.result));
+      request.addEventListener('error', () => reject(request.error));
+    });
+    const records = await new Promise<Record<string, unknown>[]>(
+      (resolve, reject) => {
+        const request = database
+          .transaction('binaries', 'readonly')
+          .objectStore('binaries')
+          .getAll();
+        request.addEventListener('success', () => resolve(request.result));
+        request.addEventListener('error', () => reject(request.error));
+      },
+    );
+    database.close();
+
+    const evidence = await Promise.all(
+      records.map(async (record) => {
+        let bytes: ArrayBuffer;
+        if (
+          record['storage'] === 'opfs' &&
+          typeof record['opfsFileName'] === 'string'
+        ) {
+          const root = await navigator.storage.getDirectory();
+          const directory = await root.getDirectoryHandle('publications-v1');
+          const handle = await directory.getFileHandle(record['opfsFileName']);
+          bytes = await (await handle.getFile()).arrayBuffer();
+        } else if (record['blob'] instanceof Blob) {
+          bytes = await record['blob'].arrayBuffer();
+        } else if (record['bytes'] instanceof ArrayBuffer) {
+          bytes = record['bytes'];
+        } else {
+          throw new Error('Stored publication bytes are unavailable');
+        }
+        const hash = await crypto.subtle.digest('SHA-256', bytes);
+        return {
+          bookId: String(record['bookId']),
+          size: bytes.byteLength,
+          sha256: [...new Uint8Array(hash)]
+            .map((byte) => byte.toString(16).padStart(2, '0'))
+            .join(''),
+        };
+      }),
+    );
+    return evidence.sort((left, right) =>
+      left.bookId.localeCompare(right.bookId),
+    );
+  });
+}
+
 export async function canonicalRecoveryInventory(
   page: Page,
 ): Promise<Record<string, unknown>> {

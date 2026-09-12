@@ -58,6 +58,39 @@ Feature 015 preparation evidence on 2026-09-12:
   deterministic MEGA. This repairs the initial red baseline without claiming
   the missing format matrix, replacement-device, concurrent-mutation, or
   cross-browser gates.
+- The provider/format closure regression then failed with Git/EPUB and MEGA/PDF
+  absent. After deriving the cross-product and adding named reader-route
+  preconditions, all 4 Chromium two-device convergence journeys passed in
+  36.7 seconds. Replacement-device, concurrent-mutation, and cross-browser
+  gates remain open.
+- After moving the long journeys into `sync-convergence.spec.ts`, the combined
+  Chromium short plus convergence run passed 21 tests in 1.0 minute. The split
+  keeps the opt-in release journeys independently targetable without dropping
+  the 16 shorter synchronization behaviors.
+- Clean replacement-device coverage now hashes bytes read back from IndexedDB
+  or OPFS and compares membership, progress, progress documents, bookmarks,
+  annotations, and tombstones with an already-converged device. All 5 focused
+  Chromium convergence tests passed in 46.4 seconds across the full Git/MEGA
+  and EPUB/PDF matrix; each restored inventory contained one live and one
+  tombstoned bookmark and annotation.
+- Concurrent collision coverage updates a shared annotation on one disconnected
+  device while deleting it on the other, then synchronizes in conflicting order
+  and proves the tombstone wins without resurrection on the original and clean
+  replacement devices. A held Git upload also proves provider selection is
+  disabled while work is active and that no request, document, object, or
+  success history leaks into MEGA. All 6 Chromium convergence checks passed in
+  56.3 seconds.
+- The complete Chromium short plus convergence gate passed 22 tests in 1.4
+  minutes. The first parallel Nx unit invocation exhausted Vitest worker startup
+  capacity and ran no tests; the bounded serial retry
+  (`--parallel=1 --skip-nx-cache`) passed sync-core 203/203, sync-git 38/38, and
+  sync-mega 10/10 in 23.3 seconds.
+- Firefox initially exposed two expected console diagnostics for remote EPUB
+  fonts neutralized to `data:,`; an exact classifier regression preserves real
+  font failures while accepting only that security-enforcement shape. The full
+  Firefox convergence suite then passed 6/6 in 1.6 minutes. WebKit passed 6/6
+  in 6.8 minutes. These are local browser-engine results, not CI or packaged-host
+  evidence.
 
 ## 2. Deterministic browser convergence
 

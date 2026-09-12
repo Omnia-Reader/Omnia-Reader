@@ -42,15 +42,15 @@ identical valid logical state on both profiles.
 ### Tests for User Story 1
 
 - [x] T006 [P] [US1] Add a failing regression for the current accessible library-open contract to `apps/omnia-reader-e2e/src/reader-state-helpers.spec.ts`
-- [ ] T007 [US1] Extend `apps/omnia-reader-e2e/src/sync.spec.ts` with missing Git/EPUB and MEGA/PDF two-device cases and explicit reader-route preconditions
-- [ ] T008 [US1] Add clean replacement-device restore assertions for publication bytes, progress, bookmarks, annotations, membership, and tombstones in `apps/omnia-reader-e2e/src/sync.spec.ts`
-- [ ] T009 [US1] Add concurrent create/update/delete and destination-switch isolation cases to `apps/omnia-reader-e2e/src/sync.spec.ts`
+- [x] T007 [US1] Extend `apps/omnia-reader-e2e/src/sync.spec.ts` with missing Git/EPUB and MEGA/PDF two-device cases and explicit reader-route preconditions
+- [x] T008 [US1] Add clean replacement-device restore assertions for publication bytes, progress, bookmarks, annotations, membership, and tombstones in `apps/omnia-reader-e2e/src/sync-convergence.spec.ts`
+- [x] T009 [US1] Add concurrent create/update/delete and destination-switch isolation cases to `apps/omnia-reader-e2e/src/sync-convergence.spec.ts`
 - [ ] T010 [P] [US1] Add a current/legacy synchronization corpus plus restore, merge, future-schema, malformed pointer, digest, size, media-type, path, duplicate, root-ownership, and forward-compatibility cases to `apps/omnia-reader-e2e/src/fixtures/sync-compatibility/`, `libs/sync/core/src/lib/sync-root-reconciliation-service.spec.ts`, `libs/sync/core/src/lib/library-sync-manifest-service.spec.ts`, and `libs/sync/git/src/lib/github-gateway-client.spec.ts`
 
 ### Implementation for User Story 1
 
 - [x] T011 [US1] Implement the accessible publication-open helper in `apps/omnia-reader-e2e/src/reader-state-helpers.ts` and replace stale title selectors in `apps/omnia-reader-e2e/src/sync.spec.ts` and `apps/omnia-reader-e2e/src/epub-selection.spec.ts`
-- [ ] T012 [US1] Split long convergence cases into `apps/omnia-reader-e2e/src/sync-convergence.spec.ts` while keeping shorter behavior in `apps/omnia-reader-e2e/src/sync.spec.ts`
+- [x] T012 [US1] Split long convergence cases into `apps/omnia-reader-e2e/src/sync-convergence.spec.ts` while keeping shorter behavior in `apps/omnia-reader-e2e/src/sync.spec.ts`
 - [ ] T013 [US1] Extend `apps/omnia-reader-e2e/src/simulated-sync-gateway.ts` only for exact format coverage, hostile records, interruption ordering, and destination isolation required by T007–T010
 - [ ] T014 [US1] Add the fixed staging profile and 20-warm-up/200-measurement two-device latency runner in `apps/omnia-reader-e2e/src/sync-performance-profile.json`, `apps/omnia-reader-e2e/src/sync-performance-runner.mjs`, and `apps/omnia-reader-e2e/src/sync-performance-runner.spec.mjs`
 - [ ] T015 [US1] Add a dedicated Chromium/Firefox/WebKit convergence target and one-pass pull-request matrix to `apps/omnia-reader-e2e/project.json` and `.github/workflows/verify.yml`
@@ -58,8 +58,8 @@ identical valid logical state on both profiles.
 
 ### Verification for User Story 1
 
-- [ ] T017 [US1] Run `npx nx run-many -t test -p sync-core sync-git sync-mega --skip-nx-cache` and record exact totals in `specs/015-sync-stability/quickstart.md`
-- [ ] T018 [US1] Run `PLAYWRIGHT_HTML_OPEN=never REMOTE_SYNC_E2E=1 npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 sync.spec.ts sync-convergence.spec.ts`; record Firefox/WebKit CI evidence separately in `specs/015-sync-stability/quickstart.md`
+- [x] T017 [US1] Run `npx nx run-many -t test -p sync-core sync-git sync-mega --skip-nx-cache` and record exact totals in `specs/015-sync-stability/quickstart.md`
+- [x] T018 [US1] Run `PLAYWRIGHT_HTML_OPEN=never REMOTE_SYNC_E2E=1 npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 sync.spec.ts sync-convergence.spec.ts`; record Firefox/WebKit evidence separately in `specs/015-sync-stability/quickstart.md`
 
 **Checkpoint**: User Story 1 is independently demonstrable in Chromium and has
 mandatory, non-skipped cross-browser release gates.

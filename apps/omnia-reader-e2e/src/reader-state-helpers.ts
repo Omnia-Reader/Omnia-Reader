@@ -23,6 +23,10 @@ export async function openLibraryPublication(
   const openButton = preferredPublicationOpenButton(page, title);
   await expect(openButton).toBeVisible({ timeout: 20_000 });
   await openButton.click();
+  await expectReaderRoute(page);
+}
+
+export async function expectReaderRoute(page: Page): Promise<void> {
   await expect(page).toHaveURL(READER_ROUTE, { timeout: 20_000 });
 }
 
