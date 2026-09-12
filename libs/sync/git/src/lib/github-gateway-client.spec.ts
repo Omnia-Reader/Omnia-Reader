@@ -623,6 +623,73 @@ describe('GitHubGatewayClient', () => {
     ).rejects.toBeInstanceOf(GitConflictError);
   });
 
+  it('rejects escaped and duplicate provider inventory paths', async () => {
+    const escaped = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse({
+          files: [
+            {
+              path: '.omnia-reader/../escape.json',
+              content: '{}',
+              revision: 'revision-1',
+            },
+          ],
+        }),
+      ),
+    });
+    await expect(escaped.list('.omnia-reader')).rejects.toBeInstanceOf(
+      GitHubGatewayProtocolError,
+    );
+
+    const duplicate = {
+      path: '.omnia-reader/manifest.json',
+      revision: 'revision-1',
+      kind: 'document',
+    };
+    const duplicated = new GitHubGatewayClient({
+      fetcher: mockFetch(jsonResponse({ entries: [duplicate, duplicate] })),
+    });
+    await expect(
+      duplicated.listEntries('.omnia-reader'),
+    ).rejects.toBeInstanceOf(GitHubGatewayProtocolError);
+  });
+
+  it('rejects provider responses that change requested document or object identity', async () => {
+    const requestedPath = '.omnia-reader/library/Book--abc/Book.pdf';
+    const mismatchedDocument = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse({
+          path: '.omnia-reader/manifest.json',
+          content: '{}',
+          revision: 'revision-1',
+        }),
+      ),
+    });
+    await expect(mismatchedDocument.read(requestedPath)).rejects.toBeInstanceOf(
+      GitHubGatewayProtocolError,
+    );
+
+    const mismatchedObject = new GitHubGatewayClient({
+      fetcher: mockFetch(
+        jsonResponse({
+          path: requestedPath,
+          revision: 'revision-2',
+          size: 4,
+          sha256: 'b'.repeat(64),
+        }),
+      ),
+    });
+    await expect(
+      mismatchedObject.uploadObject({
+        path: requestedPath,
+        content: new Blob(['pdf']),
+        size: 3,
+        sha256: 'a'.repeat(64),
+        mediaType: 'application/pdf',
+      }),
+    ).rejects.toBeInstanceOf(GitHubGatewayProtocolError);
+  });
+
   it('rejects malformed gateway documents instead of trusting them', async () => {
     const client = new GitHubGatewayClient({
       fetcher: mockFetch(jsonResponse({ files: [{ path: '../escape' }] })),

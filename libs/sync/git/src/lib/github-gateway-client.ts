@@ -241,7 +241,10 @@ export class GitHubGatewayClient implements GitHubGateway {
     if (
       !isRecord(value) ||
       !Array.isArray(value['files']) ||
-      !value['files'].every(isGitFile)
+      !value['files'].every(
+        (file) => isGitFile(file) && isPathWithinPrefix(file.path, prefix),
+      ) ||
+      !hasUniquePaths(value['files'])
     ) {
       throw new GitHubGatewayProtocolError();
     }
@@ -256,7 +259,11 @@ export class GitHubGatewayClient implements GitHubGateway {
     if (
       !isRecord(value) ||
       !Array.isArray(value['entries']) ||
-      !value['entries'].every(isRemoteSyncEntry)
+      !value['entries'].every(
+        (entry) =>
+          isRemoteSyncEntry(entry) && isPathWithinPrefix(entry.path, prefix),
+      ) ||
+      !hasUniquePaths(value['entries'])
     ) {
       throw new GitHubGatewayProtocolError();
     }
@@ -298,7 +305,7 @@ export class GitHubGatewayClient implements GitHubGateway {
       return null;
     }
     const value = await responseJson(response);
-    if (!isGitFile(value)) {
+    if (!isGitFile(value) || value.path !== path) {
       throw new GitHubGatewayProtocolError();
     }
     return value;
@@ -317,7 +324,11 @@ export class GitHubGatewayClient implements GitHubGateway {
       throw new GitConflictError();
     }
     const value = await responseJson(response);
-    if (!isGitFile(value)) {
+    if (
+      !isGitFile(value) ||
+      value.path !== request.path ||
+      value.content !== request.content
+    ) {
       throw new GitHubGatewayProtocolError();
     }
     return value;
@@ -349,7 +360,7 @@ export class GitHubGatewayClient implements GitHubGateway {
       return null;
     }
     const value = await responseJson(response);
-    if (!isRemoteObject(value)) {
+    if (!isRemoteObject(value) || value.path !== path) {
       throw new GitHubGatewayProtocolError();
     }
     return value;
@@ -394,7 +405,12 @@ export class GitHubGatewayClient implements GitHubGateway {
       throw new GitConflictError('The remote Git LFS object changed');
     }
     const value = await responseJson(response);
-    if (!isRemoteObject(value)) {
+    if (
+      !isRemoteObject(value) ||
+      value.path !== request.path ||
+      value.size !== request.size ||
+      value.sha256 !== request.sha256
+    ) {
       throw new GitHubGatewayProtocolError();
     }
     return value;
@@ -688,6 +704,28 @@ function isRemoteSyncEntry(value: unknown): value is RemoteSyncEntry {
     isNonEmptyString(value['revision']) &&
     (value['kind'] === 'document' || value['kind'] === 'object')
   );
+}
+
+function isPathWithinPrefix(path: string, prefix: string): boolean {
+  return (
+    isCanonicalProviderPath(path) &&
+    (path === prefix || path.startsWith(`${prefix}/`))
+  );
+}
+
+function isCanonicalProviderPath(path: string): boolean {
+  return (
+    !path.includes('\\') &&
+    path
+      .split('/')
+      .every((segment) => segment && segment !== '.' && segment !== '..')
+  );
+}
+
+function hasUniquePaths(
+  entries: readonly { readonly path: string }[],
+): boolean {
+  return new Set(entries.map((entry) => entry.path)).size === entries.length;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
