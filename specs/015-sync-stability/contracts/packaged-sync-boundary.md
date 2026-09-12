@@ -33,6 +33,13 @@ truthful reconnect-required state while preserving local data and pending work.
 It must never fall back silently to plaintext files, webview storage, or a
 hard-coded encryption secret.
 
+The broker status reports the exact `persistenceMode`, nullable schema
+`persistenceVersion`, and `restartRequiresReauthentication` consequence.
+`protected` is internally consistent only with a positive supported version and
+no restart reauthentication requirement. `session-only` requires a null version
+and an explicit restart reauthentication requirement; browser-readable code
+rejects any other combination as an unsafe native response.
+
 ## Authorization handoff
 
 1. The packaged client asks the broker to begin authorization with a random

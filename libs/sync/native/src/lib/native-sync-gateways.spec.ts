@@ -8,6 +8,12 @@ import {
 import { NativeSyncCommand, NativeSyncInvoke } from './native-sync-transport';
 
 const REQUEST_ID = 'native-request-1234';
+const BROKER_STATUS = {
+  gatewayOrigin: 'https://sync.test',
+  persistenceMode: 'session-only' as const,
+  persistenceVersion: null,
+  restartRequiresReauthentication: true as const,
+};
 const REPOSITORY = {
   id: 7,
   fullName: 'reader/library',
@@ -136,7 +142,7 @@ describe('native provider gateways', () => {
     const openExternal = vi.fn(async () => undefined);
     const invoke = vi.fn<NativeSyncInvoke>(async (command, body) => {
       if (command === 'sync_broker_status') {
-        return { gatewayOrigin: 'https://sync.test' };
+        return BROKER_STATUS;
       }
       if (command === 'sync_authorization_begin') {
         expect(callback).toBeDefined();
@@ -178,7 +184,7 @@ describe('native provider gateways', () => {
     const gateway = new NativeGitHubGateway({
       invoke: vi.fn<NativeSyncInvoke>(async (command, body) =>
         command === 'sync_broker_status'
-          ? { gatewayOrigin: 'https://sync.test' }
+          ? BROKER_STATUS
           : command === 'sync_authorization_begin'
             ? {
                 authorizationUrl: `https://attacker.invalid/api/sync/github/native/auth/start?requestId=${String((body as Record<string, unknown>)['requestId'])}`,
@@ -205,7 +211,7 @@ describe('native provider gateways', () => {
     });
     const invoke = vi.fn<NativeSyncInvoke>(async (command, body) =>
       command === 'sync_broker_status'
-        ? { gatewayOrigin: 'https://sync.test' }
+        ? BROKER_STATUS
         : command === 'sync_authorization_begin'
           ? {
               authorizationUrl: `https://sync.test/api/sync/mega/native/auth/start?requestId=${String((body as Record<string, unknown>)['requestId'])}`,

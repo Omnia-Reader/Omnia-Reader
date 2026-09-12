@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 mod native_handoff;
 mod sync_broker;
+mod sync_session;
 
 #[cfg(desktop)]
 use std::path::Path;

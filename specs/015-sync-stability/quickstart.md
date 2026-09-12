@@ -216,8 +216,25 @@ Feature 015 preparation evidence on 2026-09-12:
   without warnings. The production build passed at 422.15 kB raw / 93.15 kB
   estimated initial transfer. `cargo fmt -- --check`, `cargo check
 --all-targets --locked`, and the complete Rust suite (22/22) passed. T035 is
-  complete; protected-versus-session-only persistence remains open under
-  T025/T034, and packaged-host journeys remain open under T026/T038.
+  complete; protected-versus-session-only persistence remained open at that
+  checkpoint under T025/T034, and packaged-host journeys remained open under
+  T026/T038.
+- The T025 native session checkpoint added a sealed Rust persistence state
+  machine and made the current production factory explicitly `session-only`.
+  Broker status now reports the mode, nullable version, and restart consequence
+  as one strictly validated IPC shape. Five Rust tests prove protected-store
+  restart recovery through the sealed test backend, process-only authority loss
+  on restart, refusal of unproven or unavailable protection, fail-closed
+  downgrade on store failure, and rejection of malformed, expired,
+  wrong-origin, or unsupported-version records. The native TypeScript boundary
+  rejects inconsistent status combinations. `cargo check --all-targets
+--locked` passed without warnings, the complete Rust suite passed 27/27,
+  sync-native passed 13/13, and the application suite passed 190/190. Affected
+  lint targets and the production build passed; the latter remained within
+  budget at 422.50 kB raw / 93.29 kB estimated initial transfer. T025 is
+  complete. T034 remains open: no OS backend is enabled and no protected-host
+  claim is made because current cross-platform keyring releases exceed the
+  declared Rust baseline and still require packaged platform proof.
 
 ## 2. Deterministic browser convergence
 

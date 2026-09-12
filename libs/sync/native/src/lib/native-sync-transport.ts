@@ -14,6 +14,20 @@ import {
 
 export type NativeSyncProvider = 'git' | 'mega';
 
+export type NativeSyncBrokerStatus =
+  | {
+      gatewayOrigin: string;
+      persistenceMode: 'protected';
+      persistenceVersion: number;
+      restartRequiresReauthentication: false;
+    }
+  | {
+      gatewayOrigin: string;
+      persistenceMode: 'session-only';
+      persistenceVersion: null;
+      restartRequiresReauthentication: true;
+    };
+
 export type NativeSyncCommand =
   | 'sync_authorization_begin'
   | 'sync_authorization_cancel'
@@ -526,13 +540,10 @@ export class NativeSyncTransport implements LibrarySyncTransport {
     if (!this.readyPromise) {
       this.readyPromise = this.invokeNative('sync_broker_status', {})
         .then((value) => {
-          if (!isRecord(value) || typeof value['gatewayOrigin'] !== 'string') {
-            throw invalidResponse();
-          }
-          const brokerOrigin = exactGatewayOrigin(
-            value['gatewayOrigin'],
+          const brokerOrigin = parseNativeSyncBrokerStatus(
+            value,
             this.options.allowInsecureLoopback ?? false,
-          );
+          ).gatewayOrigin;
           if (this.gatewayOrigin && brokerOrigin !== this.gatewayOrigin) {
             throw new NativeSyncTransportError('origin-mismatch');
           }
@@ -558,6 +569,56 @@ export class NativeSyncTransport implements LibrarySyncTransport {
       throw new NativeSyncTransportError('transport-unavailable');
     }
   }
+}
+
+export function parseNativeSyncBrokerStatus(
+  value: unknown,
+  allowInsecureLoopback: boolean,
+): NativeSyncBrokerStatus {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 4 ||
+    typeof value['gatewayOrigin'] !== 'string' ||
+    typeof value['persistenceMode'] !== 'string' ||
+    typeof value['restartRequiresReauthentication'] !== 'boolean'
+  ) {
+    throw invalidResponse();
+  }
+  let gatewayOrigin: string;
+  try {
+    gatewayOrigin = exactGatewayOrigin(
+      value['gatewayOrigin'],
+      allowInsecureLoopback,
+    );
+  } catch {
+    throw invalidResponse();
+  }
+  if (
+    value['persistenceMode'] === 'protected' &&
+    Number.isSafeInteger(value['persistenceVersion']) &&
+    (value['persistenceVersion'] as number) > 0 &&
+    value['restartRequiresReauthentication'] === false
+  ) {
+    return {
+      gatewayOrigin,
+      persistenceMode: 'protected',
+      persistenceVersion: value['persistenceVersion'] as number,
+      restartRequiresReauthentication: false,
+    };
+  }
+  if (
+    value['persistenceMode'] === 'session-only' &&
+    value['persistenceVersion'] === null &&
+    value['restartRequiresReauthentication'] === true
+  ) {
+    return {
+      gatewayOrigin,
+      persistenceMode: 'session-only',
+      persistenceVersion: null,
+      restartRequiresReauthentication: true,
+    };
+  }
+  throw invalidResponse();
 }
 
 function parseDocument(value: unknown, maxBytes: number): RemoteDocument {

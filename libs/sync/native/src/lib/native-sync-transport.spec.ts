@@ -5,15 +5,25 @@ import {
   NativeSyncInvoke,
   NativeSyncTransport,
   NativeSyncTransportError,
+  parseNativeSyncBrokerStatus,
 } from './native-sync-transport';
 
 const ORIGIN = 'https://sync.reader.test';
 const PATH = '.omnia-reader/manifest.json';
 
+function brokerStatus(gatewayOrigin = ORIGIN) {
+  return {
+    gatewayOrigin,
+    persistenceMode: 'session-only' as const,
+    persistenceVersion: null,
+    restartRequiresReauthentication: true as const,
+  };
+}
+
 describe('NativeSyncTransport', () => {
   it('accepts only the exact broker origin and sends enumerated typed operations', async () => {
     const invoke = nativeInvoke({
-      sync_broker_status: { gatewayOrigin: ORIGIN },
+      sync_broker_status: brokerStatus(),
       sync_read_document: {
         path: PATH,
         content: '{}',
@@ -40,7 +50,7 @@ describe('NativeSyncTransport', () => {
 
     const mismatched = createTransport(
       nativeInvoke({
-        sync_broker_status: { gatewayOrigin: 'https://other.test' },
+        sync_broker_status: brokerStatus('https://other.test'),
       }),
     );
     await expect(mismatched.read(PATH)).rejects.toMatchObject({
@@ -66,10 +76,47 @@ describe('NativeSyncTransport', () => {
     }
   });
 
+  it('accepts only internally consistent protected or session-only status', () => {
+    expect(parseNativeSyncBrokerStatus(brokerStatus(), false)).toEqual(
+      brokerStatus(),
+    );
+    expect(
+      parseNativeSyncBrokerStatus(
+        {
+          gatewayOrigin: ORIGIN,
+          persistenceMode: 'protected',
+          persistenceVersion: 1,
+          restartRequiresReauthentication: false,
+        },
+        false,
+      ),
+    ).toMatchObject({
+      persistenceMode: 'protected',
+      persistenceVersion: 1,
+      restartRequiresReauthentication: false,
+    });
+    expect(() =>
+      parseNativeSyncBrokerStatus(
+        {
+          ...brokerStatus(),
+          persistenceMode: 'protected',
+          persistenceVersion: null,
+        },
+        false,
+      ),
+    ).toThrow('unsafe response');
+    expect(() =>
+      parseNativeSyncBrokerStatus(
+        brokerStatus('https://user:secret@sync.reader.test'),
+        false,
+      ),
+    ).toThrow('unsafe response');
+  });
+
   it('bounds document lists and downloaded chunks before returning them', async () => {
     const oversizedList = createTransport(
       nativeInvoke({
-        sync_broker_status: { gatewayOrigin: ORIGIN },
+        sync_broker_status: brokerStatus(),
         sync_list_documents: [
           {
             path: PATH,
@@ -86,7 +133,7 @@ describe('NativeSyncTransport', () => {
 
     const oversizedChunk = createTransport(
       nativeInvoke({
-        sync_broker_status: { gatewayOrigin: ORIGIN },
+        sync_broker_status: brokerStatus(),
         sync_download_begin: {
           transferId: 'transfer-12345678',
           size: 16_385,
@@ -108,7 +155,7 @@ describe('NativeSyncTransport', () => {
     const content = new Blob([new Uint8Array(40_000).fill(7)]);
     const progress: number[] = [];
     const invoke = nativeInvoke({
-      sync_broker_status: { gatewayOrigin: ORIGIN },
+      sync_broker_status: brokerStatus(),
       sync_upload_begin: { transferId: 'transfer-12345678' },
       sync_upload_chunk: undefined,
       sync_upload_finish: {
@@ -155,7 +202,7 @@ describe('NativeSyncTransport', () => {
   it('maps conflicts and redirect failures without leaking native detail', async () => {
     const invoke = vi.fn<NativeSyncInvoke>(async (command) => {
       if (command === 'sync_broker_status') {
-        return { gatewayOrigin: ORIGIN };
+        return brokerStatus();
       }
       throw {
         code:
@@ -183,7 +230,7 @@ describe('NativeSyncTransport', () => {
     let revisionAttempt = 0;
     const invoke = vi.fn<NativeSyncInvoke>(async (command) => {
       if (command === 'sync_broker_status') {
-        return { gatewayOrigin: ORIGIN };
+        return brokerStatus();
       }
       if (command === 'sync_destination_revision') {
         revisionAttempt += 1;
@@ -224,7 +271,7 @@ describe('NativeSyncTransport', () => {
     });
     const invoke = vi.fn<NativeSyncInvoke>(async (command) => {
       if (command === 'sync_broker_status') {
-        return { gatewayOrigin: ORIGIN };
+        return brokerStatus();
       }
       if (command === 'sync_read_document') {
         return pendingRead;

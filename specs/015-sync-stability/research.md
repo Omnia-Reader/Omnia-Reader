@@ -164,6 +164,16 @@ dependency graph where possible:
   owns the cookie jar and clears reusable authority on exit while preserving
   local books and pending operations.
 
+The T025 persistence-policy checkpoint on 2026-09-12 rechecked the current
+Rust keyring choices with `cargo info`. `keyring` 4.2.0 and its
+`android-native-keyring-store` 1.0.0 backend both require Rust 1.88.0, above
+this crate's declared Rust 1.77.2 baseline. The compatible `keyring` 3.6.3
+requires Rust 1.75 but has no Android-native backend. Therefore this checkpoint
+adds no credential-store dependency and makes no protected-host claim. It
+implements and tests the sealed Rust persistence contract, but the production
+factory remains explicitly `session-only` until each selected OS store is
+pinned and passes packaged restart, failure, and canary gates.
+
 This selection adds no JavaScript network authority and no new browser runtime
 dependency. Cargo must pin all three direct declarations exactly (only
 `reqwest` and `url` add newly resolved crate families) and preserve the lockfile

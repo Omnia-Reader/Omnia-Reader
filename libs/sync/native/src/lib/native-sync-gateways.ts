@@ -17,6 +17,7 @@ import {
   NativeSyncInvoke,
   NativeSyncProvider,
   NativeSyncTransport,
+  parseNativeSyncBrokerStatus,
 } from './native-sync-transport';
 
 export type NativeSyncListen = (
@@ -603,29 +604,12 @@ function nativeBrokerOrigin(
   value: unknown,
   allowInsecureLoopback: boolean,
 ): string {
-  if (!isRecord(value) || typeof value['gatewayOrigin'] !== 'string') {
-    throw new NativeAuthorizationError('invalid-response');
-  }
-  let url: URL;
   try {
-    url = new URL(value['gatewayOrigin']);
+    return parseNativeSyncBrokerStatus(value, allowInsecureLoopback)
+      .gatewayOrigin;
   } catch {
     throw new NativeAuthorizationError('invalid-response');
   }
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (
-    (url.protocol !== 'https:' &&
-      !(allowInsecureLoopback && url.protocol === 'http:' && loopback)) ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash ||
-    value['gatewayOrigin'] !== url.origin
-  ) {
-    throw new NativeAuthorizationError('invalid-response');
-  }
-  return url.origin;
 }
 
 function githubError(error: unknown): Error {

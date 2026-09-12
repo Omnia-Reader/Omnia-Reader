@@ -26,6 +26,8 @@ use tauri::{
 use url::Url;
 use uuid::Uuid;
 
+use crate::sync_session::{SessionPersistenceStatus, SyncSession};
+
 const MAX_ACTIVE_REQUESTS: usize = 16;
 const MAX_ACTIVE_TRANSFERS: usize = 8;
 const MAX_IPC_CHUNK_BYTES: usize = 8 * 1024 * 1024;
@@ -195,6 +197,8 @@ pub(crate) struct RemoteObject {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrokerStatus {
     gateway_origin: String,
+    #[serde(flatten)]
+    session_persistence: SessionPersistenceStatus,
 }
 
 #[derive(Debug, Deserialize)]
@@ -420,6 +424,7 @@ pub(crate) struct SyncBroker {
     origin: Url,
     origin_header: HeaderValue,
     client: Mutex<Client>,
+    session: SyncSession,
     requests: Mutex<HashMap<String, Arc<CancellationSignal>>>,
     downloads: Mutex<HashMap<String, DownloadTransfer>>,
     uploads: Mutex<HashMap<String, UploadTransfer>>,
@@ -448,11 +453,18 @@ impl SyncBroker {
         let origin_string = origin.origin().ascii_serialization();
         let origin_header = HeaderValue::from_str(&origin_string)
             .map_err(|_| BrokerError::new("origin-mismatch"))?;
-        let client = build_client(origin.scheme() == "https")?;
+        let session = SyncSession::session_only(origin.clone());
+        let client = build_client(
+            origin.scheme() == "https",
+            session
+                .jar()
+                .map_err(|_| BrokerError::new("transport-unavailable"))?,
+        )?;
         Ok(Self {
             origin,
             origin_header,
             client: Mutex::new(client),
+            session,
             requests: Mutex::new(HashMap::new()),
             downloads: Mutex::new(HashMap::new()),
             uploads: Mutex::new(HashMap::new()),
@@ -465,6 +477,10 @@ impl SyncBroker {
         self.ensure_open()?;
         Ok(BrokerStatus {
             gateway_origin: self.origin.origin().ascii_serialization(),
+            session_persistence: self
+                .session
+                .status()
+                .map_err(|_| BrokerError::new("transport-unavailable"))?,
         })
     }
 
@@ -636,6 +652,19 @@ impl SyncBroker {
         Ok(lock(&self.client)?.clone())
     }
 
+    fn persist_session(&self) -> BrokerResult<()> {
+        if self.session.persist(unix_time_ms()).is_ok() {
+            return Ok(());
+        }
+        *lock(&self.client)? = build_client(
+            self.origin.scheme() == "https",
+            self.session
+                .jar()
+                .map_err(|_| BrokerError::new("transport-unavailable"))?,
+        )?;
+        Err(BrokerError::new("transport-unavailable"))
+    }
+
     fn url(&self, provider: Provider, suffix: &str, query: &[(&str, &str)]) -> BrokerResult<Url> {
         self.ensure_open()?;
         let mut url = self.origin.clone();
@@ -744,6 +773,7 @@ impl SyncBroker {
         if status.is_redirection() {
             return Err(BrokerError::new("redirect-denied"));
         }
+        self.persist_session()?;
         if !status.is_success() && !allowed.contains(&status) {
             return Err(status_error(status, response.headers()));
         }
@@ -834,7 +864,15 @@ impl SyncBroker {
             transfer.cleanup();
         }
         self.active_transfers.store(0, Ordering::Release);
-        *lock(&self.client)? = build_client(self.origin.scheme() == "https")?;
+        self.session
+            .drop_process_authority()
+            .map_err(|_| BrokerError::new("transport-unavailable"))?;
+        *lock(&self.client)? = build_client(
+            self.origin.scheme() == "https",
+            self.session
+                .jar()
+                .map_err(|_| BrokerError::new("transport-unavailable"))?,
+        )?;
         Ok(())
     }
 }
@@ -1609,8 +1647,7 @@ async fn download_chunk(
     })
 }
 
-fn build_client(https_only: bool) -> BrokerResult<Client> {
-    let jar = Arc::new(reqwest::cookie::Jar::default());
+fn build_client(https_only: bool, jar: Arc<reqwest::cookie::Jar>) -> BrokerResult<Client> {
     Client::builder()
         .cookie_provider(jar)
         .https_only(https_only)
@@ -1620,6 +1657,14 @@ fn build_client(https_only: bool) -> BrokerResult<Client> {
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(|_| BrokerError::new("transport-unavailable"))
+}
+
+fn unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 fn create_private_upload_file(path: &PathBuf) -> std::io::Result<std::fs::File> {

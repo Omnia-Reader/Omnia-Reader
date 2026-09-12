@@ -38,7 +38,16 @@ impl TestResponse {
 
 #[test]
 fn origins_are_exact_and_production_safe() {
-    assert!(SyncBroker::from_origin("https://sync.example.test", false).is_ok());
+    let broker = SyncBroker::from_origin("https://sync.example.test", false).unwrap();
+    assert_eq!(
+        serde_json::to_value(broker.status().unwrap()).unwrap(),
+        serde_json::json!({
+            "gatewayOrigin": "https://sync.example.test",
+            "persistenceMode": "session-only",
+            "persistenceVersion": null,
+            "restartRequiresReauthentication": true,
+        })
+    );
     for invalid in [
         "http://sync.example.test",
         "https://sync.example.test/",
