@@ -361,15 +361,25 @@ resources exist. Local container runtime, public HTTPS, and Redis failure
 injection therefore remain unavailable evidence rather than passing gates.
 
 The three synchronization release suites passed 27/27 tests, and `npm run
-release:test` passed 15/15 tests. `npm run release:verify` then passed both the
-production web build (424.42 kB raw and 93.65 kB estimated initial transfer)
-and production gateway build before correctly failing its production
-dependency audit. The current locked tree reports 13 production
-vulnerabilities: seven high and six moderate. The high findings include the
-Fastify validation stack and vulnerable `fast-uri` versions; the moderate
-findings include Angular Common below 22.1.1. This is an actionable release
-rejection, not unavailable evidence, so T056 remains open until the dependency
-tree is remediated and the complete verifier passes.
+release:test` passed 15/15 tests. The initial `npm run release:verify` passed
+both production builds before correctly rejecting 13 production dependency
+vulnerabilities: seven high and six moderate. The remediation advances the
+Angular runtime to 22.1.1, Fastify to 5.12.4, and the two locked `fast-uri`
+lines to 3.1.7 and 4.1.4. A strict `npm ci --ignore-scripts` passed and `npm
+audit --omit=dev` now reports zero production vulnerabilities. The application
+and gateway tests passed 192/192 and 136/138 with only the two expected
+environment-gated Redis skips; both lint and production build targets passed.
+The application initial bundle remains within budget at 424.83 kB raw and
+93.88 kB estimated transfer. A broader Angular 22.1.6 candidate was rejected
+before commit because it increased the initial bundle to 620.38 kB raw and
+151.02 kB estimated transfer.
+
+With a writable task-local Cargo cache, the complete release verifier now
+passes both builds and the production npm audit, then rejects seven locked Rust
+dependencies whose compound or CDLA license expressions have not yet been
+reviewed by the allowlist. This is the next actionable verifier boundary; it is
+not a dependency-download or sandbox failure. T056 remains open until that
+review and the unavailable container gates are completed.
 
 ## 5. Packaged-host proof and compatibility
 
