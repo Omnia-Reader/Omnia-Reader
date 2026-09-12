@@ -305,6 +305,13 @@ Feature 015 preparation evidence on 2026-09-12:
   native handoff, rotation, and provider route tables were reconciled against
   the implementation. This completes T054 as documentation evidence; a real
   production backup/restore exercise remains a release gate.
+- The release runbook now documents the exact digest-only
+  staging/canary/accept/rollback sequence, accepted-evidence binding, default
+  alert semantics, fixed-profile performance and transfer thresholds,
+  unavailable-gate rejection, mandatory canary scanning, sanitized diagnostic
+  correlation, and explicit accepted/rejected/trace retention periods. This
+  completes T055 as an operator contract; the protected workflow executions
+  remain T052/T057.
 
 ## 2. Deterministic browser convergence
 

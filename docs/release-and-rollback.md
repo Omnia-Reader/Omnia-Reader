@@ -90,6 +90,118 @@ license-gate failure; add a new expression to the reviewed set only after
 confirming the package, selected features, transitive use, and distribution
 obligations.
 
+## Synchronization evidence and protected promotion
+
+The synchronization evidence manifest follows
+`specs/015-sync-stability/contracts/sync-release-evidence.md`. A draft candidate
+may enter staging and canary, but production acceptance requires an explicit
+`accepted` result for the same full commit, release, and artifact digests. A
+failed, missing, or unavailable mandatory gate makes the aggregate decision
+`rejected`; an operator may not convert it to a skip or manually override it.
+The reportable physical Android-device gate is non-blocking unless the release
+claims physical-device support.
+
+The protected job supplies `OMNIA_SYNC_PROMOTION_DRIVER` as an absolute
+executable path and persists each sanitized JSON receipt outside the checkout.
+Run the phases in order:
+
+```sh
+node tools/release/sync-promotion.mjs stage candidate.json > staging-receipt.json
+node tools/release/sync-promotion.mjs canary candidate.json staging-receipt.json > canary-receipt.json
+node tools/release/verify-sync-evidence.mjs accepted.json
+npm run release:verify -- --sync-evidence accepted.json
+node tools/release/sync-promotion.mjs accept accepted.json canary-receipt.json > production-receipt.json
+```
+
+The driver receives only the phase, mode, full candidate identity, and logical
+artifact names with SHA-256 digests. It must deploy those exact digests without
+building or retagging and return the same identities in its receipt. A failed
+receipt stops the sequence. To recover a failed active candidate, pass its
+`rejected` evidence and the different, previously accepted evidence record:
+
+```sh
+node tools/release/sync-promotion.mjs rollback rejected.json previous-accepted.json > rollback-receipt.json
+```
+
+Rollback is valid only when the driver confirms the previously accepted
+digests. Never synthesize an accepted manifest from receipts or reuse a receipt
+from another commit, release, or artifact set.
+
+## Canary thresholds and decision window
+
+Record the injected alert policy with the candidate. The checked-in defaults
+require at least 20 observed gateway requests, then activate
+`sync-error-ratio` when server-error outcomes exceed 5 percent and
+`sync-latency-p95` when the bounded request sample p95 exceeds 2,000 ms.
+`sync-readiness` activates while readiness is unavailable or when consecutive
+readiness failures exceed the configured allowance; the checked-in allowance
+is zero. These values come from `OMNIA_SYNC_ALERT_MIN_REQUESTS`,
+`OMNIA_SYNC_ALERT_MAX_FAILURE_RATIO`, `OMNIA_SYNC_ALERT_MAX_P95_MS`, and
+`OMNIA_SYNC_ALERT_MAX_READINESS_FAILURES`; an invalid value prevents startup.
+
+The canary passes only when all of the following are true:
+
+- Public readiness and the private `omnia_sync_readiness` gauge remain healthy
+  throughout the steady observation window.
+- Every `omnia_sync_alert{alert=...}` gauge is zero after the representative
+  minimum request count, with no credential, integrity, data-loss, or sandbox
+  failure at any time.
+- The separate `sync-staging-v1` evidence retains 200 measured attempts after
+  20 warm-ups, with at least 95 percent of targeted reading-state changes
+  visible within 15 seconds and at least 95 percent of manual targeted syncs
+  completing within 2 seconds.
+- The no-change path transfers no publication, and the 25 MiB cancellation,
+  retry, monotonic-progress, 8 MiB unacknowledged-buffer, and 64 MiB incremental
+  RSS limits pass on every claimed packaged host.
+- An isolated injected readiness failure and elevated error/latency exercise
+  activates the expected alerts, records recovery, and returns to a clean
+  steady state before the real canary window begins.
+
+Any security, integrity, or local-data failure rejects the candidate
+immediately. A readiness or alert threshold breach fails the canary receipt and
+keeps production acceptance disabled; use rollback when the candidate is
+already serving traffic.
+
+## Sanitized diagnostics and evidence retention
+
+Before uploading evidence, assemble non-empty `trace`, `ipc`, `log`, `report`,
+`redirect`, `evidence`, and `synchronized-record` directories under one bounded
+scan root. Inject secret canaries only through the protected
+`OMNIA_SYNC_SECRET_CANARIES` environment variable and run:
+
+```sh
+node tools/release/scan-sync-evidence.mjs /protected/path/to/scan-root
+```
+
+The scan must pass before any artifact leaves the protected runner. Preserve
+the manifest's gate ID, attempt, sanitized environment profile, relative
+artifact name, and workflow run identity as the diagnostic correlation; do not
+substitute account, repository, path, publication, session, or provider error
+text. Limit access to failed traces and internal logs to release and security
+operators.
+
+Retention policy:
+
+- Keep each accepted manifest, release checksum manifest, SBOM, provenance,
+  vulnerability decision, signatures, promotion receipts, rollback receipts,
+  and immutable artifact digests for the entire supported lifetime of that
+  release plus one year.
+- Keep the complete previous accepted evidence set and deployable artifacts
+  online until at least one newer candidate is accepted and the documented
+  rollback window closes; archive them under the longer accepted-record policy.
+- Keep rejected manifests and their sanitized aggregate reports for 90 days so
+  repeated failures can be diagnosed. Keep bulky sanitized traces, IPC captures,
+  and logs for 30 days unless an active incident hold requires longer.
+- Delete test canary values immediately after scanning. Never retain provider
+  credentials, reusable sessions, transfer URLs, publication contents, or raw
+  provider-controlled errors as release evidence.
+
+Record unavailable gates in `unavailableGates` with a bounded
+application-owned reason, retain that rejected manifest under the same 90-day
+policy, and rerun only the missing environment against the same immutable
+candidate when it becomes available. A changed commit or artifact digest starts
+a new evidence set.
+
 ## Native and bridge artifacts
 
 Build native artifacts on supported, isolated runners for each target:
