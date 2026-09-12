@@ -235,6 +235,23 @@ Feature 015 preparation evidence on 2026-09-12:
   complete. T034 remains open: no OS backend is enabled and no protected-host
   claim is made because current cross-platform keyring releases exceed the
   declared Rust baseline and still require packaged platform proof.
+- The exact T039 cross-project command passed 423/423 tests across sync-core,
+  sync-git, sync-gateway, sync-native, and platform; the gateway's two
+  environment-gated Redis cases were explicitly skipped in this non-Redis run.
+  The paired locked Rust command passed 27/27 tests. T039 is complete; this
+  deterministic evidence does not replace the real-Redis and packaged-host
+  gates in T040.
+- Provider maturity remains centrally and history-independently classified as
+  experimental for both Git + LFS and MEGA. Settings cards and the global sync
+  status expose the text label and consequence without relying on color, and
+  preserve it through ready, active, success, failure, recovery, and restart
+  states. The focused T065 commands passed 216/216 sync-core tests and 192/192
+  application tests with the Nx cache disabled. The touch-sized 360 px
+  accessibility journey passed Chromium, Firefox, and WebKit (1/1 each),
+  covering Axe WCAG 2.0/2.1/2.2 A/AA checks, keyboard focus/activation, touch,
+  restart persistence, provider consequences, and browser error monitoring.
+  The production application build passed at 424.42 kB raw and 93.65 kB
+  estimated initial transfer size.
 
 ## 2. Deterministic browser convergence
 

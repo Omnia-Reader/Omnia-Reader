@@ -17,12 +17,19 @@ describe('NavigationComponent', () => {
   let unregisterTransientHandler: ReturnType<typeof vi.fn>;
   let syncStatusListener: ((status: AutoSyncStatus) => void) | null;
   let unregisterSyncStatus: ReturnType<typeof vi.fn>;
+  const gitMaturity = {
+    providerMaturity: 'experimental' as const,
+    providerMaturityLabel: 'Experimental' as const,
+    providerMaturityConsequence:
+      'Release validation is incomplete; keep another backup.',
+  };
   const connection = signal<SyncConnectionSnapshot>({
     state: 'ready',
     provider: 'git',
     providerLabel: 'GitHub',
     accountLabel: 'reader',
     destinationLabel: 'reader/library',
+    ...gitMaturity,
   });
 
   beforeEach(async () => {
@@ -36,6 +43,7 @@ describe('NavigationComponent', () => {
       providerLabel: 'GitHub',
       accountLabel: 'reader',
       destinationLabel: 'reader/library',
+      ...gitMaturity,
     });
     await TestBed.configureTestingModule({
       imports: [NavigationComponent],
@@ -135,7 +143,9 @@ describe('NavigationComponent', () => {
 
     expect(statusLink.getAttribute('href')).toBe('/settings/sync');
     expect(statusLink.textContent).toContain('Sync ready');
+    expect(statusLink.textContent).toContain('Experimental');
     expect(statusLink.getAttribute('title')).toContain('reader/library');
+    expect(statusLink.getAttribute('title')).toContain('keep another backup');
   });
 
   it('reports live transfer progress and actionable failures globally', () => {
@@ -159,7 +169,7 @@ describe('NavigationComponent', () => {
     );
     expect(statusLink.textContent).toContain('Syncing 25%');
     expect(statusLink.getAttribute('aria-label')).toBe(
-      'Syncing 25%. View sync details.',
+      'Syncing 25%. Experimental provider. Release validation is incomplete; keep another backup. View sync details.',
     );
 
     syncStatusListener({
@@ -170,8 +180,16 @@ describe('NavigationComponent', () => {
 
     expect(statusLink.textContent).toContain('Sync needs attention');
     expect(statusLink.getAttribute('title')).toBe(
-      'Reconnect GitHub to continue synchronization.',
+      'Reconnect GitHub to continue synchronization. Experimental provider. Release validation is incomplete; keep another backup.',
     );
+
+    syncStatusListener({
+      phase: 'idle',
+      lastSuccessAt: '2026-09-12T12:00:00.000Z',
+    });
+    fixture.detectChanges();
+    expect(statusLink.textContent).toContain('Synced');
+    expect(statusLink.textContent).toContain('Experimental');
   });
 
   it('guides users to configure synchronization and releases its listener', () => {
@@ -203,6 +221,7 @@ describe('NavigationComponent', () => {
       provider: 'git',
       providerLabel: 'GitHub',
       accountLabel: 'reader',
+      ...gitMaturity,
     });
     fixture.detectChanges();
 

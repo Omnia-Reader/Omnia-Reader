@@ -79,6 +79,10 @@ describe('SyncConnectionStatusService', () => {
       state: 'ready',
       provider: 'git',
       providerLabel: 'GitHub',
+      providerMaturity: 'experimental',
+      providerMaturityLabel: 'Experimental',
+      providerMaturityConsequence:
+        'Release validation is incomplete; keep another backup.',
       accountLabel: 'reader',
       destinationLabel: 'reader/library',
     });
@@ -105,6 +109,8 @@ describe('SyncConnectionStatusService', () => {
     expect(service.snapshot()).toMatchObject({
       state: 'gateway-unavailable',
       provider: 'git',
+      providerMaturity: 'experimental',
+      providerMaturityLabel: 'Experimental',
     });
     expect(JSON.stringify(service.snapshot())).not.toContain('sensitive');
   });
@@ -187,5 +193,37 @@ describe('SyncConnectionStatusService', () => {
       installationUrl: 'https://github.test/install',
     });
     await first;
+  });
+
+  it('keeps maturity independent from successful history and recovery state', async () => {
+    git.session.mockResolvedValueOnce({
+      configured: true,
+      authenticated: true,
+      installationUrl: 'https://github.test/install',
+      user: { id: 1, login: 'reader', avatarUrl: '' },
+      repository: {
+        id: 11,
+        fullName: 'reader/library',
+        private: true,
+        defaultBranch: 'main',
+        canPush: true,
+      },
+    });
+    const service = TestBed.inject(SyncConnectionStatusService);
+    await service.refresh();
+    expect(service.snapshot().providerMaturityLabel).toBe('Experimental');
+
+    git.session.mockRejectedValueOnce(
+      new GitHubGatewayError(401, 'provider-secret-canary'),
+    );
+    await service.refresh();
+    expect(service.snapshot()).toMatchObject({
+      state: 'gateway-unavailable',
+      providerMaturity: 'experimental',
+      providerMaturityLabel: 'Experimental',
+      providerMaturityConsequence:
+        'Release validation is incomplete; keep another backup.',
+    });
+    expect(JSON.stringify(service.snapshot())).not.toContain('secret-canary');
   });
 });

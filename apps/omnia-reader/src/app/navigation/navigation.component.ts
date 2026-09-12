@@ -50,6 +50,34 @@ export class NavigationComponent implements OnDestroy {
     return this.autoSync ? '/settings/sync' : '/settings';
   }
 
+  get syncMaturityLabel(): string | null {
+    return this.syncConnection.snapshot().providerMaturityLabel ?? null;
+  }
+
+  get syncMaturityDescription(): string {
+    const connection = this.syncConnection.snapshot();
+    return connection.providerMaturityLabel &&
+      connection.providerMaturityConsequence
+      ? `${connection.providerMaturityLabel} provider. ${connection.providerMaturityConsequence}`
+      : '';
+  }
+
+  get syncStatusAriaLabel(): string {
+    return [
+      `${this.syncStatusLabel}.`,
+      this.syncMaturityDescription,
+      'View sync details.',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  get syncStatusTitle(): string {
+    return [this.syncStatusDescription, this.syncMaturityDescription]
+      .filter(Boolean)
+      .join(' ');
+  }
+
   get syncStatusLabel(): string {
     if (!this.autoSync) {
       return 'Local only';

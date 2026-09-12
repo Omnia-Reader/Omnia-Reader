@@ -2,6 +2,8 @@ import { DestroyRef, Injectable, inject, signal } from '@angular/core';
 import {
   SYNC_PROVIDER_SELECTION,
   SyncProviderKind,
+  SyncProviderMaturity,
+  syncProviderPresentation,
 } from '@omnia-reader/sync/core';
 import {
   GITHUB_GATEWAY,
@@ -27,6 +29,9 @@ export interface SyncConnectionSnapshot {
   state: SyncConnectionState;
   provider: SyncProviderKind | null;
   providerLabel?: string;
+  providerMaturity?: SyncProviderMaturity;
+  providerMaturityLabel?: 'Experimental' | 'Supported';
+  providerMaturityConsequence?: string;
   accountLabel?: string;
   destinationLabel?: string;
 }
@@ -84,7 +89,7 @@ export class SyncConnectionStatusService {
     this.publish(generation, {
       state: 'checking',
       provider,
-      providerLabel: providerName(provider),
+      ...providerDetails(provider),
     });
     try {
       const next =
@@ -99,7 +104,7 @@ export class SyncConnectionStatusService {
       return this.publish(generation, {
         state,
         provider,
-        providerLabel: providerName(provider),
+        ...providerDetails(provider),
       });
     }
   }
@@ -121,21 +126,25 @@ async function inspectGit(
   provider: 'git',
 ): Promise<SyncConnectionSnapshot> {
   if (!gateway) {
-    return { state: 'gateway-unavailable', provider, providerLabel: 'GitHub' };
+    return {
+      state: 'gateway-unavailable',
+      provider,
+      ...providerDetails(provider),
+    };
   }
   const session = await gateway.session();
   if (!session.configured) {
     return {
       state: 'provider-unconfigured',
       provider,
-      providerLabel: 'GitHub',
+      ...providerDetails(provider),
     };
   }
   if (!session.authenticated) {
     return {
       state: 'authorization-required',
       provider,
-      providerLabel: 'GitHub',
+      ...providerDetails(provider),
     };
   }
   if (!session.repository) {
@@ -143,14 +152,14 @@ async function inspectGit(
     return {
       state: 'destination-required',
       provider,
-      providerLabel: 'GitHub',
+      ...providerDetails(provider),
       accountLabel: session.user.login,
     };
   }
   return {
     state: 'ready',
     provider,
-    providerLabel: 'GitHub',
+    ...providerDetails(provider),
     accountLabel: session.user.login,
     destinationLabel: session.repository.fullName,
   };
@@ -161,28 +170,32 @@ async function inspectMega(
   provider: 'mega',
 ): Promise<SyncConnectionSnapshot> {
   if (!gateway) {
-    return { state: 'gateway-unavailable', provider, providerLabel: 'MEGA' };
+    return {
+      state: 'gateway-unavailable',
+      provider,
+      ...providerDetails(provider),
+    };
   }
   const session = await gateway.session();
   if (!session.authenticated) {
     return {
       state: 'authorization-required',
       provider,
-      providerLabel: 'MEGA',
+      ...providerDetails(provider),
     };
   }
   if (!session.folder) {
     return {
       state: 'destination-required',
       provider,
-      providerLabel: 'MEGA',
+      ...providerDetails(provider),
       accountLabel: session.account,
     };
   }
   return {
     state: 'ready',
     provider,
-    providerLabel: 'MEGA',
+    ...providerDetails(provider),
     accountLabel: session.account,
     destinationLabel: session.folder.path,
   };
@@ -197,6 +210,20 @@ function isProviderUnconfigured(error: unknown): boolean {
   );
 }
 
-function providerName(provider: SyncProviderKind): string {
-  return provider === 'git' ? 'GitHub' : 'MEGA';
+function providerDetails(
+  provider: SyncProviderKind,
+): Pick<
+  SyncConnectionSnapshot,
+  | 'providerLabel'
+  | 'providerMaturity'
+  | 'providerMaturityLabel'
+  | 'providerMaturityConsequence'
+> {
+  const presentation = syncProviderPresentation(provider);
+  return {
+    providerLabel: provider === 'git' ? 'GitHub' : presentation.name,
+    providerMaturity: presentation.maturity,
+    providerMaturityLabel: presentation.maturityLabel,
+    providerMaturityConsequence: presentation.consequence,
+  };
 }

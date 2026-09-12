@@ -158,40 +158,78 @@
 
   <fieldset class="mb-6">
     <legend class="mb-3 text-sm font-semibold">Sync provider</legend>
-    <div class="grid gap-3 sm:grid-cols-2">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <button
-        class="rounded-xl border p-4 text-left transition"
+        class="min-h-24 rounded-xl border p-4 text-left transition"
         [class.border-violet-600]="selectedProvider === 'git'"
         [class.bg-violet-50]="selectedProvider === 'git'"
         [class.border-stone-300]="selectedProvider !== 'git'"
         type="button"
+        aria-describedby="git-provider-description git-provider-maturity-consequence"
+        data-testid="sync-provider-git"
         [disabled]="busy || loading || automaticSyncBusy"
         (click)="chooseProvider('git')"
       >
-        <span class="flex items-center justify-between gap-3 font-semibold">
-          Git + LFS
-          <span
-            class="rounded-full bg-violet-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-violet-800 uppercase"
-          >
-            Recommended
+        <span class="flex flex-wrap items-center justify-between gap-2">
+          <span class="font-semibold">{{ gitPresentation.name }}</span>
+          <span class="flex flex-wrap gap-2">
+            <span
+              class="rounded-full border border-stone-500 bg-stone-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-stone-900 uppercase"
+              data-testid="sync-provider-git-maturity"
+            >
+              {{ gitPresentation.maturityLabel }}
+            </span>
+            <span
+              class="rounded-full bg-violet-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-violet-800 uppercase"
+            >
+              Recommended
+            </span>
           </span>
         </span>
-        <span class="mt-1 block text-sm text-stone-600">
+        <span
+          id="git-provider-description"
+          class="mt-1 block text-sm text-stone-600"
+        >
           JSON history in Git; EPUB and PDF files in Git LFS.
+        </span>
+        <span
+          id="git-provider-maturity-consequence"
+          class="mt-2 block text-sm font-medium text-stone-800"
+        >
+          {{ gitPresentation.consequence }}
         </span>
       </button>
       <button
-        class="rounded-xl border p-4 text-left transition"
+        class="min-h-24 rounded-xl border p-4 text-left transition"
         [class.border-violet-600]="selectedProvider === 'mega'"
         [class.bg-violet-50]="selectedProvider === 'mega'"
         [class.border-stone-300]="selectedProvider !== 'mega'"
         type="button"
+        aria-describedby="mega-provider-description mega-provider-maturity-consequence"
+        data-testid="sync-provider-mega"
         [disabled]="busy || loading || automaticSyncBusy"
         (click)="chooseProvider('mega')"
       >
-        <span class="block font-semibold">MEGA</span>
-        <span class="mt-1 block text-sm text-stone-600">
+        <span class="flex flex-wrap items-center justify-between gap-2">
+          <span class="font-semibold">{{ megaPresentation.name }}</span>
+          <span
+            class="rounded-full border border-stone-500 bg-stone-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-stone-900 uppercase"
+            data-testid="sync-provider-mega-maturity"
+          >
+            {{ megaPresentation.maturityLabel }}
+          </span>
+        </span>
+        <span
+          id="mega-provider-description"
+          class="mt-1 block text-sm text-stone-600"
+        >
           Encrypted publication and progress files in a MEGA folder.
+        </span>
+        <span
+          id="mega-provider-maturity-consequence"
+          class="mt-2 block text-sm font-medium text-stone-800"
+        >
+          {{ megaPresentation.consequence }}
         </span>
       </button>
     </div>

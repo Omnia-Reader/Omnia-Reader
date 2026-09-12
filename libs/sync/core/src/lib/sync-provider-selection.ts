@@ -11,6 +11,55 @@ import {
 
 export type SyncProviderKind = 'git' | 'mega';
 
+export type SyncProviderMaturity = 'experimental' | 'supported';
+
+export type SyncProviderMaturityPolicy = Readonly<
+  Record<SyncProviderKind, SyncProviderMaturity>
+>;
+
+export interface SyncProviderPresentation {
+  provider: SyncProviderKind;
+  name: string;
+  maturity: SyncProviderMaturity;
+  maturityLabel: 'Experimental' | 'Supported';
+  consequence: string;
+}
+
+export const SYNC_PROVIDER_MATURITY_POLICY: SyncProviderMaturityPolicy =
+  Object.freeze({
+    git: 'experimental',
+    mega: 'experimental',
+  });
+
+const PROVIDER_NAMES: Readonly<Record<SyncProviderKind, string>> =
+  Object.freeze({
+    git: 'Git + LFS',
+    mega: 'MEGA',
+  });
+
+const EXPERIMENTAL_CONSEQUENCES: Readonly<Record<SyncProviderKind, string>> =
+  Object.freeze({
+    git: 'Release validation is incomplete; keep another backup.',
+    mega: 'Provider validation is incomplete; keep another backup.',
+  });
+
+export function syncProviderPresentation(
+  provider: SyncProviderKind,
+  policy: SyncProviderMaturityPolicy = SYNC_PROVIDER_MATURITY_POLICY,
+): SyncProviderPresentation {
+  const maturity = policy[provider];
+  return Object.freeze({
+    provider,
+    name: PROVIDER_NAMES[provider],
+    maturity,
+    maturityLabel: maturity === 'supported' ? 'Supported' : 'Experimental',
+    consequence:
+      maturity === 'supported'
+        ? 'Validated for production synchronization on supported platforms.'
+        : EXPERIMENTAL_CONSEQUENCES[provider],
+  });
+}
+
 export interface SyncProviderSelection {
   current(): SyncProviderKind | null;
   select(provider: SyncProviderKind): void;

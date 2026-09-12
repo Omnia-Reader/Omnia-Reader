@@ -3,7 +3,50 @@ import { LibrarySyncTransport } from './library-sync-transport';
 import {
   BrowserSyncProviderSelection,
   SelectedLibrarySyncTransport,
+  SYNC_PROVIDER_MATURITY_POLICY,
+  syncProviderPresentation,
 } from './sync-provider-selection';
+
+describe('sync provider presentation', () => {
+  it('keeps both production providers experimental until release evidence promotes them', () => {
+    expect(SYNC_PROVIDER_MATURITY_POLICY).toEqual({
+      git: 'experimental',
+      mega: 'experimental',
+    });
+    expect(syncProviderPresentation('git')).toMatchObject({
+      name: 'Git + LFS',
+      maturityLabel: 'Experimental',
+      consequence: expect.stringContaining('keep another backup'),
+    });
+    expect(syncProviderPresentation('mega')).toMatchObject({
+      name: 'MEGA',
+      maturityLabel: 'Experimental',
+      consequence: expect.stringContaining('keep another backup'),
+    });
+  });
+
+  it('derives supported copy only from an explicit policy, never selection history', () => {
+    const storage = new MemoryStorage();
+    const selection = new BrowserSyncProviderSelection(storage);
+    selection.select('git');
+    selection.select('mega');
+    storage.setItem('omnia-reader.sync-provider-history', 'successful');
+    const policy = { git: 'supported', mega: 'experimental' } as const;
+
+    expect(syncProviderPresentation('git', policy)).toEqual({
+      provider: 'git',
+      name: 'Git + LFS',
+      maturity: 'supported',
+      maturityLabel: 'Supported',
+      consequence:
+        'Validated for production synchronization on supported platforms.',
+    });
+    expect(syncProviderPresentation('mega', policy).maturity).toBe(
+      'experimental',
+    );
+    expect(syncProviderPresentation('git').maturity).toBe('experimental');
+  });
+});
 
 describe('BrowserSyncProviderSelection', () => {
   it('persists selections and notifies subscribers immediately', () => {

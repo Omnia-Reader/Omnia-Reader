@@ -24,6 +24,7 @@ import {
   SYNC_PROVIDER_SELECTION,
   SyncProviderKind,
   SyncWorkerResult,
+  syncProviderPresentation,
 } from '@omnia-reader/sync/core';
 import {
   GITHUB_GATEWAY,
@@ -51,6 +52,9 @@ import { DeleteRemoteBookDialogComponent } from './delete-remote-book-dialog.com
   imports: [DatePipe, MatButtonModule, MatIconModule, RouterLink],
 })
 export class SyncSettingsPageComponent implements OnInit {
+  readonly gitPresentation = syncProviderPresentation('git');
+  readonly megaPresentation = syncProviderPresentation('mega');
+
   private readonly journal = inject(SYNC_OPERATION_JOURNAL);
   private readonly repository = inject(LIBRARY_REPOSITORY);
   private readonly gitGateway = inject(GITHUB_GATEWAY);

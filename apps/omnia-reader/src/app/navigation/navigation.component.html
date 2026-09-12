@@ -85,8 +85,8 @@
         class="ml-auto flex min-h-10 items-center gap-2 rounded-full px-3 text-sm font-medium no-underline transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
         [ngClass]="syncStatusClasses"
         [routerLink]="syncSettingsRoute"
-        [attr.aria-label]="syncStatusLabel + '. View sync details.'"
-        [attr.title]="syncStatusDescription"
+        [attr.aria-label]="syncStatusAriaLabel"
+        [attr.title]="syncStatusTitle"
       >
         <span
           class="material-icons text-xl"
@@ -100,8 +100,17 @@
           {{ syncStatusIcon }}
         </span>
         <span class="hidden sm:inline">{{ syncStatusLabel }}</span>
+        @if (syncMaturityLabel) {
+          <span
+            class="rounded-full border border-current px-1.5 py-0.5 text-[0.625rem] font-bold tracking-wide uppercase"
+            aria-hidden="true"
+            data-testid="global-sync-maturity"
+          >
+            {{ syncMaturityLabel }}
+          </span>
+        }
       </a>
-      <span class="sr-only" aria-live="polite">{{ syncStatusLabel }}</span>
+      <span class="sr-only" aria-live="polite">{{ syncStatusAriaLabel }}</span>
     </header>
     <router-outlet></router-outlet>
   </div>

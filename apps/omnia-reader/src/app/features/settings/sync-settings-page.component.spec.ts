@@ -981,6 +981,42 @@ describe('SyncSettingsPageComponent', () => {
     expect(providerButtons.every((button) => button.disabled)).toBe(false);
   });
 
+  it('labels provider maturity and consequences with keyboard and narrow touch-safe cards', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const fieldset = root.querySelector('fieldset');
+    const git = root.querySelector<HTMLButtonElement>(
+      '[data-testid="sync-provider-git"]',
+    );
+    const mega = root.querySelector<HTMLButtonElement>(
+      '[data-testid="sync-provider-mega"]',
+    );
+    expect(fieldset?.querySelector('.grid')?.classList).toContain(
+      'grid-cols-1',
+    );
+    for (const button of [git, mega]) {
+      expect(button?.type).toBe('button');
+      expect(button?.classList).toContain('min-h-24');
+      const descriptions = button?.getAttribute('aria-describedby')?.split(' ');
+      expect(descriptions).toHaveLength(2);
+      expect(descriptions?.every((id) => !!root.querySelector(`#${id}`))).toBe(
+        true,
+      );
+    }
+    expect(git?.textContent).toContain('Git + LFS');
+    expect(git?.textContent).toContain('Experimental');
+    expect(git?.textContent).toContain('keep another backup');
+    expect(mega?.textContent).toContain('MEGA');
+    expect(mega?.textContent).toContain('Experimental');
+    expect(mega?.textContent).toContain('keep another backup');
+  });
+
   it('queues a complete library sync after selecting a destination', async () => {
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();

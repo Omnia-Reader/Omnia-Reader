@@ -104,7 +104,7 @@ authority, duplicate acknowledgement, or dangling publication reference.
 
 ### Verification for User Story 2
 
-- [ ] T039 [US2] Run `npx nx run-many -t test -p sync-core sync-git sync-gateway sync-native platform --skip-nx-cache` and `cargo test --manifest-path src-tauri/Cargo.toml`, recording results in `specs/015-sync-stability/quickstart.md`
+- [x] T039 [US2] Run `npx nx run-many -t test -p sync-core sync-git sync-gateway sync-native platform --skip-nx-cache` and `cargo test --manifest-path src-tauri/Cargo.toml`, recording results in `specs/015-sync-stability/quickstart.md`
 - [ ] T040 [US2] Run `OMNIA_SYNC_REDIS_TEST_URL=redis://127.0.0.1:6379/15 npx nx test sync-gateway --skip-nx-cache` plus packaged Linux, Windows, macOS, and Android targets; record unavailable host/emulator gates in `specs/015-sync-stability/quickstart.md`
 
 **Checkpoint**: User Story 2 is independently recoverable in browser and every
@@ -166,20 +166,20 @@ restart. Production GitHub stays experimental until T074.
 
 ### Tests for User Story 4
 
-- [ ] T058 [P] [US4] Add maturity-policy and history-independence assertions to `libs/sync/core/src/lib/sync-provider-selection.spec.ts`
-- [ ] T059 [P] [US4] Add card label, consequence, screen-reader, keyboard, touch, and narrow-viewport assertions to `apps/omnia-reader/src/app/features/settings/sync-settings-page.component.spec.ts`
-- [ ] T060 [P] [US4] Add ready/syncing/success/error/recovery maturity assertions to `apps/omnia-reader/src/app/navigation/navigation.component.spec.ts` and `apps/omnia-reader/src/app/sync-connection-status.service.spec.ts`
-- [ ] T061 [P] [US4] Add axe, keyboard, focus, touch, restart, and color-independent journeys to `apps/omnia-reader-e2e/src/sync-accessibility.spec.ts`
+- [x] T058 [P] [US4] Add maturity-policy and history-independence assertions to `libs/sync/core/src/lib/sync-provider-selection.spec.ts`
+- [x] T059 [P] [US4] Add card label, consequence, screen-reader, keyboard, touch, and narrow-viewport assertions to `apps/omnia-reader/src/app/features/settings/sync-settings-page.component.spec.ts`
+- [x] T060 [P] [US4] Add ready/syncing/success/error/recovery maturity assertions to `apps/omnia-reader/src/app/navigation/navigation.component.spec.ts` and `apps/omnia-reader/src/app/sync-connection-status.service.spec.ts`
+- [x] T061 [P] [US4] Add axe, keyboard, focus, touch, restart, and color-independent journeys to `apps/omnia-reader-e2e/src/sync-accessibility.spec.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T062 [US4] Add centralized provider presentation metadata with both providers initially experimental in `libs/sync/core/src/lib/sync-provider-selection.ts` and `libs/sync/core/src/index.ts`
-- [ ] T063 [US4] Render maturity labels and consequences in `apps/omnia-reader/src/app/features/settings/sync-settings-page.component.ts` and `.html`
-- [ ] T064 [US4] Carry maturity through toolbar and recovery status in `apps/omnia-reader/src/app/sync-connection-status.service.ts`, `apps/omnia-reader/src/app/navigation/navigation.component.ts`, and `.html`
+- [x] T062 [US4] Add centralized provider presentation metadata with both providers initially experimental in `libs/sync/core/src/lib/sync-provider-selection.ts` and `libs/sync/core/src/index.ts`
+- [x] T063 [US4] Render maturity labels and consequences in `apps/omnia-reader/src/app/features/settings/sync-settings-page.component.ts` and `.html`
+- [x] T064 [US4] Carry maturity through toolbar and recovery status in `apps/omnia-reader/src/app/sync-connection-status.service.ts`, `apps/omnia-reader/src/app/navigation/navigation.component.ts`, and `.html`
 
 ### Verification for User Story 4
 
-- [ ] T065 [US4] Run `npx nx test sync-core --skip-nx-cache`, `npx nx test omnia-reader --skip-nx-cache`, and the Chromium/Firefox/WebKit `sync-accessibility.spec.ts` matrix; record results in `specs/015-sync-stability/quickstart.md`
+- [x] T065 [US4] Run `npx nx test sync-core --skip-nx-cache`, `npx nx test omnia-reader --skip-nx-cache`, and the Chromium/Firefox/WebKit `sync-accessibility.spec.ts` matrix; record results in `specs/015-sync-stability/quickstart.md`
 
 **Checkpoint**: User Story 4 identifies maturity on every relevant surface and
 remains independently accessible.
