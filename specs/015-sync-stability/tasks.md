@@ -188,13 +188,13 @@ remains independently accessible.
 
 ## Final Phase: Cross-Cutting Acceptance and Promotion
 
-- [ ] T066 Reconcile all artifacts under `specs/015-sync-stability/` with implementation discoveries
+- [x] T066 Reconcile all artifacts under `specs/015-sync-stability/` with implementation discoveries
 - [x] T067 Run `npx nx run-many -t lint --all --skip-nx-cache` and record results in `specs/015-sync-stability/quickstart.md`
 - [x] T068 Run production builds for `omnia-reader` and `sync-gateway` with `--skip-nx-cache`, recording evidence in `specs/015-sync-stability/quickstart.md`
 - [x] T069 Run `npm audit --omit=dev`, `npm run release:test`, `npm run release:verify`, and `git diff --check`, recording results in `specs/015-sync-stability/quickstart.md`
-- [ ] T070 Run `$verify-omnia-reader` and preserve exact deterministic, browser, Redis, native, container, provider, and release evidence in `specs/015-sync-stability/quickstart.md`
-- [ ] T071 Run `$review-omnia-reader` across sync, gateway security, native authority, accessibility, CI, deployment, and release changes and resolve findings
-- [ ] T072 Update `docs/universal-reader-plan.md` only with verified status, architecture, release gates, and unavailable external evidence
+- [x] T070 Run `$verify-omnia-reader` and preserve exact deterministic, browser, Redis, native, container, provider, and release evidence in `specs/015-sync-stability/quickstart.md`
+- [x] T071 Run `$review-omnia-reader` across sync, gateway security, native authority, accessibility, CI, deployment, and release changes and resolve findings
+- [x] T072 Update `docs/universal-reader-plan.md` only with verified status, architecture, release gates, and unavailable external evidence
 - [ ] T073 Validate one immutable candidate against `specs/015-sync-stability/contracts/sync-release-evidence.md`; leave GitHub experimental when any mandatory gate fails or is unavailable
 - [ ] T074 Change GitHub maturity to `supported` in `libs/sync/core/src/lib/sync-provider-selection.ts` only after T073 accepts the evidence; keep MEGA experimental
 

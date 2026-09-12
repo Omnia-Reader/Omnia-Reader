@@ -356,6 +356,29 @@ Feature 015 preparation evidence on 2026-09-12:
   `npm audit --omit=dev` found zero vulnerabilities. The expanded 67-test
   release suite, full source-only release verifier, and `git diff --check` also
   passed against the resulting checkout, completing T067-T069.
+- The final `$verify-omnia-reader` pass ran all 13 Nx test projects serially
+  with the cache disabled: 780 tests passed and the two credentialed Redis
+  environment gates skipped as expected. The first complete
+  `omnia-reader-e2e:sync-convergence` run exposed one WebKit-only legacy-corpus
+  failure: Playwright cannot inspect an XHR `Blob` upload body, so the simulated
+  gateway received zero bytes during v1-to-v2 publication migration. The
+  compatibility harness now registers the corpus publication with the
+  simulator's existing size-and-digest-checked WebKit fallback. The exact
+  failing WebKit test then passed 1/1 in 10.2 seconds. A fresh full target,
+  including the production application build, passed all 27/27 compatibility
+  and Git/MEGA PDF/EPUB convergence cases across Chromium, Firefox, and WebKit
+  in 9m11s. Deterministic unit, browser, real-Redis, native contract, release,
+  lint, build, audit, formatting, and diff gates are therefore recorded as
+  passing. Container runtime, packaged host/emulator, protected live GitHub,
+  registry signing, staging/canary, deployment, and physical-device evidence
+  remain explicitly unavailable and cannot accept a release candidate.
+- The final `$review-omnia-reader` pass covered the complete Feature 015 diff,
+  with focused review of gateway/session security, native command authority,
+  accessible maturity presentation, browser compatibility, CI/deployment
+  promotion boundaries, evidence sanitization, and fail-closed release policy.
+  It found no remaining actionable code defect. Protected-test skips remain
+  limited to explicitly unavailable environments, both providers still report
+  `experimental`, and no unavailable gate is represented as passing.
 
 ## 2. Deterministic browser convergence
 

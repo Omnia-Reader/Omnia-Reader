@@ -1208,10 +1208,11 @@ termination.
 ### Phase 3: Full library synchronization
 
 Current delivery state: active for the Angular application, with GitHub as the
-supported priority path. Provider credentials are managed by same-origin
-gateway sessions rather than browser storage. The deterministic simulated
-provider journeys are opt-in; live credentialed GitHub validation and
-deployment to a real HTTPS environment remain release gates. A reference
+priority path but still explicitly experimental. Provider credentials are
+managed by same-origin gateway sessions rather than browser storage. The
+deterministic simulated provider journeys pass across Chromium, Firefox, and
+WebKit; live credentialed GitHub validation and deployment to a real HTTPS
+environment remain release gates. A reference
 same-origin production stack is implemented with digest-pinned non-root web and
 gateway images, an internal-only gateway, streamed publication proxying,
 read-only filesystems, health checks, and an executable container smoke gate.
@@ -1321,6 +1322,16 @@ gateway alongside it.
   two per-device progress documents, two bookmark documents, and two annotation
   documents at the remote boundary. The Git journey also proves retry after an
   interrupted object upload and an optimistic manifest conflict.
+- Verified for the synchronization-stability candidate: all 27 compatibility
+  and complete Git/MEGA PDF/EPUB convergence cases pass across Chromium,
+  Firefox, and WebKit. Desktop native sessions use the pinned `keyring` 3.6.3
+  platform backends; Android deliberately remains session-only and requires
+  reauthentication after restart. Deterministic unit, real-Redis, native
+  contract, release, lint, build, audit, formatting, and diff gates pass.
+  Container runtime, packaged host/emulator, protected live GitHub, registry
+  signing, staging/canary, deployment, and physical-device evidence remain
+  unavailable. GitHub therefore remains experimental and no immutable release
+  candidate is accepted.
 - Implemented: shared schema, provider migration, privacy, and recovery
   behavior.
 

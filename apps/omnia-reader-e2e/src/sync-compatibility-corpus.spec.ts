@@ -190,7 +190,11 @@ async function expectCorpusRestore(
   page: import('@playwright/test').Page,
   corpus: SyncCorpus,
 ): Promise<SimulatedSyncGateway> {
-  const gateway = new SimulatedSyncGateway('git');
+  const publication = requiredObject(corpus);
+  const publicationBytes = Buffer.from(publication.base64, 'base64');
+  const gateway = new SimulatedSyncGateway('git', {
+    expectedPublication: publicationBytes,
+  });
   for (const document of corpus.documents) {
     gateway.seedDocument(
       document.path,
@@ -198,7 +202,7 @@ async function expectCorpusRestore(
     );
   }
   for (const object of corpus.objects) {
-    gateway.seedObject(object.path, Buffer.from(object.base64, 'base64'), {
+    gateway.seedObject(object.path, publicationBytes, {
       mediaType: object.mediaType,
       size: object.size,
       sha256: object.sha256,
