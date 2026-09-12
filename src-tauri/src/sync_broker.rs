@@ -204,6 +204,72 @@ struct NativeHandoffResponse {
     outcome: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GitHubUserResponse {
+    id: u64,
+    login: String,
+    avatar_url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GitHubRepositoryResponse {
+    id: u64,
+    full_name: String,
+    private: bool,
+    default_branch: String,
+    can_push: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GitHubSessionResponse {
+    configured: bool,
+    authenticated: bool,
+    installation_url: Option<String>,
+    user: Option<GitHubUserResponse>,
+    repository: Option<GitHubRepositoryResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GitHubRepositoriesResponse {
+    repositories: Vec<GitHubRepositoryResponse>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GitHubRepositoryCreationResponse {
+    repository: GitHubRepositoryResponse,
+    selected: bool,
+    session: GitHubSessionResponse,
+    installation_settings_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MegaFolderResponse {
+    handle: String,
+    name: String,
+    path: String,
+    can_write: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MegaSessionResponse {
+    authenticated: bool,
+    account: Option<String>,
+    folder: Option<MegaFolderResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MegaFoldersResponse {
+    folders: Vec<MegaFolderResponse>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeAuthorizationOutcome {
     Authorized,
@@ -453,6 +519,111 @@ impl SyncBroker {
         }
     }
 
+    async fn github_session(&self, request_id: &str) -> BrokerResult<GitHubSessionResponse> {
+        let builder = self.request(Method::GET, Provider::Git, "/session", &[])?;
+        let (_, value): (_, GitHubSessionResponse) = self
+            .json(request_id, builder, &[], MAX_DOCUMENT_BYTES)
+            .await?;
+        validate_github_session(&value)?;
+        Ok(value)
+    }
+
+    async fn github_repositories(
+        &self,
+        request_id: &str,
+    ) -> BrokerResult<Vec<GitHubRepositoryResponse>> {
+        let builder = self.request(Method::GET, Provider::Git, "/repositories", &[])?;
+        let (_, value): (_, GitHubRepositoriesResponse) =
+            self.json(request_id, builder, &[], MAX_LIST_BYTES).await?;
+        if value.repositories.len() > MAX_LIST_ENTRIES {
+            return Err(BrokerError::new("invalid-response"));
+        }
+        for repository in &value.repositories {
+            validate_github_repository(repository)?;
+        }
+        Ok(value.repositories)
+    }
+
+    async fn github_select_repository(
+        &self,
+        request_id: &str,
+        repository_id: u64,
+    ) -> BrokerResult<GitHubSessionResponse> {
+        validate_positive_safe_integer(repository_id)?;
+        let builder = self
+            .request(Method::PUT, Provider::Git, "/repository", &[])?
+            .json(&serde_json::json!({ "repositoryId": repository_id }));
+        let (_, value): (_, GitHubSessionResponse) = self
+            .json(request_id, builder, &[], MAX_DOCUMENT_BYTES)
+            .await?;
+        validate_github_session(&value)?;
+        Ok(value)
+    }
+
+    async fn github_create_repository(
+        &self,
+        request_id: &str,
+        name: &str,
+    ) -> BrokerResult<GitHubRepositoryCreationResponse> {
+        validate_repository_name(name)?;
+        let builder = self
+            .request(Method::POST, Provider::Git, "/repository", &[])?
+            .json(&serde_json::json!({ "name": name }));
+        let (_, value): (_, GitHubRepositoryCreationResponse) = self
+            .json(request_id, builder, &[], MAX_DOCUMENT_BYTES)
+            .await?;
+        validate_github_repository(&value.repository)?;
+        validate_github_session(&value.session)?;
+        if let Some(url) = value.installation_settings_url.as_deref() {
+            validate_external_https_url(url)?;
+        }
+        Ok(value)
+    }
+
+    async fn mega_session(&self, request_id: &str) -> BrokerResult<MegaSessionResponse> {
+        let builder = self.request(Method::GET, Provider::Mega, "/session", &[])?;
+        let (_, value): (_, MegaSessionResponse) = self
+            .json(request_id, builder, &[], MAX_DOCUMENT_BYTES)
+            .await?;
+        validate_mega_session(&value)?;
+        Ok(value)
+    }
+
+    async fn mega_folders(&self, request_id: &str) -> BrokerResult<Vec<MegaFolderResponse>> {
+        let builder = self.request(Method::GET, Provider::Mega, "/folders", &[])?;
+        let (_, value): (_, MegaFoldersResponse) =
+            self.json(request_id, builder, &[], MAX_LIST_BYTES).await?;
+        if value.folders.len() > MAX_LIST_ENTRIES {
+            return Err(BrokerError::new("invalid-response"));
+        }
+        for folder in &value.folders {
+            validate_mega_folder(folder)?;
+        }
+        Ok(value.folders)
+    }
+
+    async fn mega_select_folder(
+        &self,
+        request_id: &str,
+        handle: &str,
+    ) -> BrokerResult<MegaSessionResponse> {
+        validate_bounded_string(handle, 1024)?;
+        let builder = self
+            .request(Method::PUT, Provider::Mega, "/folder", &[])?
+            .json(&serde_json::json!({ "handle": handle }));
+        let (_, value): (_, MegaSessionResponse) = self
+            .json(request_id, builder, &[], MAX_DOCUMENT_BYTES)
+            .await?;
+        validate_mega_session(&value)?;
+        Ok(value)
+    }
+
+    async fn disconnect_provider(&self, request_id: &str, provider: Provider) -> BrokerResult<()> {
+        let builder = self.request(Method::DELETE, provider, "/session", &[])?;
+        self.buffered_response(request_id, builder, &[], 0).await?;
+        Ok(())
+    }
+
     fn ensure_open(&self) -> BrokerResult<()> {
         if self.closed.load(Ordering::Acquire) {
             Err(BrokerError::new("transport-unavailable"))
@@ -681,6 +852,85 @@ impl Drop for SyncBroker {
 #[tauri::command]
 pub(crate) fn sync_broker_status(broker: State<'_, SyncBroker>) -> BrokerResult<BrokerStatus> {
     broker.status()
+}
+
+#[tauri::command]
+pub(crate) async fn sync_github_session(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+) -> BrokerResult<GitHubSessionResponse> {
+    broker.github_session(&request_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_github_repositories(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+) -> BrokerResult<Vec<GitHubRepositoryResponse>> {
+    broker.github_repositories(&request_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_github_select_repository(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+    repository_id: u64,
+) -> BrokerResult<GitHubSessionResponse> {
+    broker
+        .github_select_repository(&request_id, repository_id)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_github_create_repository(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+    name: String,
+) -> BrokerResult<GitHubRepositoryCreationResponse> {
+    broker.github_create_repository(&request_id, &name).await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_github_disconnect(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+) -> BrokerResult<()> {
+    broker.disconnect_provider(&request_id, Provider::Git).await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_mega_session(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+) -> BrokerResult<MegaSessionResponse> {
+    broker.mega_session(&request_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_mega_folders(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+) -> BrokerResult<Vec<MegaFolderResponse>> {
+    broker.mega_folders(&request_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_mega_select_folder(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+    handle: String,
+) -> BrokerResult<MegaSessionResponse> {
+    broker.mega_select_folder(&request_id, &handle).await
+}
+
+#[tauri::command]
+pub(crate) async fn sync_mega_disconnect(
+    broker: State<'_, SyncBroker>,
+    request_id: String,
+) -> BrokerResult<()> {
+    broker
+        .disconnect_provider(&request_id, Provider::Mega)
+        .await
 }
 
 #[tauri::command]
@@ -1421,6 +1671,148 @@ fn unsafe_literal_address(address: IpAddr) -> bool {
                     .is_some_and(|mapped| mapped.is_private() || mapped.is_loopback())
         }
     }
+}
+
+fn validate_github_session(value: &GitHubSessionResponse) -> BrokerResult<()> {
+    match (value.configured, value.authenticated) {
+        (false, false) => {
+            if value.installation_url.is_some()
+                || value.user.is_some()
+                || value.repository.is_some()
+            {
+                return Err(BrokerError::new("invalid-response"));
+            }
+        }
+        (true, false) => {
+            validate_external_https_url(
+                value
+                    .installation_url
+                    .as_deref()
+                    .ok_or_else(|| BrokerError::new("invalid-response"))?,
+            )?;
+            if value.user.is_some() || value.repository.is_some() {
+                return Err(BrokerError::new("invalid-response"));
+            }
+        }
+        (true, true) => {
+            validate_external_https_url(
+                value
+                    .installation_url
+                    .as_deref()
+                    .ok_or_else(|| BrokerError::new("invalid-response"))?,
+            )?;
+            let user = value
+                .user
+                .as_ref()
+                .ok_or_else(|| BrokerError::new("invalid-response"))?;
+            validate_positive_safe_integer(user.id)?;
+            validate_bounded_string(&user.login, 256)?;
+            validate_external_https_url(&user.avatar_url)?;
+            if let Some(repository) = &value.repository {
+                validate_github_repository(repository)?;
+            }
+        }
+        (false, true) => return Err(BrokerError::new("invalid-response")),
+    }
+    Ok(())
+}
+
+fn validate_github_repository(value: &GitHubRepositoryResponse) -> BrokerResult<()> {
+    validate_positive_safe_integer(value.id)?;
+    validate_bounded_string(&value.full_name, 512)?;
+    let mut parts = value.full_name.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    if parts.next().is_some() || !github_name_part(owner) || !github_name_part(name) {
+        return Err(BrokerError::new("invalid-response"));
+    }
+    validate_bounded_string(&value.default_branch, 256)?;
+    if value.default_branch.contains(['\0', '/', '\\']) {
+        return Err(BrokerError::new("invalid-response"));
+    }
+    let _ = value.private;
+    let _ = value.can_push;
+    Ok(())
+}
+
+fn validate_mega_session(value: &MegaSessionResponse) -> BrokerResult<()> {
+    if !value.authenticated {
+        return if value.account.is_none() && value.folder.is_none() {
+            Ok(())
+        } else {
+            Err(BrokerError::new("invalid-response"))
+        };
+    }
+    validate_bounded_string(
+        value
+            .account
+            .as_deref()
+            .ok_or_else(|| BrokerError::new("invalid-response"))?,
+        320,
+    )?;
+    if let Some(folder) = &value.folder {
+        validate_mega_folder(folder)?;
+    }
+    Ok(())
+}
+
+fn validate_mega_folder(value: &MegaFolderResponse) -> BrokerResult<()> {
+    validate_bounded_string(&value.handle, 1024)?;
+    validate_bounded_string(&value.name, 1024)?;
+    validate_bounded_string(&value.path, 4096)?;
+    if value.path.contains('\0') {
+        return Err(BrokerError::new("invalid-response"));
+    }
+    let _ = value.can_write;
+    Ok(())
+}
+
+fn validate_repository_name(value: &str) -> BrokerResult<()> {
+    if value.is_empty()
+        || value.len() > 100
+        || matches!(value, "." | "..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return Err(BrokerError::new("invalid-response"));
+    }
+    Ok(())
+}
+
+fn github_name_part(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+}
+
+fn validate_external_https_url(value: &str) -> BrokerResult<()> {
+    let url = Url::parse(value).map_err(|_| BrokerError::new("invalid-response"))?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.host_str().is_none()
+        || url.fragment().is_some()
+    {
+        return Err(BrokerError::new("invalid-response"));
+    }
+    Ok(())
+}
+
+fn validate_positive_safe_integer(value: u64) -> BrokerResult<()> {
+    if value == 0 || value > 9_007_199_254_740_991 {
+        return Err(BrokerError::new("invalid-response"));
+    }
+    Ok(())
+}
+
+fn validate_bounded_string(value: &str, maximum: usize) -> BrokerResult<()> {
+    if value.is_empty() || value.len() > maximum || value.contains('\0') {
+        return Err(BrokerError::new("invalid-response"));
+    }
+    Ok(())
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> BrokerResult<MutexGuard<'_, T>> {

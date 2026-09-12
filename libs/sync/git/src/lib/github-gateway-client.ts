@@ -60,6 +60,7 @@ export interface GitHubGateway extends LibrarySyncTransport {
   createRepository(name: string): Promise<GitHubRepositoryCreationResult>;
   disconnect(): Promise<void>;
   beginAuthorization(returnTo?: string): Promise<void>;
+  cancelAuthorization?(): Promise<void>;
 }
 
 export class GitHubGatewayError extends Error {

@@ -167,6 +167,16 @@ pub(crate) fn sync_authorization_begin(
     }
 }
 
+#[tauri::command]
+pub(crate) fn sync_authorization_cancel(
+    authorizations: State<'_, NativeAuthorizationState>,
+    request_id: String,
+) -> BrokerResult<()> {
+    validate_native_request_id(&request_id)?;
+    authorizations.cancel(&request_id);
+    Ok(())
+}
+
 pub(crate) fn emit_native_authorization_deep_links(
     app: &AppHandle,
     urls: impl IntoIterator<Item = tauri::Url>,

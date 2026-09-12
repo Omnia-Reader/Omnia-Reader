@@ -45,6 +45,14 @@ hard-coded encryption secret.
    replay state, then redeems the handoff directly into its opaque session jar.
 5. The webview receives only sanitized readiness state.
 
+The packaged Settings client must register its completion listener before it
+starts the broker handoff or opens the system browser. It accepts an
+authorization URL only when the origin equals the broker's separately validated
+gateway origin and the path, provider, and request binding are exact. Cancel,
+timeout, expiry, and permission-loss outcomes clear the pending request, keep
+local reader data intact, refresh the provider state, and restore focus to a
+safe connection action.
+
 The handoff never contains provider tokens, gateway cookies, reusable session
 material, account passwords, or publication content.
 

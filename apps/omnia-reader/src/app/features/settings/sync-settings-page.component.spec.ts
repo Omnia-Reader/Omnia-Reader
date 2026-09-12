@@ -330,6 +330,133 @@ describe('SyncSettingsPageComponent', () => {
     ).toContain('GitHub sync gateway is unavailable');
   });
 
+  it('waits for packaged authorization, refreshes the native session, and restores focus', async () => {
+    selected = 'git';
+    let completeAuthorization = (): void => undefined;
+    const authorization = new Promise<void>((resolve) => {
+      completeAuthorization = resolve;
+    });
+    vi.mocked(git.beginAuthorization).mockReturnValue(authorization);
+    git.cancelAuthorization = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(git.session)
+      .mockResolvedValueOnce({
+        configured: true,
+        authenticated: false,
+        installationUrl,
+      })
+      .mockResolvedValue({
+        configured: true,
+        authenticated: true,
+        installationUrl,
+        user: { id: 42, login: 'reader', avatarUrl: '' },
+        repository: null,
+      });
+    vi.mocked(git.repositories).mockResolvedValue([]);
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    const connecting = fixture.componentInstance.connect();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.authorizationPending).toBe(true),
+    );
+    fixture.detectChanges();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="native-authorization-pending"]',
+      )?.textContent,
+    ).toContain('system browser');
+
+    completeAuthorization();
+    await connecting;
+    fixture.detectChanges();
+    expect(vi.mocked(git.session).mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(fixture.componentInstance.gitSession.authenticated).toBe(true);
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'Provider connected',
+    );
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          '[data-testid="sync-recovery-focus"]',
+        ),
+      ),
+    );
+  });
+
+  it('cancels packaged authorization without losing local data and restores the connect action', async () => {
+    selected = 'git';
+    let rejectAuthorization = (error: unknown): void => {
+      void error;
+    };
+    vi.mocked(git.beginAuthorization).mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        rejectAuthorization = reject;
+      }),
+    );
+    git.cancelAuthorization = vi.fn(async () => {
+      rejectAuthorization(
+        new GitHubGatewayError(499, 'Provider-controlled cancellation'),
+      );
+    });
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    const connecting = fixture.componentInstance.connect();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.authorizationPending).toBe(true),
+    );
+    await fixture.componentInstance.cancelAuthorization();
+    await connecting;
+    fixture.detectChanges();
+
+    expect(git.cancelAuthorization).toHaveBeenCalledTimes(1);
+    expect(fixture.componentInstance.statusMessage).toContain(
+      'local library is unchanged',
+    );
+    expect(fixture.componentInstance.statusMessage).not.toContain(
+      'Provider-controlled',
+    );
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(
+        (fixture.nativeElement as HTMLElement).querySelector(
+          '[data-testid="sync-connect"]',
+        ),
+      ),
+    );
+  });
+
+  it('offers reconnect after a packaged authorization handoff expires', async () => {
+    selected = 'git';
+    git.cancelAuthorization = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(git.beginAuthorization).mockRejectedValue(
+      new GitHubGatewayError(401, 'provider-secret-canary'),
+    );
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+
+    await fixture.componentInstance.connect();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.errorMessage).toContain('Connect again');
+    expect(fixture.componentInstance.errorMessage).not.toContain(
+      'provider-secret-canary',
+    );
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="sync-connect"]',
+      ),
+    ).toBeTruthy();
+  });
+
   it('offers reconnection after GitHub revokes the provider session', async () => {
     selected = 'git';
     vi.mocked(git.session).mockResolvedValue({

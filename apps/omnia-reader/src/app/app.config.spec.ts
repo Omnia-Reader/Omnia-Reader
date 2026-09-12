@@ -11,8 +11,16 @@ import {
 } from '@omnia-reader/sync/core';
 import { GitHubGateway, SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
 import { MegaGateway } from '@omnia-reader/sync/mega';
-import { NativeSyncProvider } from '@omnia-reader/sync/native';
-import { appConfig, createSelectedSyncTransport } from './app.config';
+import {
+  NativeGitHubGateway,
+  NativeMegaGateway,
+} from '@omnia-reader/sync/native';
+import {
+  appConfig,
+  createGitHubGateway,
+  createMegaGateway,
+  createSelectedSyncTransport,
+} from './app.config';
 
 describe('appConfig synchronization composition', () => {
   it('uses one change-aware worker for shared manual and automatic synchronization', () => {
@@ -71,7 +79,6 @@ describe('appConfig synchronization composition', () => {
   it('keeps browser synchronization on the existing same-origin gateways', async () => {
     const git = syncTransport();
     const mega = syncTransport();
-    const createNative = vi.fn();
     const destroyRef = { onDestroy: vi.fn() };
 
     const transport = createSelectedSyncTransport(
@@ -80,26 +87,19 @@ describe('appConfig synchronization composition', () => {
       mega as unknown as MegaGateway,
       { kind: 'web' } as PlatformPort,
       destroyRef as never,
-      createNative,
     );
 
     await transport.read('.omnia-reader/manifest.json');
     expect(git.read).toHaveBeenCalledTimes(1);
     expect(mega.read).not.toHaveBeenCalled();
-    expect(createNative).not.toHaveBeenCalled();
     expect(destroyRef.onDestroy).not.toHaveBeenCalled();
   });
 
   it.each(['tauri-desktop', 'tauri-android'] as const)(
     'selects typed native transports and tears them down for %s',
     async (kind) => {
-      const browserGit = syncTransport();
-      const browserMega = syncTransport();
       const nativeGit = syncTransport();
       const nativeMega = syncTransport();
-      const createNative = vi.fn((provider: NativeSyncProvider) =>
-        provider === 'git' ? nativeGit : nativeMega,
-      );
       let destroy = (): void => undefined;
       const destroyRef = {
         onDestroy: vi.fn((callback: () => void) => {
@@ -109,27 +109,29 @@ describe('appConfig synchronization composition', () => {
 
       const transport = createSelectedSyncTransport(
         providerSelection('mega'),
-        browserGit as unknown as GitHubGateway,
-        browserMega as unknown as MegaGateway,
+        nativeGit as unknown as GitHubGateway,
+        nativeMega as unknown as MegaGateway,
         { kind } as PlatformPort,
         destroyRef as never,
-        createNative,
       );
       await transport.read('.omnia-reader/manifest.json');
 
-      expect(createNative.mock.calls.map(([provider]) => provider)).toEqual([
-        'git',
-        'mega',
-      ]);
       expect(nativeMega.read).toHaveBeenCalledTimes(1);
-      expect(browserGit.read).not.toHaveBeenCalled();
-      expect(browserMega.read).not.toHaveBeenCalled();
 
       destroy();
       await vi.waitFor(() => {
         expect(nativeGit.dispose).toHaveBeenCalledTimes(1);
         expect(nativeMega.dispose).toHaveBeenCalledTimes(1);
       });
+    },
+  );
+
+  it.each(['tauri-desktop', 'tauri-android'] as const)(
+    'provides native Settings gateways for %s',
+    (kind) => {
+      const platform = { kind } as PlatformPort;
+      expect(createGitHubGateway(platform)).toBeInstanceOf(NativeGitHubGateway);
+      expect(createMegaGateway(platform)).toBeInstanceOf(NativeMegaGateway);
     },
   );
 });

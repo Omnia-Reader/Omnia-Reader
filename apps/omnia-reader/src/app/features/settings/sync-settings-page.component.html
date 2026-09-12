@@ -6,7 +6,13 @@
   <p class="mb-0 text-xs font-bold tracking-[0.12em] text-violet-700 uppercase">
     Cross-device library
   </p>
-  <h1 class="mt-1 text-4xl font-semibold">Library sync</h1>
+  <h1
+    class="mt-1 text-4xl font-semibold"
+    tabindex="-1"
+    data-testid="sync-recovery-focus"
+  >
+    Library sync
+  </h1>
   <p class="max-w-2xl text-stone-600">
     Restore both publication files and exact reading positions on every device.
     Provider credentials stay in the server gateway; this app uses only a secure
@@ -221,6 +227,23 @@
         {{ statusMessage }}
       </p>
     }
+    @if (authorizationPending) {
+      <section
+        class="my-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 text-violet-950"
+        role="status"
+        aria-live="polite"
+        data-testid="native-authorization-pending"
+      >
+        <p class="m-0">Complete provider connection in your system browser.</p>
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="cancelAuthorization()"
+        >
+          Cancel connection
+        </button>
+      </section>
+    }
     @if (manualSyncController) {
       <section
         class="my-4 rounded-xl border border-violet-200 bg-violet-50 p-4"
@@ -342,6 +365,7 @@
             <button
               mat-flat-button
               type="button"
+              data-testid="sync-connect"
               [disabled]="busy || automaticSyncBusy || !gatewayAvailable.git"
               (click)="connect()"
             >
@@ -638,6 +662,7 @@
         <button
           mat-flat-button
           type="button"
+          data-testid="sync-connect"
           [disabled]="busy || automaticSyncBusy || !gatewayAvailable.mega"
           (click)="connect()"
         >

@@ -17,6 +17,7 @@ struct CapturedRequest {
     body: Vec<u8>,
 }
 
+#[derive(Clone)]
 struct TestResponse {
     status: &'static str,
     headers: Vec<(String, String)>,
@@ -186,6 +187,206 @@ async fn cookies_stay_opaque_and_request_headers_are_broker_owned() {
         .headers
         .get("cookie")
         .is_some_and(|value| value.contains(SECRET_CANARY)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settings_operations_are_provider_scoped_typed_and_cookie_owned() {
+    let repository = serde_json::json!({
+        "id": 7,
+        "fullName": "reader/library",
+        "private": true,
+        "defaultBranch": "main",
+        "canPush": true
+    });
+    let github_session = serde_json::json!({
+        "configured": true,
+        "authenticated": true,
+        "installationUrl": "https://github.test/apps/omnia-reader",
+        "user": {
+            "id": 42,
+            "login": "reader",
+            "avatarUrl": "https://avatars.test/reader.png"
+        },
+        "repository": null
+    });
+    let selected_github_session = serde_json::json!({
+        "configured": true,
+        "authenticated": true,
+        "installationUrl": "https://github.test/apps/omnia-reader",
+        "user": {
+            "id": 42,
+            "login": "reader",
+            "avatarUrl": "https://avatars.test/reader.png"
+        },
+        "repository": repository.clone()
+    });
+    let mega_folder = serde_json::json!({
+        "handle": "folder-1",
+        "name": "Omnia Reader",
+        "path": "/Omnia Reader",
+        "canWrite": true
+    });
+    let responses = vec![
+        TestResponse {
+            status: "200 OK",
+            headers: vec![
+                ("Content-Type".to_owned(), "application/json".to_owned()),
+                (
+                    "Set-Cookie".to_owned(),
+                    format!("omnia_sync_github={SECRET_CANARY}; HttpOnly; Path=/"),
+                ),
+            ],
+            body: serde_json::to_vec(&github_session).unwrap(),
+            delay: Duration::ZERO,
+        },
+        TestResponse::json(
+            serde_json::to_vec(&serde_json::json!({ "repositories": [repository.clone()] }))
+                .unwrap(),
+        ),
+        TestResponse::json(serde_json::to_vec(&selected_github_session).unwrap()),
+        TestResponse::json(
+            serde_json::to_vec(&serde_json::json!({
+                "repository": repository,
+                "selected": true,
+                "session": selected_github_session.clone(),
+                "installationSettingsUrl": null
+            }))
+            .unwrap(),
+        ),
+        TestResponse {
+            status: "204 No Content",
+            headers: Vec::new(),
+            body: Vec::new(),
+            delay: Duration::ZERO,
+        },
+        TestResponse::json(
+            serde_json::to_vec(&serde_json::json!({
+                "authenticated": true,
+                "account": "reader@example.test",
+                "folder": null
+            }))
+            .unwrap(),
+        ),
+        TestResponse::json(
+            serde_json::to_vec(&serde_json::json!({ "folders": [mega_folder.clone()] })).unwrap(),
+        ),
+        TestResponse::json(
+            serde_json::to_vec(&serde_json::json!({
+                "authenticated": true,
+                "account": "reader@example.test",
+                "folder": mega_folder
+            }))
+            .unwrap(),
+        ),
+        TestResponse {
+            status: "204 No Content",
+            headers: Vec::new(),
+            body: Vec::new(),
+            delay: Duration::ZERO,
+        },
+    ];
+    let (origin, requests, server) =
+        spawn_server(9, move |index, _request| responses[index].clone());
+    let broker = SyncBroker::from_origin(&origin, true).unwrap();
+
+    assert!(
+        broker
+            .github_session("settings-1")
+            .await
+            .unwrap()
+            .authenticated
+    );
+    assert_eq!(
+        broker.github_repositories("settings-2").await.unwrap()[0].id,
+        7
+    );
+    assert!(broker
+        .github_select_repository("settings-3", 7)
+        .await
+        .unwrap()
+        .repository
+        .is_some());
+    assert!(
+        broker
+            .github_create_repository("settings-4", "omnia-reader-library")
+            .await
+            .unwrap()
+            .selected
+    );
+    broker
+        .disconnect_provider("settings-5", Provider::Git)
+        .await
+        .unwrap();
+    assert!(
+        broker
+            .mega_session("settings-6")
+            .await
+            .unwrap()
+            .authenticated
+    );
+    assert_eq!(broker.mega_folders("settings-7").await.unwrap().len(), 1);
+    assert!(broker
+        .mega_select_folder("settings-8", "folder-1")
+        .await
+        .unwrap()
+        .folder
+        .is_some());
+    broker
+        .disconnect_provider("settings-9", Provider::Mega)
+        .await
+        .unwrap();
+
+    server.join().unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.path.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("GET", "/api/sync/github/session"),
+            ("GET", "/api/sync/github/repositories"),
+            ("PUT", "/api/sync/github/repository"),
+            ("POST", "/api/sync/github/repository"),
+            ("DELETE", "/api/sync/github/session"),
+            ("GET", "/api/sync/mega/session"),
+            ("GET", "/api/sync/mega/folders"),
+            ("PUT", "/api/sync/mega/folder"),
+            ("DELETE", "/api/sync/mega/session"),
+        ]
+    );
+    assert_eq!(requests[2].body, br#"{"repositoryId":7}"#.to_vec());
+    assert_eq!(
+        requests[3].body,
+        br#"{"name":"omnia-reader-library"}"#.to_vec()
+    );
+    assert_eq!(requests[7].body, br#"{"handle":"folder-1"}"#.to_vec());
+    for request in requests.iter().filter(|request| request.method != "GET") {
+        assert_eq!(request.headers.get("x-omnia-csrf").unwrap(), "1");
+    }
+    assert!(requests[1]
+        .headers
+        .get("cookie")
+        .is_some_and(|value| value.contains(SECRET_CANARY)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settings_responses_are_validated_before_crossing_ipc() {
+    let (origin, _requests, server) = spawn_server(1, |_index, _request| {
+        TestResponse::json(
+            format!(
+                r#"{{"configured":true,"authenticated":false,"installationUrl":"https://user:{SECRET_CANARY}@github.test/apps/omnia-reader"}}"#
+            )
+            .into_bytes(),
+        )
+    });
+    let broker = SyncBroker::from_origin(&origin, true).unwrap();
+    let error = broker.github_session("settings-invalid").await.unwrap_err();
+    assert_eq!(error.code, "invalid-response");
+    assert!(!serde_json::to_string(&error)
+        .unwrap()
+        .contains(SECRET_CANARY));
+    server.join().unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

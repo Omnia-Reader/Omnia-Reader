@@ -3,6 +3,7 @@ import {
   ChangeDetectorRef,
   Component,
   DestroyRef,
+  ElementRef,
   OnInit,
   inject,
 } from '@angular/core';
@@ -26,6 +27,7 @@ import {
 } from '@omnia-reader/sync/core';
 import {
   GITHUB_GATEWAY,
+  GitHubGateway,
   GitHubGatewayError,
   GitHubGatewaySession,
   GitHubRepository,
@@ -34,6 +36,7 @@ import {
 import {
   MEGA_GATEWAY,
   MegaFolder,
+  MegaGateway,
   MegaGatewayError,
   MegaGatewaySession,
 } from '@omnia-reader/sync/mega';
@@ -61,6 +64,7 @@ export class SyncSettingsPageComponent implements OnInit {
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly destroyRef = inject(DestroyRef);
   private readonly syncConnection = inject(SyncConnectionStatusService);
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 
   pendingChanges = 0;
   loading = true;
@@ -85,6 +89,7 @@ export class SyncSettingsPageComponent implements OnInit {
   statusMessage: string | null = null;
   transferProgress: ObjectTransferProgress | null = null;
   manualSyncController: AbortController | null = null;
+  authorizationPending = false;
   automaticSyncStatus: AutoSyncStatus = this.autoSync.status();
   lastCompletedSyncAt: string | null =
     this.automaticSyncStatus.lastSuccessAt ?? null;
@@ -109,6 +114,7 @@ export class SyncSettingsPageComponent implements OnInit {
       this.manualSyncController?.abort(
         new DOMException('Synchronization was cancelled', 'AbortError'),
       );
+      void this.activeGateway()?.cancelAuthorization?.();
     });
     await this.refresh();
     if (authorizationOutcome) {
@@ -271,13 +277,27 @@ export class SyncSettingsPageComponent implements OnInit {
   }
 
   async connect(): Promise<void> {
-    await this.runBusy(async () => {
-      if (this.selectedProvider === 'git') {
-        await this.gitGateway.beginAuthorization('/settings/sync');
-      } else if (this.selectedProvider === 'mega') {
-        this.megaGateway.beginAuthorization('/settings/sync');
-      }
-    });
+    const gateway = this.activeGateway();
+    const nativeAuthorization = !!gateway?.cancelAuthorization;
+    this.authorizationPending = nativeAuthorization;
+    try {
+      await this.runBusy(async () => {
+        if (!gateway) return;
+        await gateway.beginAuthorization('/settings/sync');
+        if (nativeAuthorization) {
+          await this.refreshProvider();
+          this.statusMessage = 'Provider connected. Choose a sync destination.';
+        }
+      });
+    } finally {
+      this.authorizationPending = false;
+      this.changeDetector.markForCheck();
+      this.focusAuthorizationRecovery();
+    }
+  }
+
+  async cancelAuthorization(): Promise<void> {
+    await this.activeGateway()?.cancelAuthorization?.();
   }
 
   async selectRepository(event: Event): Promise<void> {
@@ -616,7 +636,40 @@ export class SyncSettingsPageComponent implements OnInit {
     );
   }
 
+  private activeGateway():
+    | Pick<GitHubGateway, 'beginAuthorization' | 'cancelAuthorization'>
+    | Pick<MegaGateway, 'beginAuthorization' | 'cancelAuthorization'>
+    | null {
+    return this.selectedProvider === 'git'
+      ? this.gitGateway
+      : this.selectedProvider === 'mega'
+        ? this.megaGateway
+        : null;
+  }
+
+  private focusAuthorizationRecovery(): void {
+    setTimeout(() => {
+      const target =
+        this.element.nativeElement.querySelector<HTMLElement>(
+          '[data-testid="sync-connect"]',
+        ) ??
+        this.element.nativeElement.querySelector<HTMLElement>(
+          '[data-testid="sync-recovery-focus"]',
+        );
+      target?.focus();
+    });
+  }
+
   private handleError(error: unknown): void {
+    if (
+      (error instanceof GitHubGatewayError ||
+        error instanceof MegaGatewayError) &&
+      error.status === 499
+    ) {
+      this.statusMessage =
+        'Provider connection cancelled. Your local library is unchanged.';
+      return;
+    }
     if (
       (error instanceof GitHubGatewayError ||
         error instanceof MegaGatewayError) &&

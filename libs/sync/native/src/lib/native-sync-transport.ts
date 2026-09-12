@@ -15,6 +15,8 @@ import {
 export type NativeSyncProvider = 'git' | 'mega';
 
 export type NativeSyncCommand =
+  | 'sync_authorization_begin'
+  | 'sync_authorization_cancel'
   | 'sync_broker_status'
   | 'sync_destination_revision'
   | 'sync_list_documents'
@@ -33,6 +35,15 @@ export type NativeSyncCommand =
   | 'sync_upload_finish'
   | 'sync_delete_object'
   | 'sync_cancel_request'
+  | 'sync_github_create_repository'
+  | 'sync_github_disconnect'
+  | 'sync_github_repositories'
+  | 'sync_github_select_repository'
+  | 'sync_github_session'
+  | 'sync_mega_disconnect'
+  | 'sync_mega_folders'
+  | 'sync_mega_select_folder'
+  | 'sync_mega_session'
   | 'sync_teardown';
 
 export type NativeSyncInvoke = (

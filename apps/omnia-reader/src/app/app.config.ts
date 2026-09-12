@@ -69,8 +69,9 @@ import {
   MegaGatewayClient,
 } from '@omnia-reader/sync/mega';
 import {
+  NativeGitHubGateway,
+  NativeMegaGateway,
   NativeSyncProvider,
-  NativeSyncTransport,
 } from '@omnia-reader/sync/native';
 import {
   clearUnavailableRemoteSyncSelection,
@@ -163,19 +164,28 @@ type DisposableSyncTransport = LibrarySyncTransport & {
   dispose(): Promise<void>;
 };
 
+export function createGitHubGateway(platform: PlatformPort): GitHubGateway {
+  return platform.kind === 'web'
+    ? new GitHubGatewayClient()
+    : new NativeGitHubGateway();
+}
+
+export function createMegaGateway(platform: PlatformPort): MegaGateway {
+  return platform.kind === 'web'
+    ? new MegaGatewayClient()
+    : new NativeMegaGateway();
+}
+
 export function createSelectedSyncTransport(
   selection: SyncProviderSelection,
   git: GitHubGateway,
   mega: MegaGateway,
   platform: PlatformPort,
   destroyRef: DestroyRef,
-  createNative: (provider: NativeSyncProvider) => DisposableSyncTransport = (
-    provider,
-  ) => new NativeSyncTransport({ provider }),
 ): LibrarySyncTransport {
   if (platform.kind !== 'web') {
-    const nativeGit = createNative('git');
-    const nativeMega = createNative('mega');
+    const nativeGit = disposableNativeTransport(git, 'git');
+    const nativeMega = disposableNativeTransport(mega, 'mega');
     destroyRef.onDestroy(() => {
       void Promise.allSettled([nativeGit.dispose(), nativeMega.dispose()]);
     });
@@ -185,6 +195,18 @@ export function createSelectedSyncTransport(
     });
   }
   return new SelectedLibrarySyncTransport(selection, { git, mega });
+}
+
+function disposableNativeTransport(
+  value: LibrarySyncTransport,
+  provider: NativeSyncProvider,
+): DisposableSyncTransport {
+  if (
+    typeof (value as Partial<DisposableSyncTransport>).dispose !== 'function'
+  ) {
+    throw new Error(`The packaged ${provider} sync gateway is unavailable`);
+  }
+  return value as DisposableSyncTransport;
 }
 
 function createSyncJournal(
@@ -317,11 +339,13 @@ export const appConfig: ApplicationConfig = {
           },
           {
             provide: GITHUB_GATEWAY,
-            useFactory: () => new GitHubGatewayClient(),
+            useFactory: createGitHubGateway,
+            deps: [PLATFORM_PORT],
           },
           {
             provide: MEGA_GATEWAY,
-            useFactory: () => new MegaGatewayClient(),
+            useFactory: createMegaGateway,
+            deps: [PLATFORM_PORT],
           },
           {
             provide: SYNC_PROVIDER_SELECTION,

@@ -195,7 +195,7 @@ Feature 015 preparation evidence on 2026-09-12:
   isolated Redis 7.2, including cross-replica redemption. Gateway lint and its
   production build passed. Native handoff tests passed 5/5 and the complete
   Rust suite passed 20/20. Native protected persistence and Settings handoff
-  integration remain open under T025/T034/T035.
+  integration remained open at that checkpoint under T025/T034/T035.
 - Production session-store tests failed first while configured providers could
   still construct encrypted process-local stores. Production now requires a
   Redis URL before provider adapters are built, refuses implicit in-memory
@@ -203,6 +203,21 @@ Feature 015 preparation evidence on 2026-09-12:
   startup on connection loss without a fallback. The pinned
   `sync-gateway:test-redis` Compose harness passed 134/134 tests against Redis
   7.2 and removed its isolated container and network after the run.
+- Packaged Settings now uses provider-specific typed Tauri commands for GitHub
+  repository and MEGA folder administration while sharing the broker-owned
+  cookie jar with data synchronization. Authorization registers its listener
+  before opening the system browser, binds the returned URL to the broker's
+  validated origin and exact provider/request path, supports cancellation and
+  timeout, and exposes only sanitized completion state. The Settings page
+  refreshes provider state after authorization, preserves local data on
+  cancellation, and restores focus to the connection action or page heading.
+  The selected TypeScript suites passed 490/490 tests, including 12/12 native
+  gateway tests and 190/190 application tests; affected lint targets passed
+  without warnings. The production build passed at 422.15 kB raw / 93.15 kB
+  estimated initial transfer. `cargo fmt -- --check`, `cargo check
+--all-targets --locked`, and the complete Rust suite (22/22) passed. T035 is
+  complete; protected-versus-session-only persistence remains open under
+  T025/T034, and packaged-host journeys remain open under T026/T038.
 
 ## 2. Deterministic browser convergence
 

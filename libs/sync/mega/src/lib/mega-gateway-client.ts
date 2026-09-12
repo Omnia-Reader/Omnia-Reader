@@ -35,7 +35,8 @@ export interface MegaGateway extends LibrarySyncTransport {
   folders(): Promise<readonly MegaFolder[]>;
   selectFolder(handle: string): Promise<MegaGatewaySession>;
   disconnect(): Promise<void>;
-  beginAuthorization(returnTo?: string): void;
+  beginAuthorization(returnTo?: string): void | Promise<void>;
+  cancelAuthorization?(): Promise<void>;
 }
 
 export class MegaGatewayError extends Error {
