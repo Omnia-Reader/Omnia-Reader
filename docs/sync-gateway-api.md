@@ -57,14 +57,45 @@ npm run container:smoke
 docker compose --file deployment/compose.yaml up --detach --build
 ```
 
-The smoke gate builds both images, waits for both health checks, verifies the
-application security headers, probes the gateway through the Nginx proxy, and
-proves that an unconfigured GitHub provider reports a safe unauthenticated
-session. Production startup rejects configured providers unless a shared Redis
-session store is configured, and readiness fails whenever that dependency
-cannot be reached. Production still requires an HTTPS edge, credentialed
-provider conformance tests, and deployment-specific image scanning, signing,
-and publication.
+The default smoke gate builds both images once, waits for both health checks,
+verifies the application security headers, confirms that `/metrics` is not
+publicly proxied, validates the exact OCI revision/version labels and immutable
+local image IDs, probes the gateway through Nginx, validates private telemetry,
+and requires a graceful gateway exit. It deliberately reports that public
+HTTPS and Redis failure injection were not required by this local evidence.
+When the working tree is not clean, its default OCI revision label is suffixed
+with `-dirty`, so a locally useful functional run cannot be mistaken for exact
+candidate evidence.
+
+Use strict mode only against the exact deployment candidate. Strict mode does
+not rebuild by default and additionally requires the expected image IDs, a
+credential-free public HTTPS origin with HSTS, and an absolute executable Redis
+control driver:
+
+```sh
+OMNIA_SMOKE_STRICT=1 \
+OMNIA_SMOKE_PUBLIC_BASE_URL=https://reader.example \
+OMNIA_SMOKE_VERSION=0.2.0-rc.1 \
+OMNIA_SMOKE_REVISION=<candidate-commit> \
+OMNIA_SMOKE_EXPECTED_WEB_IMAGE_ID=sha256:<local-runtime-image-id> \
+OMNIA_SMOKE_EXPECTED_GATEWAY_IMAGE_ID=sha256:<local-runtime-image-id> \
+OMNIA_SMOKE_REDIS_CONTROL_DRIVER=/opt/omnia-reader/bin/redis-smoke-control \
+npm run container:smoke
+```
+
+The protected Redis driver receives exactly one argument: `fail` to make the
+same Redis dependency used by the candidate unavailable, then `recover` to
+restore it. `recover` must be idempotent because the cleanup trap invokes it
+after an interrupted failure test. Driver output is suppressed. The smoke gate
+requires a sanitized `503` readiness response during failure, a bounded return
+to `200`, and private metrics proving both failure and recovery. An invalid or
+missing strict input fails closed. `OMNIA_SMOKE_BUILD=1` is available for an
+intentional local rebuild, but must not be used as immutable-candidate evidence.
+
+Production startup rejects configured providers unless a shared Redis session
+store is configured, and readiness fails whenever that dependency cannot be
+reached. Credentialed provider conformance, deployment-specific scanning,
+signing, and publication remain separate release gates.
 
 The gateway's private `/metrics` endpoint exposes only fixed provider,
 operation, outcome, event, and alert labels. It never includes account,

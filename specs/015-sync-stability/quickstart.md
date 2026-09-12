@@ -335,6 +335,42 @@ Treat the container smoke as unavailable on this host until the Docker builder
 session is repaired and the complete health/header/proxy gate runs to
 completion.
 
+The T042/T049 smoke contract was expanded on 2026-09-12 before another runtime
+attempt. `node --test deployment/smoke.spec.mjs` passed 11/11 tests covering a
+credential-free public HTTPS origin with HSTS, the complete security-header
+set, exact sanitized readiness states, immutable local image ID plus release
+and revision identity, fixed telemetry labels, injected alert thresholds,
+Redis failure/recovery evidence, and graceful exit rejection. `bash -n
+deployment/smoke.sh`, `shellcheck deployment/smoke.sh`, and `docker compose
+--file deployment/compose.yaml config --quiet` also passed. The local script
+now uses bounded requests, rejects a public `/metrics` route, validates private
+metrics, verifies both running image identities, and checks a zero-exit
+SIGTERM shutdown. Strict mode disables rebuilding by default and additionally
+requires expected image IDs, a public HTTPS origin, and an absolute protected
+Redis driver that supports idempotent `fail` and `recover` operations.
+
+The updated `npm run container:smoke` still did not reach a Dockerfile stage.
+The sandboxed call failed with `failed to update builder last activity time`
+because the Buildx activity directory was read-only. The approved retry emitted
+no output for three minutes and was terminated by its live execution handle.
+A subsequent approved read-only Compose/Buildx inspection also emitted no
+output for one minute and was terminated. A host process-table inspection then
+found no residual Docker client, Buildx, BuildKit, or smoke process. Because
+daemon state could not be queried, this run does not assert that no container
+resources exist. Local container runtime, public HTTPS, and Redis failure
+injection therefore remain unavailable evidence rather than passing gates.
+
+The three synchronization release suites passed 27/27 tests, and `npm run
+release:test` passed 15/15 tests. `npm run release:verify` then passed both the
+production web build (424.42 kB raw and 93.65 kB estimated initial transfer)
+and production gateway build before correctly failing its production
+dependency audit. The current locked tree reports 13 production
+vulnerabilities: seven high and six moderate. The high findings include the
+Fastify validation stack and vulnerable `fast-uri` versions; the moderate
+findings include Angular Common below 22.1.1. This is an actionable release
+rejection, not unavailable evidence, so T056 remains open until the dependency
+tree is remediated and the complete verifier passes.
+
 ## 5. Packaged-host proof and compatibility
 
 Run focused TypeScript/Rust contracts first:
