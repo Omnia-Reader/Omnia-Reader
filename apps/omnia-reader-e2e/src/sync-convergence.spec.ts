@@ -169,6 +169,13 @@ const scenarios: readonly SyncScenario[] = providers.flatMap((provider) =>
         : noSyncStatusAssertion,
   })),
 );
+let completedConvergenceScenarios = 0;
+
+test.afterAll(() => {
+  if (process.env['REMOTE_SYNC_E2E'] === '1') {
+    expect(completedConvergenceScenarios).toBe(scenarios.length);
+  }
+});
 
 test('covers every provider and publication format in the two-device convergence matrix', () => {
   expect(
@@ -250,6 +257,7 @@ for (const scenario of scenarios) {
     test.setTimeout(120_000);
     const evidence = await synchronizeBetweenTwoDevices(browser, scenario);
     expect(evidence.documentPaths).toContain('.omnia-reader/manifest.json');
+    completedConvergenceScenarios += 1;
   });
 }
 

@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
   workflow_dispatch:
+    inputs:
+      release_candidate:
+        description: Run three consecutive synchronization convergence attempts
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +40,9 @@ jobs:
 
       - name: Run project tests
         run: npx nx run-many -t test --all --skip-nx-cache
+
+      - name: Test synchronization performance evidence contract
+        run: npx nx run omnia-reader-e2e:sync-performance-contract --skip-nx-cache
 
       - name: Run project lint
         run: npx nx run-many -t lint --all --skip-nx-cache
@@ -140,6 +149,101 @@ jobs:
           --project=chromium
           --workers=1
           performance.spec.ts
+
+  sync-convergence-pull-request:
+    name: Sync convergence (${{ matrix.browser }}, pull request)
+    if: github.event_name == 'pull_request'
+    needs: web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - chromium
+          - firefox
+          - webkit
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install the Playwright browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run one mandatory convergence pass
+        run: >-
+          npx nx run omnia-reader-e2e:sync-convergence --skip-nx-cache --
+          --project=${{ matrix.browser }}
+          --trace=retain-on-failure
+
+      - name: Upload convergence traces after failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-convergence-pr-${{ matrix.browser }}-failure
+          path: dist/.playwright/apps/omnia-reader-e2e/test-output/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  sync-convergence-release-candidate:
+    name: Sync convergence (${{ matrix.browser }}, three consecutive attempts)
+    if: github.event_name == 'workflow_dispatch' && inputs.release_candidate
+    needs: web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - chromium
+          - firefox
+          - webkit
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install the Playwright browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run three mandatory consecutive convergence attempts
+        run: |
+          for attempt in 1 2 3; do
+            npx nx run omnia-reader-e2e:sync-convergence --skip-nx-cache -- \
+              --project=${{ matrix.browser }} \
+              --trace=retain-on-failure \
+              --output=dist/.playwright/apps/omnia-reader-e2e/test-output/sync-rc/${{ matrix.browser }}/attempt-${attempt}
+          done
+
+      - name: Upload convergence traces after failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-convergence-rc-${{ matrix.browser }}-failure
+          path: dist/.playwright/apps/omnia-reader-e2e/test-output/sync-rc/${{ matrix.browser }}/**
+          if-no-files-found: warn
+          retention-days: 14
 
   desktop:
     name: Desktop bundle (${{ matrix.platform }})

@@ -20,6 +20,26 @@
         "command": "playwright test"
       }
     },
+    "sync-convergence": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "dependsOn": [
+        {
+          "projects": ["omnia-reader"],
+          "target": "build"
+        }
+      ],
+      "options": {
+        "command": "PLAYWRIGHT_HTML_OPEN=never FIREFOX_E2E=1 REMOTE_SYNC_E2E=1 playwright test --config apps/omnia-reader-e2e/playwright.config.ts --workers=1 sync-compatibility-corpus.spec.ts sync-convergence.spec.ts"
+      }
+    },
+    "sync-performance-contract": {
+      "executor": "nx:run-commands",
+      "parallelism": false,
+      "options": {
+        "command": "node --test apps/omnia-reader-e2e/src/sync-performance-runner.spec.mjs"
+      }
+    },
     "performance": {
       "executor": "nx:run-commands",
       "parallelism": false,

@@ -120,6 +120,17 @@ Feature 015 preparation evidence on 2026-09-12:
   visibility within 15 seconds, and fails any publication transfer. The four
   Node contract tests and E2E lint passed. This proves the runner contract only;
   no qualified staging latency measurement has run on this host.
+- The dedicated `omnia-reader-e2e:sync-convergence` target builds the production
+  app and runs the compatibility corpus plus all Git/MEGA EPUB/PDF convergence
+  journeys with mandatory execution enabled. Its local Chromium invocation
+  passed 9/9 in 1.6 minutes; the complete Nx target, including the production
+  build, passed in 1 minute 51 seconds.
+- Pull requests now receive one mandatory Chromium/Firefox/WebKit convergence
+  matrix pass. Opt-in release-candidate dispatches run three uncached attempts
+  consecutively per browser with separate failure-trace directories. An
+  after-suite cardinality assertion turns any skipped convergence scenario into
+  a failure. Workflow YAML parsing and Prettier validation passed locally; the
+  new GitHub Actions jobs have not yet run remotely.
 
 ## 2. Deterministic browser convergence
 

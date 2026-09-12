@@ -53,8 +53,8 @@ identical valid logical state on both profiles.
 - [x] T012 [US1] Split long convergence cases into `apps/omnia-reader-e2e/src/sync-convergence.spec.ts` while keeping shorter behavior in `apps/omnia-reader-e2e/src/sync.spec.ts`
 - [x] T013 [US1] Extend `apps/omnia-reader-e2e/src/simulated-sync-gateway.ts` only for exact format coverage, hostile records, interruption ordering, and destination isolation required by T007–T010
 - [x] T014 [US1] Add the fixed staging profile and 20-warm-up/200-measurement two-device latency runner in `apps/omnia-reader-e2e/src/sync-performance-profile.json`, `apps/omnia-reader-e2e/src/sync-performance-runner.mjs`, and `apps/omnia-reader-e2e/src/sync-performance-runner.spec.mjs`
-- [ ] T015 [US1] Add a dedicated Chromium/Firefox/WebKit convergence target and one-pass pull-request matrix to `apps/omnia-reader-e2e/project.json` and `.github/workflows/verify.yml`
-- [ ] T016 [US1] Add a three-consecutive-pass release-candidate convergence matrix with traces and zero allowed skips to `.github/workflows/verify.yml`
+- [x] T015 [US1] Add a dedicated Chromium/Firefox/WebKit convergence target and one-pass pull-request matrix to `apps/omnia-reader-e2e/project.json` and `.github/workflows/verify.yml`
+- [x] T016 [US1] Add a three-consecutive-pass release-candidate convergence matrix with traces and zero allowed skips to `.github/workflows/verify.yml`
 
 ### Verification for User Story 1
 
