@@ -441,7 +441,15 @@ separately.
 In the protected staging environment only:
 
 ```sh
-LIVE_GITHUB_SYNC_E2E=1 BASE_URL=https://staging.example.invalid npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 sync-live-github.spec.ts
+LIVE_GITHUB_SYNC_E2E=1 \
+LIVE_GITHUB_PROTECTED_RUNNER=1 \
+LIVE_GITHUB_AUTH_STATE=/run/secrets/github-storage-state.json \
+LIVE_GITHUB_CONTROL_DRIVER=/opt/omnia/live-github-control \
+LIVE_GITHUB_RUN_ID=<unique-lowercase-run-id> \
+LIVE_GITHUB_SECRET_CANARY=<protected-unique-canary> \
+LIVE_GITHUB_THROTTLE_AVAILABLE=0 \
+BASE_URL=https://reader-staging.example.com \
+npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 sync-live-github.spec.ts
 ```
 
 Replace the placeholder with the approved staging origin through protected
@@ -450,6 +458,16 @@ configuration, not by editing the command into source. The run must satisfy
 sanitized traces, clean up only its uniquely named disposable repository, and
 emit a candidate evidence manifest conforming to
 [sync-release-evidence.md](contracts/sync-release-evidence.md).
+
+T044 was implemented on 2026-09-12 as an opt-in Playwright journey plus a
+strict control-driver boundary. The five local harness tests passed, Playwright
+listed the protected journey successfully, and the existing Chromium
+convergence smoke passed 2/2 with its four extended provider cases explicitly
+skipped. An enabled run without `LIVE_GITHUB_PROTECTED_RUNNER=1` was also
+confirmed to exit non-zero before discovering or running tests. No protected
+GitHub browser state, staging origin, control driver, or cleanup identity is
+available in this checkout, so the live journey itself remains unavailable
+evidence under T057 and GitHub maturity remains experimental.
 
 ## 7. Promotion decision
 

@@ -127,7 +127,7 @@ rebuild.
 - [x] T041 [P] [US3] Add schema, confidentiality, candidate-identity, browser-attempt, unavailable-gate, and aggregate-decision tests to `tools/release/verify-sync-evidence.spec.mjs`
 - [x] T042 [P] [US3] Add public HTTPS, headers, readiness, Redis failure, graceful shutdown, image identity, low-cardinality telemetry, and injected alert-threshold assertions to `deployment/smoke.spec.mjs` and `apps/sync-gateway/src/sync-observability.spec.ts`
 - [x] T043 [P] [US3] Add staging canary and digest-only rollback tests to `tools/release/sync-promotion.spec.mjs`
-- [ ] T044 [P] [US3] Add protected GitHub OAuth, LFS EPUB/PDF, two-client, restore, conflict, interruption, permission, revocation, replica-restart, fixed-profile latency sampling, and scoped-cleanup journeys to `apps/omnia-reader-e2e/src/sync-live-github.spec.ts`
+- [x] T044 [P] [US3] Add protected GitHub OAuth, LFS EPUB/PDF, two-client, restore, conflict, interruption, permission, revocation, replica-restart, fixed-profile latency sampling, and scoped-cleanup journeys to `apps/omnia-reader-e2e/src/sync-live-github.spec.ts`
 - [x] T045 [P] [US3] Add trace, IPC, log, report, redirect, evidence, and synchronized-record canary tests to `tools/release/scan-sync-evidence.spec.mjs`
 
 ### Implementation for User Story 3

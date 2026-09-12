@@ -8,6 +8,7 @@ const chromiumExecutablePath =
   process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'];
 const webkitExecutablePath = process.env['PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH'];
 const firefoxE2EEnabled = process.env['FIREFOX_E2E'] === '1';
+const liveGitHubE2EEnabled = process.env['LIVE_GITHUB_SYNC_E2E'] === '1';
 
 /**
  * Read environment variables from file.
@@ -34,13 +35,15 @@ export default defineConfig({
   expect: {
     timeout: 20_000,
   },
-  webServer: {
-    command:
-      'node tools/serve-built-app.mjs dist/apps/omnia-reader/browser 4200',
-    cwd: workspaceRoot,
-    url: baseURL,
-    reuseExistingServer: !process.env['CI'],
-  },
+  webServer: liveGitHubE2EEnabled
+    ? undefined
+    : {
+        command:
+          'node tools/serve-built-app.mjs dist/apps/omnia-reader/browser 4200',
+        cwd: workspaceRoot,
+        url: baseURL,
+        reuseExistingServer: !process.env['CI'],
+      },
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     baseURL,
