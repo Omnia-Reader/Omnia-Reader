@@ -135,9 +135,21 @@ describe('NativeSyncTransport', () => {
     );
     expect(chunks).toHaveLength(3);
     expect(
-      chunks.map(([, value]) => (value['bytes'] as number[]).length),
+      chunks.map(([, value]) =>
+        value instanceof Uint8Array ? value.byteLength : -1,
+      ),
     ).toEqual([16_384, 16_384, 7_232]);
-    expect(invoke.mock.calls.some(([, value]) => 'url' in value)).toBe(false);
+    expect(chunks[0]?.[2]?.headers).toEqual({
+      'X-Omnia-Sync-Request-Id': 'webview-1',
+      'X-Omnia-Sync-Provider': 'git',
+      'X-Omnia-Sync-Transfer-Id': 'transfer-12345678',
+      'X-Omnia-Sync-Offset': '0',
+    });
+    expect(
+      invoke.mock.calls.some(
+        ([, value]) => !(value instanceof Uint8Array) && 'url' in value,
+      ),
+    ).toBe(false);
   });
 
   it('maps conflicts and redirect failures without leaking native detail', async () => {
@@ -188,6 +200,7 @@ describe('NativeSyncTransport', () => {
       expect(invoke).toHaveBeenCalledWith(
         'sync_destination_revision',
         expect.objectContaining({ provider: 'git' }),
+        undefined,
       ),
     );
 
@@ -224,6 +237,7 @@ describe('NativeSyncTransport', () => {
       expect(invoke).toHaveBeenCalledWith(
         'sync_read_document',
         expect.objectContaining({ path: PATH }),
+        undefined,
       ),
     );
 

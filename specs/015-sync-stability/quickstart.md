@@ -157,16 +157,33 @@ Feature 015 preparation evidence on 2026-09-12:
   512 KiB transfer chunks, exposes monotonic progress, cancels failed or
   aborted requests, tears down active work, and maps only application-owned
   errors. Its focused contract passed 7/7 tests; the Nx project and inferred
-  lint target were both discovered successfully. This is TypeScript boundary
-  evidence only: the matching Rust broker and packaged-host wiring remain open.
+  lint target were both discovered successfully. At that checkpoint this was
+  TypeScript boundary evidence only; the Rust broker was added in the later
+  T030/T031 checkpoint below.
 - Application composition now keeps web/PWA synchronization on the existing
   relative same-origin GitHub and MEGA clients, while both Tauri desktop and
   Android select provider-scoped native transports. Angular destruction tears
   down both broker transports. The focused composition cases passed within the
   full application suite (185/185), and sync-native remained green at 7/7; the
   production application build passed at 411.33 kB raw / 91.03 kB estimated
-  transfer. The Rust commands are still intentionally unavailable until
-  T030/T031.
+  transfer. At that checkpoint, the Rust commands remained intentionally
+  unavailable pending T030/T031.
+- The native broker now owns the exact configured
+  `OMNIA_SYNC_GATEWAY_ORIGIN`, a process-local cookie jar, same-origin redirect
+  denial, enumerated provider routes and internally constructed headers. It
+  bounds active work to 16 requests and eight transfers, accepts upload data as
+  raw IPC bytes with four allowlisted metadata headers, caps IPC chunks at
+  8 MiB before transfer lookup, streams uploads from owner-only temporary
+  files, cancels response-body reads, and clears transfers, files, requests,
+  and session authority on teardown. Missing or invalid origin configuration
+  leaves that broker closed without preventing offline reader startup. Twelve
+  focused broker tests and the complete Rust suite (15/15) passed. The updated
+  native transport remained green at 7/7 with lint, the application suite
+  passed 185/185, and the production build passed at 411.50 kB raw / 91.03 kB
+  estimated transfer.
+  `cargo clippy --all-targets --locked -- -D warnings` was unavailable because
+  Clippy is not installed for Rust 1.89.0; this remains an explicit local gate
+  rather than a claimed pass.
 
 ## 2. Deterministic browser convergence
 

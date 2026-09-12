@@ -15,6 +15,8 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_fs::{FsExt, OpenOptions};
 use uuid::Uuid;
 
+mod sync_broker;
+
 #[cfg(desktop)]
 use std::path::Path;
 
@@ -516,6 +518,8 @@ fn publication_name(path: &FilePath, kind: PublicationKind) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let sync_broker = sync_broker::SyncBroker::from_configured_origin()
+        .unwrap_or_else(|_| sync_broker::SyncBroker::unavailable());
     let builder = tauri::Builder::default();
     // Tauri requires the single-instance plugin to be registered first so a
     // second process cannot initialize another window before forwarding its
@@ -543,7 +547,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(PublicationSources::default())
         .manage(BookDeepLinks::default())
-        .manage(BackupExports::default());
+        .manage(BackupExports::default())
+        .manage(sync_broker);
     #[cfg(all(desktop, feature = "native-e2e"))]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     let builder = builder
@@ -580,6 +585,25 @@ pub fn run() {
             commit_backup_export,
             pick_publications,
             read_publication,
+            sync_broker::sync_broker_status,
+            sync_broker::sync_cancel_request,
+            sync_broker::sync_delete_document,
+            sync_broker::sync_delete_entries,
+            sync_broker::sync_delete_entry,
+            sync_broker::sync_delete_object,
+            sync_broker::sync_destination_revision,
+            sync_broker::sync_download_begin,
+            sync_broker::sync_download_chunk,
+            sync_broker::sync_download_finish,
+            sync_broker::sync_head_object,
+            sync_broker::sync_list_documents,
+            sync_broker::sync_list_entries,
+            sync_broker::sync_read_document,
+            sync_broker::sync_teardown,
+            sync_broker::sync_upload_begin,
+            sync_broker::sync_upload_chunk,
+            sync_broker::sync_upload_finish,
+            sync_broker::sync_write_document,
             take_opened_book_deep_links,
             take_opened_publications,
             write_backup_chunk

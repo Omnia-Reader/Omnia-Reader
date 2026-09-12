@@ -1,0 +1,24 @@
+[[permission]]
+identifier = "allow-sync-broker"
+description = "Allows the main reader window to use the provider-scoped native synchronization broker."
+commands.allow = [
+  "sync_broker_status",
+  "sync_destination_revision",
+  "sync_list_documents",
+  "sync_list_entries",
+  "sync_delete_entries",
+  "sync_delete_entry",
+  "sync_read_document",
+  "sync_write_document",
+  "sync_delete_document",
+  "sync_head_object",
+  "sync_download_begin",
+  "sync_download_chunk",
+  "sync_download_finish",
+  "sync_upload_begin",
+  "sync_upload_chunk",
+  "sync_upload_finish",
+  "sync_delete_object",
+  "sync_cancel_request",
+  "sync_teardown",
+]

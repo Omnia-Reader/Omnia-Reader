@@ -37,7 +37,8 @@ export type NativeSyncCommand =
 
 export type NativeSyncInvoke = (
   command: NativeSyncCommand,
-  arguments_: Record<string, unknown>,
+  body: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
 ) => Promise<unknown>;
 
 export interface NativeSyncTransportOptions {
@@ -96,6 +97,10 @@ const MAX_LIST_ENTRIES = 50_000;
 const MAX_DELETE_ENTRIES = 10_000;
 const TRANSFER_ID_PATTERN = /^[a-zA-Z0-9_-]{16,128}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const REQUEST_ID_HEADER = 'X-Omnia-Sync-Request-Id';
+const PROVIDER_HEADER = 'X-Omnia-Sync-Provider';
+const TRANSFER_ID_HEADER = 'X-Omnia-Sync-Transfer-Id';
+const OFFSET_HEADER = 'X-Omnia-Sync-Offset';
 
 /**
  * Packaged-host implementation of the provider-neutral synchronization
@@ -377,12 +382,13 @@ export class NativeSyncTransport implements LibrarySyncTransport {
         const bytes = await blobBytes(
           request.content.slice(transferredBytes, end),
         );
-        await this.invokeBroker('sync_upload_chunk', {
-          requestId,
-          provider: this.options.provider,
-          transferId: start.transferId,
-          offset: transferredBytes,
-          bytes: [...bytes],
+        await this.invokeBroker('sync_upload_chunk', bytes, {
+          headers: {
+            [REQUEST_ID_HEADER]: requestId,
+            [PROVIDER_HEADER]: this.options.provider,
+            [TRANSFER_ID_HEADER]: start.transferId,
+            [OFFSET_HEADER]: String(transferredBytes),
+          },
         });
         transferredBytes = end;
         request.onProgress?.({
@@ -529,10 +535,11 @@ export class NativeSyncTransport implements LibrarySyncTransport {
 
   private invokeBroker<T>(
     command: NativeSyncCommand,
-    arguments_: Record<string, unknown>,
+    body: Record<string, unknown> | Uint8Array,
+    options?: { headers: Record<string, string> },
   ): Promise<T> {
     this.assertActive();
-    return this.invokeNative(command, arguments_) as Promise<T>;
+    return this.invokeNative(command, body, options) as Promise<T>;
   }
 
   private assertActive(): void {
@@ -890,8 +897,9 @@ function blobBytes(blob: Blob): Promise<Uint8Array> {
 
 async function invokeTauri(
   command: NativeSyncCommand,
-  arguments_: Record<string, unknown>,
+  body: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
 ): Promise<unknown> {
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<unknown>(command, arguments_);
+  return invoke<unknown>(command, body, options);
 }

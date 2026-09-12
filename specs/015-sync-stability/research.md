@@ -140,6 +140,11 @@ dependency graph where possible:
   policy, and bounded response streaming;
 - add direct `url = "=2.5.8"` for canonical scheme, user-info, host, port,
   fragment, relative-path, and exact-origin validation;
+- add direct `tokio = "=1.53.1"` using only `fs`, `macros`,
+  `rt-multi-thread`, and `time`. Tauri already resolves this exact runtime; the
+  direct declaration exposes disk-backed async request bodies so acknowledged
+  IPC chunks are streamed without accumulating whole publications in memory,
+  and supplies the native broker test runtime without adding another executor;
 - retain the existing exact `tauri-plugin-deep-link = "=2.4.9"`. Treat every
   `on_open_url` value as hostile and validate the native request binding,
   provider, expiry, and one-use handoff before redemption; and
@@ -152,8 +157,9 @@ dependency graph where possible:
   local books and pending operations.
 
 This selection adds no JavaScript network authority and no new browser runtime
-dependency. Cargo must pin the two new direct crates exactly and preserve the
-lockfile checksums before the native broker implementation begins.
+dependency. Cargo must pin all three direct declarations exactly (only
+`reqwest` and `url` add newly resolved crate families) and preserve the lockfile
+checksums before the native broker implementation begins.
 
 ## Release artifacts and promotion
 
