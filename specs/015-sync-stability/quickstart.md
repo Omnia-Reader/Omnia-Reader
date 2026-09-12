@@ -269,6 +269,17 @@ Feature 015 preparation evidence on 2026-09-12:
   a CLI check proving that clean scans exit zero, detections exit non-zero, and
   neither output repeats the protected canary value. This completes T045 and
   T048; protected-workflow collection and execution remain T051/T052.
+- Digest-only promotion now uses a protected absolute-path deployment driver
+  and immutable requests containing only candidate identity, logical artifact
+  names, and SHA-256 digests. Staging must pass before canary, production
+  acceptance requires both a passing canary checkpoint and fully accepted sync
+  evidence, and rollback selects a distinct previously accepted candidate.
+  Driver failures are sanitized, receipts must match every requested digest,
+  and the tool never exposes a build or tag operation. Six focused tests
+  passed for staging, canary, identity drift, acceptance, failed-canary
+  rollback, and invalid rollback targets. This completes T043/T050 at the
+  orchestration contract layer; actual protected staging and production
+  execution remains T052/T057.
 
 ## 2. Deterministic browser convergence
 
