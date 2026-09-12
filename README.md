@@ -153,7 +153,12 @@ The release verifier rebuilds the production web app and gateway, checks the
 shared `0.1.0` version, production dependency vulnerabilities, reviewed
 licenses, and immutable bridge inputs, then writes normalized npm, Rust, and
 bridge-source CycloneDX SBOMs plus SHA-256 artifact manifests under
-`dist/release/`.
+`dist/release/`. A synchronization release candidate must additionally pass
+`--sync-evidence <accepted-manifest.json>` so the verifier binds accepted gate
+evidence to the exact package version and checked-out commit and includes it in
+the checksummed release output. Accepted evidence also requires a clean Git
+checkout. The no-argument form verifies source artifacts only and is not
+promotion evidence.
 
 Playwright normally uses its installed Chromium. On a development machine with
 only a system Chrome, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to that

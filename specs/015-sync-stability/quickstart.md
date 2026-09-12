@@ -259,7 +259,18 @@ Feature 015 preparation evidence on 2026-09-12:
   than three distinct passing attempts for each browser-convergence gate. Its
   seven focused Node tests passed; direct CLI validation of the rejected fixture
   returned a deterministic rejected decision and a non-zero exit status. This
-  completes T041 and T046 only; release-verifier integration remains T047.
+  completes T041 and T046.
+- The release verifier now accepts an explicit `--sync-evidence` path for the
+  protected candidate gate, requires an explicitly accepted aggregate decision,
+  binds its release and full commit to the package version and checked-out
+  `HEAD`, requires a clean tracked and untracked source checkout, canonically
+  checksums it with the release output, clears stale generated evidence before
+  every invocation, and refuses to reuse the generated output as an input. Five
+  focused red-to-green integration tests
+  cover acceptance, draft/rejected identity failure, dirty-source rejection,
+  strict CLI parsing, checksummed inclusion, and stale-output removal. This
+  completes T047 without treating the source-only verifier used by ordinary CI
+  as promotion evidence.
 - The artifact canary scanner now requires non-empty trace, IPC, log, report,
   redirect, evidence, and synchronized-record target classes and scans literal,
   percent-encoded, form-encoded, Base64, Base64url, and bounded ZIP contents. It rejects
@@ -318,6 +329,7 @@ npm audit --omit=dev
 npm run container:smoke
 npm run release:test
 npm run release:verify
+npm run release:verify -- --sync-evidence <accepted-manifest.json>
 git diff --check
 ```
 

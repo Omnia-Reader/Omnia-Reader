@@ -36,6 +36,7 @@ npx nx run omnia-reader-e2e:e2e
 PWA_E2E=1 npx nx run omnia-reader-e2e:e2e -- --project=chromium src/offline.spec.ts
 npm run performance:e2e
 npm run release:verify
+npm run release:verify -- --sync-evidence <accepted-manifest.json>
 npm run container:smoke
 ```
 
@@ -51,6 +52,20 @@ npm run container:smoke
 7. Requires immutable Git commits and a digest-pinned bridge base image.
 8. Writes a deterministic artifact manifest and SHA-256 checksums.
 
+The no-argument command verifies source-built release artifacts and is suitable
+for ordinary CI, but it does not constitute synchronization release acceptance.
+Before staging or promotion, pass `--sync-evidence` with the accepted manifest
+for the candidate. The verifier requires the manifest's release to equal the
+package version, its full commit to equal the checked-out `HEAD`, and the Git
+checkout to contain no tracked or untracked source changes. Keep the supplied
+manifest outside the checkout or under an ignored evidence directory. The
+verifier then writes canonical `sync-evidence.json` into the checksummed release
+output. Candidate, rejected, mismatched, malformed, dirty-source, or stale
+evidence fails closed. Every invocation removes any earlier generated
+synchronization evidence before validation, and the generated output path is
+not accepted as an input, so a failed or source-only run cannot accidentally
+carry an accepted decision forward.
+
 `npm run container:smoke` independently builds the digest-pinned runtime
 images, starts their hardened Compose topology, verifies the same-origin
 gateway route and web response headers, and removes the stack afterward. It is
@@ -62,6 +77,7 @@ Outputs are written under `dist/release/`:
 dist/release/npm.cdx.json
 dist/release/rust.cdx.json
 dist/release/bridge-source.cdx.json
+dist/release/sync-evidence.json # only when accepted evidence was supplied
 dist/release/release-manifest.json
 dist/release/SHA256SUMS
 ```

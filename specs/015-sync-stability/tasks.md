@@ -133,7 +133,7 @@ rebuild.
 ### Implementation for User Story 3
 
 - [x] T046 [US3] Implement the evidence validator and aggregator in `tools/release/verify-sync-evidence.mjs`
-- [ ] T047 [US3] Integrate sync evidence into `tools/release/verify-release.mjs` and `tools/release/verify-release.spec.mjs`
+- [x] T047 [US3] Integrate sync evidence into `tools/release/verify-release.mjs` and focused release integration tests
 - [x] T048 [US3] Implement the artifact canary scanner in `tools/release/scan-sync-evidence.mjs`
 - [x] T049 [US3] Implement sanitized low-cardinality sync telemetry in `apps/sync-gateway/src/sync-observability.ts` and `apps/sync-gateway/src/app.ts`, then extend `deployment/smoke.sh` with bounded health, headers, proxy, Redis readiness, alert, and shutdown checks
 - [x] T050 [US3] Implement digest-only staging, canary, acceptance, and rollback in `tools/release/sync-promotion.mjs` and document protected inputs in `deployment/gateway.env.example`

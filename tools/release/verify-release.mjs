@@ -1,8 +1,21 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import {
+  aggregateSyncEvidence,
+  loadSyncEvidence,
+  validateSyncEvidence,
+} from './verify-sync-evidence.mjs';
 
 export const REVIEWED_LICENSE_EXPRESSIONS = new Set([
   '(MIT OR Apache-2.0) AND Unicode-3.0',
@@ -58,6 +71,7 @@ const DEFAULT_ARTIFACT_ROOTS = [
     prefix: 'apps/sync-gateway',
   },
 ];
+const FULL_GIT_COMMIT = /^[0-9a-f]{40}$/;
 
 function assert(condition, message) {
   if (!condition) {
@@ -526,6 +540,54 @@ function assertAuditClean(audit) {
   );
 }
 
+export function validateReleaseSyncEvidence(evidence, { commit, version }) {
+  validateSyncEvidence(evidence);
+  assert(
+    evidence.result === 'accepted' &&
+      aggregateSyncEvidence(evidence).result === 'accepted',
+    'Synchronization evidence must be explicitly accepted.',
+  );
+  assert(
+    typeof commit === 'string' && FULL_GIT_COMMIT.test(commit),
+    'Release source commit must be a full lowercase Git commit.',
+  );
+  assert(
+    evidence.candidate.commit === commit,
+    'Synchronization evidence commit does not match the release source.',
+  );
+  assert(
+    evidence.candidate.release === version,
+    'Synchronization evidence release does not match the package version.',
+  );
+  return evidence;
+}
+
+export function assertCleanReleaseSource(statusOutput) {
+  assert(
+    typeof statusOutput === 'string' && statusOutput.trim() === '',
+    'Accepted synchronization evidence requires a clean source checkout.',
+  );
+}
+
+export async function prepareSyncEvidenceInput(
+  workspaceRoot,
+  syncEvidencePath,
+) {
+  const generatedPath = resolve(
+    workspaceRoot,
+    'dist/release/sync-evidence.json',
+  );
+  const resolvedInput = syncEvidencePath
+    ? resolve(workspaceRoot, syncEvidencePath)
+    : null;
+  await rm(generatedPath, { force: true });
+  assert(
+    resolvedInput !== generatedPath,
+    'Synchronization evidence input must differ from the generated release output.',
+  );
+  return resolvedInput;
+}
+
 async function loadReleaseMetadata(workspaceRoot) {
   const [
     packageJson,
@@ -574,12 +636,13 @@ async function loadReleaseMetadata(workspaceRoot) {
   return { version, bridge, workflowActionPins };
 }
 
-async function writeReleaseOutputs(
+export async function writeReleaseOutputs(
   workspaceRoot,
   version,
   npmSbom,
   rustSbom,
   bridgeSbom,
+  syncEvidence = null,
 ) {
   const releaseDirectory = join(workspaceRoot, 'dist/release');
   await mkdir(releaseDirectory, { recursive: true });
@@ -589,6 +652,12 @@ async function writeReleaseOutputs(
   await writeFile(npmSbomPath, stableJson(npmSbom), 'utf8');
   await writeFile(rustSbomPath, stableJson(rustSbom), 'utf8');
   await writeFile(bridgeSbomPath, stableJson(bridgeSbom), 'utf8');
+  const syncEvidencePath = join(releaseDirectory, 'sync-evidence.json');
+  if (syncEvidence) {
+    await writeFile(syncEvidencePath, stableJson(syncEvidence), 'utf8');
+  } else {
+    await rm(syncEvidencePath, { force: true });
+  }
 
   const files = await collectArtifactFiles(workspaceRoot, [
     ...DEFAULT_ARTIFACT_ROOTS,
@@ -627,9 +696,34 @@ async function writeReleaseOutputs(
 export async function verifyRelease({
   workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..'),
   skipBuild = false,
+  syncEvidencePath = null,
 } = {}) {
+  const resolvedSyncEvidencePath = await prepareSyncEvidenceInput(
+    workspaceRoot,
+    syncEvidencePath,
+  );
   const { version, bridge, workflowActionPins } =
     await loadReleaseMetadata(workspaceRoot);
+
+  let syncEvidence = null;
+  if (resolvedSyncEvidencePath) {
+    assertCleanReleaseSource(
+      runCommand('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+        capture: true,
+        cwd: workspaceRoot,
+        label: 'Release source status',
+      }),
+    );
+    const commit = runCommand('git', ['rev-parse', '--verify', 'HEAD'], {
+      capture: true,
+      cwd: workspaceRoot,
+      label: 'Release source commit',
+    }).trim();
+    syncEvidence = validateReleaseSyncEvidence(
+      await loadSyncEvidence(resolvedSyncEvidencePath),
+      { commit, version },
+    );
+  }
 
   if (!skipBuild) {
     runCommand(
@@ -719,6 +813,7 @@ export async function verifyRelease({
     npmSbom,
     rustSbom,
     bridgeSbom,
+    syncEvidence,
   );
   return {
     version,
@@ -727,26 +822,52 @@ export async function verifyRelease({
     rustComponents: rustSbom.components.length,
     bridgeComponents: bridgeSbom.components.length,
     workflowActionPins: workflowActionPins.length,
+    syncEvidenceIncluded: syncEvidence !== null,
   };
 }
 
+export function parseReleaseArguments(args) {
+  let skipBuild = false;
+  let syncEvidencePath = null;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--skip-build') {
+      assert(!skipBuild, '--skip-build may be provided only once.');
+      skipBuild = true;
+      continue;
+    }
+    if (argument === '--sync-evidence') {
+      assert(
+        syncEvidencePath === null,
+        '--sync-evidence may be provided only once.',
+      );
+      const filePath = args[index + 1];
+      assert(
+        filePath && !filePath.startsWith('--'),
+        '--sync-evidence requires a file path.',
+      );
+      syncEvidencePath = filePath;
+      index += 1;
+      continue;
+    }
+    throw new Error(`Unknown argument: ${argument}`);
+  }
+
+  return { skipBuild, syncEvidencePath };
+}
+
 async function main() {
-  const unknownArguments = process.argv
-    .slice(2)
-    .filter((argument) => argument !== '--skip-build');
-  assert(
-    unknownArguments.length === 0,
-    `Unknown arguments: ${unknownArguments.join(', ')}`,
+  const result = await verifyRelease(
+    parseReleaseArguments(process.argv.slice(2)),
   );
-  const result = await verifyRelease({
-    skipBuild: process.argv.includes('--skip-build'),
-  });
   console.log(
     `Release ${result.version} verified: ${result.fileCount} files, ` +
       `${result.npmComponents} npm components, ` +
       `${result.rustComponents} Rust components, ` +
       `${result.bridgeComponents} pinned bridge inputs, ` +
-      `${result.workflowActionPins} pinned CI actions.`,
+      `${result.workflowActionPins} pinned CI actions, ` +
+      `${result.syncEvidenceIncluded ? 'accepted synchronization evidence' : 'source artifacts only'}.`,
   );
 }
 
