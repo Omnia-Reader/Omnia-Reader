@@ -2,7 +2,7 @@
 
 Status: GitHub/Git LFS and MEGA gateway adapters plus reference same-origin container deployment implemented; live-provider validation pending
 Version: 1
-Last updated: 2026-08-02
+Last updated: 2026-09-12
 
 ## Purpose
 
@@ -105,6 +105,30 @@ can inject the alert policy with `OMNIA_SYNC_ALERT_MIN_REQUESTS`,
 `OMNIA_SYNC_ALERT_MAX_READINESS_FAILURES`; invalid values fail startup. Keep
 this endpoint on the internal gateway network. The public reverse proxy should
 expose `/healthz` and `/readyz`, but not `/metrics`.
+
+### Liveness, readiness, and safe failures
+
+`GET /healthz` is dependency-independent process liveness. It returns `200`
+with exactly `{ "status": "ok", "service":
+"omnia-reader-sync-gateway" }` while the Fastify process can serve requests;
+it must remain healthy during a Redis outage so the orchestrator does not turn
+a dependency incident into an uncontrolled restart loop.
+
+`GET /readyz` probes the configured shared session store. It returns the same
+bounded `200` body while Redis is reachable and `503` with exactly `{ "status":
+"unavailable", "service": "omnia-reader-sync-gateway" }` when the dependency
+fails. It never returns a Redis URL, hostname, credential, exception, or retry
+trace. Stop routing new traffic to an unready replica, but retain it for bounded
+recovery probes. Readiness must return to `200` before traffic is restored.
+
+Expected application failures use the documented `GatewayHttpError` status and
+application-owned message, with only a validated bounded `Retry-After` header
+when present. Malformed Fastify client requests collapse to `Malformed
+synchronization request`; unexpected failures collapse to `Synchronization
+gateway request failed`. Provider bodies, headers, URLs, credentials, raw
+exceptions, and transfer details are never part of the HTTP response. Keep
+internal logs access-controlled and pass exported logs through the release
+canary scanner.
 
 ### GitHub App configuration
 
@@ -381,6 +405,35 @@ are re-encrypted with the current key without extending their remaining Redis
 TTL. After the maximum session TTL has elapsed across all replicas, remove the
 retired keys. Do not reuse the bridge token, Redis password, GitHub secret, or
 MEGA credentials as a session key.
+
+#### Redis backup and restore
+
+Back up one consistent Redis recovery point containing every key under the
+configured `OMNIA_SYNC_REDIS_PREFIX`, not an individual provider session. It
+must retain the `github`, `mega`, `github-revocations`, and, when configured,
+`native-handoffs` namespaces together, including their remaining expiries. Use
+the Redis service's point-in-time snapshot or managed backup mechanism; never
+print encrypted values, hashed identifiers, the Redis URL, or encryption keys
+into a job log. Store `OMNIA_SYNC_SESSION_KEY` and any still-active previous
+keys in the protected secret system, separately from the Redis backup.
+
+Restore into an isolated Redis instance or while gateway traffic is fully
+drained. Restore the original TTLs without replacing them with the configured
+full session TTL, retain the same prefix, and start one gateway replica with the
+key set that was active at the recovery point. Require `/readyz` to return the
+exact bounded `200` response, verify a disposable encrypted session can be read
+across a replica restart, and confirm its remaining TTL did not increase before
+returning traffic. Then verify webhook delivery deduplication and authorization
+generation state from the same recovery point. Never merge an older prefix into
+a live prefix or selectively restore only session records.
+
+A snapshot can predate a security revocation even when it is structurally
+valid. If the operator cannot prove that the recovered revocation generations
+and delivery records are current, replace `OMNIA_SYNC_SESSION_KEY` and do not
+configure the recovered keys as previous keys. This deliberately invalidates
+all restored provider sessions and native handoffs, forcing safe
+reauthentication instead of risking resurrection of revoked authority. Local
+books, pending operations, and offline reading are unaffected.
 
 The GitHub App must be installed on the repositories a user may select. It
 needs repository Contents read/write permission for synchronization and
@@ -690,6 +743,9 @@ only `dumpSession` output in the encrypted server-side record.
   `Retry-After` value between one second and 24 hours.
 - `502`: provider or GitHub App authentication failed upstream while the local
   session remains retryable.
+- `503`: synchronization configuration or the shared readiness dependency is
+  unavailable.
+- `504`: a bounded provider request or transfer deadline elapsed.
 - `507`: provider storage quota exhausted.
 
 ## References

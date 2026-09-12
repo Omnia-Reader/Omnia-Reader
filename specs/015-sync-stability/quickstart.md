@@ -271,6 +271,12 @@ Feature 015 preparation evidence on 2026-09-12:
   strict CLI parsing, checksummed inclusion, and stale-output removal. This
   completes T047 without treating the source-only verifier used by ordinary CI
   as promotion evidence.
+- A clean clone of commit `7da630b` accepted a synthetic contract-only evidence
+  manifest bound to that exact commit and package version, produced a 133-file
+  release manifest containing the canonical evidence SHA-256, and then returned
+  to a 132-file source-only manifest with the generated evidence absent. This
+  proves the T047 integration mechanics only; it is not real candidate gate
+  evidence.
 - The artifact canary scanner now requires non-empty trace, IPC, log, report,
   redirect, evidence, and synchronized-record target classes and scans literal,
   percent-encoded, form-encoded, Base64, Base64url, and bounded ZIP contents. It rejects
@@ -291,6 +297,14 @@ Feature 015 preparation evidence on 2026-09-12:
   rollback, and invalid rollback targets. This completes T043/T050 at the
   orchestration contract layer; actual protected staging and production
   execution remains T052/T057.
+- The gateway contract now gives operators exact liveness and readiness bodies,
+  routing behavior during Redis outage/recovery, client-safe failure mapping,
+  whole-prefix Redis backup/restore requirements, TTL and encryption-key
+  handling, cross-replica recovery checks, and a fail-safe key replacement rule
+  when restored revocation state cannot be proven current. Existing endpoint,
+  native handoff, rotation, and provider route tables were reconciled against
+  the implementation. This completes T054 as documentation evidence; a real
+  production backup/restore exercise remains a release gate.
 
 ## 2. Deterministic browser convergence
 

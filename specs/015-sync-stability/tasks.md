@@ -140,7 +140,7 @@ rebuild.
 - [ ] T051 [US3] Add a protected live GitHub workflow that rejects untrusted PR execution and uploads only sanitized evidence in `.github/workflows/sync-live-github.yml`
 - [ ] T052 [US3] Add build-once OCI digest, SBOM, provenance, scan, signing, canary, and rollback jobs pinned by full commits in `.github/workflows/sync-release.yml`
 - [ ] T053 [US3] Add deterministic container smoke and evidence gates to `.github/workflows/verify.yml`
-- [ ] T054 [US3] Document routes, readiness, native handoff, Redis rotation/restore, and safe errors in `docs/sync-gateway-api.md`
+- [x] T054 [US3] Document routes, readiness, native handoff, Redis rotation/restore, and safe errors in `docs/sync-gateway-api.md`
 - [ ] T055 [US3] Document promotion, canary thresholds, rollback, evidence retention, unavailable gates, and diagnostics in `docs/release-and-rollback.md`
 
 ### Verification for User Story 3
