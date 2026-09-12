@@ -146,7 +146,7 @@ rebuild.
 ### Verification for User Story 3
 
 - [x] T056 [US3] Run `npm run container:smoke`, `npm run release:test`, `npm run release:verify`, and new evidence/promotion tests; record a persistent Docker blocker in `specs/015-sync-stability/quickstart.md`
-- [ ] T057 [US3] Run protected GitHub and immutable release workflows for the exact candidate or record unavailable staging, credential, registry, signing, and deployment gates in `specs/015-sync-stability/quickstart.md`
+- [x] T057 [US3] Run protected GitHub and immutable release workflows for the exact candidate or record unavailable staging, credential, registry, signing, and deployment gates in `specs/015-sync-stability/quickstart.md`
 
 **Checkpoint**: User Story 3 produces a reproducible decision for one candidate
 and supports digest-only rollback.
@@ -189,9 +189,9 @@ remains independently accessible.
 ## Final Phase: Cross-Cutting Acceptance and Promotion
 
 - [ ] T066 Reconcile all artifacts under `specs/015-sync-stability/` with implementation discoveries
-- [ ] T067 Run `npx nx run-many -t lint --all --skip-nx-cache` and record results in `specs/015-sync-stability/quickstart.md`
-- [ ] T068 Run production builds for `omnia-reader` and `sync-gateway` with `--skip-nx-cache`, recording evidence in `specs/015-sync-stability/quickstart.md`
-- [ ] T069 Run `npm audit --omit=dev`, `npm run release:test`, `npm run release:verify`, and `git diff --check`, recording results in `specs/015-sync-stability/quickstart.md`
+- [x] T067 Run `npx nx run-many -t lint --all --skip-nx-cache` and record results in `specs/015-sync-stability/quickstart.md`
+- [x] T068 Run production builds for `omnia-reader` and `sync-gateway` with `--skip-nx-cache`, recording evidence in `specs/015-sync-stability/quickstart.md`
+- [x] T069 Run `npm audit --omit=dev`, `npm run release:test`, `npm run release:verify`, and `git diff --check`, recording results in `specs/015-sync-stability/quickstart.md`
 - [ ] T070 Run `$verify-omnia-reader` and preserve exact deterministic, browser, Redis, native, container, provider, and release evidence in `specs/015-sync-stability/quickstart.md`
 - [ ] T071 Run `$review-omnia-reader` across sync, gateway security, native authority, accessibility, CI, deployment, and release changes and resolve findings
 - [ ] T072 Update `docs/universal-reader-plan.md` only with verified status, architecture, release gates, and unavailable external evidence

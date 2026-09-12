@@ -344,6 +344,18 @@ Feature 015 preparation evidence on 2026-09-12:
   blocked on the local Docker daemon for several minutes and were terminated.
   No smoke process remained afterward; container state could not be queried,
   so the Docker smoke result is explicitly unavailable rather than passed.
+- The final local quality pass ran
+  `npx nx run-many -t lint --all --skip-nx-cache` across all 13 projects. The
+  first pass exposed 22 Playwright warnings where Node contract harnesses were
+  being treated as browser journeys and where the protected live GitHub test
+  intentionally gates credentials and conditional cleanup. Narrow file-level
+  lint declarations now make those test roles explicit; the repeated 13-project
+  command passed with no ESLint findings. The production web build passed at
+  424.83 kB raw / 93.88 kB estimated initial transfer and the production
+  `sync-gateway` build passed, both with the Nx cache disabled. An explicit
+  `npm audit --omit=dev` found zero vulnerabilities. The expanded 67-test
+  release suite, full source-only release verifier, and `git diff --check` also
+  passed against the resulting checkout, completing T067-T069.
 
 ## 2. Deterministic browser convergence
 
