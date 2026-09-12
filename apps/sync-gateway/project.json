@@ -53,6 +53,13 @@
       "options": {
         "command": "vitest run --config apps/sync-gateway/vitest.config.ts"
       }
+    },
+    "test-redis": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash -c 'set -euo pipefail; cleanup() { docker compose --file deployment/compose.redis-test.yaml down --volumes; }; trap cleanup EXIT; docker compose --file deployment/compose.redis-test.yaml up --detach --wait; OMNIA_SYNC_REDIS_TEST_URL=redis://127.0.0.1:${OMNIA_SYNC_REDIS_TEST_PORT:-46379}/15 vitest run --config apps/sync-gateway/vitest.config.ts'"
+      }
     }
   }
 }

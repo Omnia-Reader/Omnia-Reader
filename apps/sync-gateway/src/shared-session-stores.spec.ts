@@ -9,6 +9,30 @@ import {
 } from './shared-session-stores.js';
 
 describe('gatewaySessionStoresFromEnvironment', () => {
+  it('requires Redis for configured production providers without affecting disabled providers', async () => {
+    await expect(
+      gatewaySessionStoresFromEnvironment(
+        environment({ NODE_ENV: 'production' }),
+      ),
+    ).rejects.toThrow('Production synchronization requires Redis');
+    await expect(
+      gatewaySessionStoresFromEnvironment(
+        environment({
+          NODE_ENV: 'production',
+          OMNIA_SYNC_SESSION_DIRECTORY: '.session-data',
+        }),
+      ),
+    ).rejects.toThrow('Production synchronization requires Redis');
+
+    const disabled = await gatewaySessionStoresFromEnvironment({
+      NODE_ENV: 'production',
+    });
+    expect(disabled.github).toBeUndefined();
+    expect(disabled.mega).toBeUndefined();
+    await expect(disabled.ready()).resolves.toBeUndefined();
+    await disabled.close();
+  });
+
   it('uses isolated encrypted memory stores for a single replica', async () => {
     const stores = await gatewaySessionStoresFromEnvironment(environment());
 
@@ -49,6 +73,7 @@ describe('gatewaySessionStoresFromEnvironment', () => {
     let configuredUrl = '';
     const stores = await gatewaySessionStoresFromEnvironment(
       environment({
+        NODE_ENV: 'production',
         OMNIA_SYNC_REDIS_URL: 'redis://127.0.0.1:6379/2',
         OMNIA_SYNC_REDIS_PREFIX: 'reader:test',
       }),
@@ -101,6 +126,24 @@ describe('gatewaySessionStoresFromEnvironment', () => {
 
     await stores.close();
     await stores.close();
+    expect(client.destroyCount).toBe(1);
+  });
+
+  it('fails startup without constructing a fallback after a Redis outage', async () => {
+    const client = new FakeSharedRedisClient(
+      new Error('sensitive connection detail'),
+    );
+
+    await expect(
+      gatewaySessionStoresFromEnvironment(
+        environment({
+          NODE_ENV: 'production',
+          OMNIA_SYNC_REDIS_URL: 'redis://127.0.0.1:6379/2',
+        }),
+        { createRedisClient: () => client },
+      ),
+    ).rejects.toThrow('sensitive connection detail');
+    expect(client.connectCount).toBe(1);
     expect(client.destroyCount).toBe(1);
   });
 
@@ -341,12 +384,17 @@ class FakeSharedRedisClient implements SharedRedisClient {
   connectCount = 0;
   destroyCount = 0;
 
+  constructor(private readonly connectError?: Error) {}
+
   on(): this {
     return this;
   }
 
   async connect(): Promise<unknown> {
     this.connectCount += 1;
+    if (this.connectError) {
+      throw this.connectError;
+    }
     return this;
   }
 

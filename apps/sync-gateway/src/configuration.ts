@@ -96,6 +96,9 @@ export function githubAdapterFromEnvironment(
     24 * 60 * 60 * 1000,
     'OMNIA_GITHUB_TRANSFER_TIMEOUT_MS',
   );
+  if (environment['NODE_ENV'] === 'production' && !overrides.sessions) {
+    throw new TypeError('The GitHub production session store is unavailable');
+  }
   return new GitHubSyncGatewayAdapter({
     appId: environment['OMNIA_GITHUB_APP_ID'] as string,
     clientId: environment['OMNIA_GITHUB_CLIENT_ID'] as string,
@@ -202,6 +205,9 @@ export function megaAdapterFromEnvironment(
     throw new TypeError(
       `MEGA synchronization configuration is incomplete: ${missing.join(', ')}`,
     );
+  }
+  if (environment['NODE_ENV'] === 'production' && !overrides.sessions) {
+    throw new TypeError('The MEGA production session store is unavailable');
   }
   const bridge = new HttpMegaSdkBridge({
     baseUrl: environment['OMNIA_MEGA_SDK_BRIDGE_URL'] as string,

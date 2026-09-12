@@ -81,6 +81,11 @@ export async function gatewaySessionStoresFromEnvironment(
   const redisUrl = environment['OMNIA_SYNC_REDIS_URL'];
   const sessionDirectory = environment['OMNIA_SYNC_SESSION_DIRECTORY'];
   const nativeRedirectScheme = environment['OMNIA_SYNC_NATIVE_REDIRECT_SCHEME'];
+  if (environment['NODE_ENV'] === 'production' && !redisUrl) {
+    throw new TypeError(
+      'Production synchronization requires Redis session storage',
+    );
+  }
   if (redisUrl && sessionDirectory) {
     throw new TypeError(
       'Configure either OMNIA_SYNC_REDIS_URL or OMNIA_SYNC_SESSION_DIRECTORY, not both',

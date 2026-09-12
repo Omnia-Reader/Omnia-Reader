@@ -196,6 +196,13 @@ Feature 015 preparation evidence on 2026-09-12:
   production build passed. Native handoff tests passed 5/5 and the complete
   Rust suite passed 20/20. Native protected persistence and Settings handoff
   integration remain open under T025/T034/T035.
+- Production session-store tests failed first while configured providers could
+  still construct encrypted process-local stores. Production now requires a
+  Redis URL before provider adapters are built, refuses implicit in-memory
+  adapter stores, keeps liveness separate from Redis readiness, and fails
+  startup on connection loss without a fallback. The pinned
+  `sync-gateway:test-redis` Compose harness passed 134/134 tests against Redis
+  7.2 and removed its isolated container and network after the run.
 
 ## 2. Deterministic browser convergence
 

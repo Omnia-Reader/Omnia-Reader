@@ -59,9 +59,11 @@ docker compose --file deployment/compose.yaml up --detach --build
 The smoke gate builds both images, waits for both health checks, verifies the
 application security headers, probes the gateway through the Nginx proxy, and
 proves that an unconfigured GitHub provider reports a safe unauthenticated
-session. Production still requires an HTTPS edge, a shared Redis session store
-for restart and replica continuity, credentialed provider conformance tests,
-and deployment-specific image scanning, signing, and publication.
+session. Production startup rejects configured providers unless a shared Redis
+session store is configured, and readiness fails whenever that dependency
+cannot be reached. Production still requires an HTTPS edge, credentialed
+provider conformance tests, and deployment-specific image scanning, signing,
+and publication.
 
 ### GitHub App configuration
 
@@ -305,7 +307,9 @@ a shared or distributed store. Do not mount it into multiple gateway replicas,
 and do not use it with the GitHub webhook because webhook revocation state
 must be shared atomically.
 
-Use Redis when more than one gateway replica serves the same origin:
+Use Redis when more than one gateway replica serves the same origin. Redis is
+mandatory whenever a provider is enabled with `NODE_ENV=production`; the
+gateway will not downgrade to its process-local or file store:
 
 ```text
 OMNIA_SYNC_REDIS_URL=rediss://user:password@redis.example:6379/0

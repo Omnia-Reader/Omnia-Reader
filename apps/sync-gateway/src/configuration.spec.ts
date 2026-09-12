@@ -9,6 +9,15 @@ import { MegaSyncGatewayAdapter } from './mega-adapter.js';
 import { UnconfiguredSyncGatewayAdapter } from './unconfigured-adapter.js';
 
 describe('githubAdapterFromEnvironment', () => {
+  it('refuses an implicit process-local session store in production', () => {
+    expect(() =>
+      githubAdapterFromEnvironment({
+        ...environment(),
+        NODE_ENV: 'production',
+      }),
+    ).toThrow('production session store is unavailable');
+  });
+
   it('fails closed when GitHub synchronization is not configured', () => {
     expect(githubAdapterFromEnvironment({})).toBeInstanceOf(
       UnconfiguredSyncGatewayAdapter,
@@ -125,6 +134,15 @@ describe('githubWebhookFromEnvironment', () => {
 });
 
 describe('megaAdapterFromEnvironment', () => {
+  it('refuses an implicit process-local session store in production', () => {
+    expect(() =>
+      megaAdapterFromEnvironment({
+        ...megaEnvironment(),
+        NODE_ENV: 'production',
+      }),
+    ).toThrow('production session store is unavailable');
+  });
+
   it('fails closed when MEGA synchronization is not configured', () => {
     expect(megaAdapterFromEnvironment({})).toBeInstanceOf(
       UnconfiguredSyncGatewayAdapter,
