@@ -641,3 +641,16 @@ function delay(milliseconds) {
 }
 
 await main();
+if (process.env['OMNIA_NATIVE_SYNC_E2E'] === '1') {
+  const { stdout, stderr } = await execFileAsync(
+    process.execPath,
+    ['apps/omnia-reader-e2e/src/native/run-native-sync-e2e.mjs'],
+    {
+      cwd: resolve('.'),
+      env: nativeEnvironment(),
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  process.stdout.write(stdout);
+  process.stderr.write(stderr);
+}

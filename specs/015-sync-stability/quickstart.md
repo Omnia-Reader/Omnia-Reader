@@ -436,6 +436,30 @@ secret-canary absence, declared protected-versus-session-only restart behavior,
 and 25 MiB cancellation/retry. Report unavailable physical-device evidence
 separately.
 
+T026 now uses the protected driver contract in
+[`native-sync-conformance.md`](contracts/native-sync-conformance.md). The
+repository runner binds each report to the exact candidate, packaged artifact
+digest, host, and run ID; refuses canary-bearing or non-canonical output; and
+requires positive evidence for relative-route failure, broker use, local-first
+offline/restart recovery, persistence-consistent reauthentication, whole 25 MiB
+retry, cancellation, monotonic progress, the 8 MiB buffer and 64 MiB RSS limits,
+single acknowledgement, no dangling reference, canary absence, and scoped
+cleanup. Its focused Node suite passed 7/7 on 2026-09-12, including forced
+cleanup after an intermediate driver failure; a direct unprotected invocation
+failed before driver discovery with `A protected packaged runner is required.`
+The existing native
+desktop journey conditionally invokes it through `OMNIA_NATIVE_SYNC_E2E=1`, and
+the direct `npm run native:sync:e2e` entry supports Android platform control.
+T038 remains open until the protected host targets are added without overwriting
+the separate Feature 014 edits in `apps/omnia-reader-e2e/project.json`.
+
+The isolated real-Redis target was refreshed on 2026-09-12 and passed 138/138
+gateway tests across 10 files, including the cross-replica lifecycle cases. Its
+Compose trap removed the dedicated Redis container and network. This proves the
+Redis half of T040 only; no packaged binary, Windows/macOS host, configured
+Android emulator, protected conformance driver, or staging origin was available
+for the packaged half, so T040 remains open.
+
 ## 6. Protected live GitHub conformance
 
 In the protected staging environment only:

@@ -85,7 +85,7 @@ authority, duplicate acknowledgement, or dangling publication reference.
 - [x] T023 [P] [US2] Add cookie-opacity, header-filtering, secret-canary, queue-bound, stream-progress, cancellation, and cleanup tests in `src-tauri/src/sync_broker/tests.rs`
 - [x] T024 [P] [US2] Add handoff binding, provider, expiry, atomic-use, replay, forgery, and sanitized-failure tests in `apps/sync-gateway/src/native-handoff.spec.ts` and `src-tauri/src/native_handoff/tests.rs`
 - [x] T025 [P] [US2] Add protected-versus-session-only persistence, fail-closed downgrade, and restart tests in `src-tauri/src/sync_session/tests.rs`
-- [ ] T026 [P] [US2] Add packaged Linux/Windows/macOS/Android proof journeys for relative-route failure, broker connection, offline reading, restart, reauthentication, 25 MiB retry, 8 MiB buffer, 64 MiB RSS, and canary absence in `apps/omnia-reader-e2e/src/native/run-native-sync-e2e.mjs`
+- [x] T026 [P] [US2] Add packaged Linux/Windows/macOS/Android proof journeys for relative-route failure, broker connection, offline reading, restart, reauthentication, 25 MiB retry, 8 MiB buffer, 64 MiB RSS, and canary absence in `apps/omnia-reader-e2e/src/native/run-native-sync-e2e.mjs`
 
 ### Implementation for User Story 2
 

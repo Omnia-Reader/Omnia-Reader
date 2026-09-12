@@ -10,6 +10,8 @@
     "native:dev": "tauri dev",
     "native:build": "tauri build",
     "native:e2e": "nx run omnia-reader-e2e:native",
+    "native:sync:e2e": "node apps/omnia-reader-e2e/src/native/run-native-sync-e2e.mjs",
+    "native:sync:test": "node --test apps/omnia-reader-e2e/src/native/run-native-sync-e2e.spec.mjs",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
     "android:build": "tauri android build",
