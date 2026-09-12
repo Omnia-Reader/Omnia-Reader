@@ -60,7 +60,10 @@ test('proves real GitHub synchronization and recovery through the public applica
   let journeyFailure: unknown;
 
   try {
-    await invokeLiveGitHubControl(configuration, 'prepare');
+    assertDeploymentEvidence(
+      await invokeLiveGitHubControl(configuration, 'prepare'),
+      configuration,
+    );
     const first = await createProtectedDevice(
       browser,
       storageState,
@@ -579,6 +582,18 @@ async function assertNoAuthorizationOrphans(
 ) {
   const result = await invokeLiveGitHubControl(liveConfiguration, 'inspect');
   expect(controlEvidence(result)['authorizationOrphans']).toBe(0);
+}
+
+function assertDeploymentEvidence(
+  result: unknown,
+  liveConfiguration: NonNullable<typeof configuration>,
+): void {
+  const evidence = controlEvidence(result);
+  expect(evidence['deployedCommit']).toBe(liveConfiguration.candidateCommit);
+  expect(evidence['deployedRelease']).toBe(liveConfiguration.candidateRelease);
+  expect(evidence['deployedArtifactDigest']).toBe(
+    liveConfiguration.artifactDigest,
+  );
 }
 
 function assertCleanupEvidence(result: unknown): void {

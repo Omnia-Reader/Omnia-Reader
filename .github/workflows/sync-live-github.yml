@@ -1,0 +1,198 @@
+name: Protected live GitHub synchronization
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_commit:
+        description: Trusted full commit deployed to synchronization staging
+        required: true
+        type: string
+      candidate_release:
+        description: Sanitized release identifier for this candidate
+        required: true
+        type: string
+      artifact_digest:
+        description: Immutable sha256 deployment digest
+        required: true
+        type: string
+      throttle_available:
+        description: Staging exposes the approved one-shot throttle mechanism
+        required: true
+        type: choice
+        default: '0'
+        options:
+          - '0'
+          - '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protected-live-github-sync
+  cancel-in-progress: false
+
+jobs:
+  trust:
+    name: Validate immutable trusted candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Refuse non-default-branch dispatch
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_NAME" = workflow_dispatch
+          test "$WORKFLOW_REF" = refs/heads/main
+
+      - name: Check out trusted history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate candidate identity and ancestry
+        env:
+          ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          CANDIDATE_RELEASE: ${{ inputs.candidate_release }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CANDIDATE_RELEASE" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          git cat-file -e "$CANDIDATE_COMMIT^{commit}"
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" origin/main
+
+  live-github:
+    name: Exercise protected GitHub App and Git LFS
+    needs: trust
+    runs-on:
+      - self-hosted
+      - omnia-sync-staging-ephemeral
+    environment: sync-staging
+    timeout-minutes: 30
+    env:
+      LIVE_GITHUB_ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+      LIVE_GITHUB_CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+      LIVE_GITHUB_CANDIDATE_RELEASE: ${{ inputs.candidate_release }}
+      LIVE_GITHUB_PROTECTED_RUNNER: '1'
+      LIVE_GITHUB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      LIVE_GITHUB_SYNC_E2E: '1'
+      LIVE_GITHUB_THROTTLE_AVAILABLE: ${{ inputs.throttle_available }}
+    steps:
+      - name: Check out trusted history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Revalidate and check out the candidate
+        env:
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          git cat-file -e "$CANDIDATE_COMMIT^{commit}"
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" origin/main
+          git checkout --detach "$CANDIDATE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Install Chromium
+        run: npx playwright install chromium
+
+      - name: Run, scan, and sanitize live evidence
+        env:
+          AUTH_STATE_JSON: ${{ secrets.LIVE_GITHUB_AUTH_STATE_JSON }}
+          BASE_URL: ${{ secrets.SYNC_STAGING_BASE_URL }}
+          LIVE_GITHUB_CONTROL_DRIVER: ${{ secrets.LIVE_GITHUB_CONTROL_DRIVER }}
+          OMNIA_SYNC_SECRET_CANARIES: ${{ secrets.OMNIA_SYNC_SECRET_CANARIES }}
+        run: |
+          set -euo pipefail
+          auth_state="$RUNNER_TEMP/omnia-live-github-auth-state.json"
+          raw_root="$RUNNER_TEMP/omnia-live-github-raw-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scan_result="$RUNNER_TEMP/omnia-live-github-scan.json"
+          sanitized_root="$GITHUB_WORKSPACE/dist/live-github-evidence"
+          trap 'rm -rf "$raw_root"; rm -f "$auth_state" "$scan_result"' EXIT
+          install -m 600 /dev/null "$auth_state"
+          printf '%s' "$AUTH_STATE_JSON" >"$auth_state"
+          unset AUTH_STATE_JSON
+          export LIVE_GITHUB_AUTH_STATE="$auth_state"
+          mkdir -p \
+            "$raw_root/trace" \
+            "$raw_root/ipc" \
+            "$raw_root/log" \
+            "$raw_root/report" \
+            "$raw_root/redirect" \
+            "$raw_root/evidence" \
+            "$raw_root/synchronized-record"
+          for target in trace ipc redirect evidence synchronized-record; do
+            printf 'not retained by protected live GitHub workflow\n' >"$raw_root/$target/status.txt"
+          done
+
+          set +e
+          PLAYWRIGHT_JSON_OUTPUT_FILE="$raw_root/report/playwright.json" \
+            npx playwright test \
+              --config apps/omnia-reader-e2e/playwright.config.ts \
+              --project=chromium \
+              --workers=1 \
+              --retries=0 \
+              --trace=off \
+              --output="$raw_root/trace/playwright-output" \
+              --reporter=json \
+              sync-live-github.spec.ts \
+              >"$raw_root/log/playwright.log" 2>&1
+          playwright_status=$?
+          set -e
+
+          set +e
+          node tools/release/scan-sync-evidence.mjs "$raw_root" \
+            >"$scan_result" 2>>"$raw_root/log/playwright.log"
+          scan_status=$?
+          set -e
+          mkdir -p "$sanitized_root"
+          if test -s "$scan_result"; then
+            cp "$scan_result" "$sanitized_root/canary-scan.json"
+          fi
+
+          set +e
+          node tools/release/write-live-github-evidence.mjs \
+            --report "$raw_root/report/playwright.json" \
+            --scan "$scan_result" \
+            --output "$sanitized_root" \
+            --candidate-commit "$LIVE_GITHUB_CANDIDATE_COMMIT" \
+            --candidate-release "$LIVE_GITHUB_CANDIDATE_RELEASE" \
+            --artifact-digest "$LIVE_GITHUB_ARTIFACT_DIGEST"
+          evidence_status=$?
+          set -e
+
+          test "$playwright_status" -eq 0
+          test "$scan_status" -eq 0
+          test "$evidence_status" -eq 0
+
+      - name: Remove protected transient state
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/omnia-live-github-raw-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -f \
+            "$RUNNER_TEMP/omnia-live-github-auth-state.json" \
+            "$RUNNER_TEMP/omnia-live-github-scan.json"
+
+      - name: Upload sanitized live GitHub evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: live-github-evidence-${{ inputs.candidate_commit }}
+          path: dist/live-github-evidence/*.json
+          if-no-files-found: error
+          retention-days: 90

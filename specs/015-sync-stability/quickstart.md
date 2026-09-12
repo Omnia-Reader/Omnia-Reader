@@ -446,8 +446,11 @@ LIVE_GITHUB_PROTECTED_RUNNER=1 \
 LIVE_GITHUB_AUTH_STATE=/run/secrets/github-storage-state.json \
 LIVE_GITHUB_CONTROL_DRIVER=/opt/omnia/live-github-control \
 LIVE_GITHUB_RUN_ID=<unique-lowercase-run-id> \
-LIVE_GITHUB_SECRET_CANARY=<protected-unique-canary> \
+OMNIA_SYNC_SECRET_CANARIES='<protected-json-with-live-github-secret>' \
 LIVE_GITHUB_THROTTLE_AVAILABLE=0 \
+LIVE_GITHUB_CANDIDATE_COMMIT=<40-lowercase-hex-commit> \
+LIVE_GITHUB_CANDIDATE_RELEASE=<release-identifier> \
+LIVE_GITHUB_ARTIFACT_DIGEST=sha256:<64-lowercase-hex-digest> \
 BASE_URL=https://reader-staging.example.com \
 npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 sync-live-github.spec.ts
 ```
@@ -468,6 +471,17 @@ confirmed to exit non-zero before discovering or running tests. No protected
 GitHub browser state, staging origin, control driver, or cleanup identity is
 available in this checkout, so the live journey itself remains unavailable
 evidence under T057 and GitHub maturity remains experimental.
+
+T051 was implemented on 2026-09-12 as a manual-default-branch workflow with a
+trusted-ancestor preflight, a protected ephemeral staging runner, secrets scoped
+only to the execution step, exact candidate/deployment binding, zero Playwright
+retries or traces, raw-output canary scanning, redundant transient cleanup, and
+sanitized JSON-only artifact upload. Safe throttle absence becomes unavailable
+evidence rather than a passing run. The release suite passed 31/31 tests,
+focused ESLint passed, the workflow YAML parsed, and Playwright listed the live
+journey. The workflow was not dispatched because the protected staging runner,
+environment secrets, immutable deployed digest, and GitHub control driver are
+not available here; that execution gate remains T057.
 
 ## 7. Promotion decision
 

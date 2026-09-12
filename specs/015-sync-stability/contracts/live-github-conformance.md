@@ -16,6 +16,13 @@ as test artifacts, or made available to untrusted pull-request code.
 The Playwright journey is disabled unless `LIVE_GITHUB_SYNC_E2E=1`. An enabled
 run fails closed unless all of these protected inputs are present:
 
+The workflow's credentialed job runs only on an ephemeral self-hosted runner
+carrying the `omnia-sync-staging-ephemeral` label and protected by the
+`sync-staging` GitHub environment. Package installation and browser setup run
+before secrets enter any step environment. Raw output and authentication state
+stay under runner-temporary storage, are removed by both an exit trap and an
+`always()` cleanup step, and are never uploaded.
+
 - `LIVE_GITHUB_PROTECTED_RUNNER=1` confirms that trust policy was evaluated by
   the caller. The protected workflow must still reject pull-request execution.
 - `BASE_URL` identifies a non-loopback, non-placeholder HTTPS deployment. The
@@ -29,16 +36,21 @@ run fails closed unless all of these protected inputs are present:
   passed to the application or committed test code.
 - `LIVE_GITHUB_RUN_ID` is a unique 8-40 character lowercase identifier. The
   journey creates only `omnia-reader-live-<run-id>`.
-- `LIVE_GITHUB_SECRET_CANARY` is a unique 20-256 character protected value used
-  to detect unsafe provider-error disclosure.
+- `OMNIA_SYNC_SECRET_CANARIES` is protected JSON containing exactly one
+  20-256-character `live-github-secret` value. The browser journey and artifact
+  scanner consume the same value so neither boundary can silently scan a
+  different canary.
 - `LIVE_GITHUB_THROTTLE_AVAILABLE` is exactly `0` or `1`. A zero value permits
   only the throttle step to return `unavailable`; it does not weaken any other
   live gate.
+- `LIVE_GITHUB_CANDIDATE_COMMIT`, `LIVE_GITHUB_CANDIDATE_RELEASE`, and
+  `LIVE_GITHUB_ARTIFACT_DIGEST` bind the run to the trusted full commit,
+  sanitized release identifier, and `sha256:` deployment digest.
 
-The control executable accepts
-`--operation <name> --run-id <id> --repository <name>` and prints one JSON value
-to stdout. The envelope is
-`{"schemaVersion":1,"operation":"...","runId":"...","repository":"...","outcome":"ok|unavailable","evidence":{...}}`.
+The control executable accepts `--operation <name> --run-id <id> --repository
+<name> --candidate-commit <commit> --candidate-release <release>
+--artifact-digest <digest>` and prints one JSON value to stdout. The envelope is
+`{"schemaVersion":1,"operation":"...","runId":"...","repository":"...","candidateCommit":"...","candidateRelease":"...","artifactDigest":"...","outcome":"ok|unavailable","evidence":{...}}`.
 Every identity field must match the request. Non-zero exit, malformed output,
 or `unavailable` for a required operation fails the run without echoing driver
 stdout/stderr. Supported operations are `prepare`, `restart-gateway`,
@@ -46,6 +58,10 @@ stdout/stderr. Supported operations are `prepare`, `restart-gateway`,
 `revoke-authorization`, `remove-repository-access`,
 `restore-repository-access`, `inject-provider-error-once`, `throttle-once`,
 `inspect`, and `cleanup`.
+
+`prepare` refuses a deployment mismatch and reports exact `deployedCommit`,
+`deployedRelease`, and `deployedArtifactDigest` evidence. The journey compares
+all three with its protected candidate inputs before opening a browser.
 
 `expire-provider-token` expires the provider access token while retaining a
 valid refresh grant; the next ordinary application request must refresh it

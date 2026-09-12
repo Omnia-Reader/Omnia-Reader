@@ -22,6 +22,9 @@ export const LIVE_GITHUB_CONTROL_OPERATIONS = Object.freeze([
 
 const controlOperations = new Set(LIVE_GITHUB_CONTROL_OPERATIONS);
 const githubCookieDomain = /^(?:\.)?github\.com$/;
+const fullCommit = /^[a-f0-9]{40}$/;
+const sha256Digest = /^sha256:[a-f0-9]{64}$/;
+const safeIdentifier = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/;
 
 export class LiveGitHubConfigurationError extends Error {
   constructor(message) {
@@ -82,10 +85,31 @@ export function readLiveGitHubConfiguration(environment = process.env) {
     );
   }
 
-  const secretCanary = required(environment, 'LIVE_GITHUB_SECRET_CANARY');
+  const serializedCanaries = required(
+    environment,
+    'OMNIA_SYNC_SECRET_CANARIES',
+  );
+  let canaries;
+  try {
+    canaries = JSON.parse(serializedCanaries);
+  } catch {
+    throw configurationError(
+      'OMNIA_SYNC_SECRET_CANARIES must be protected JSON',
+    );
+  }
+  if (
+    !isRecord(canaries) ||
+    Object.keys(canaries).length !== 1 ||
+    typeof canaries['live-github-secret'] !== 'string'
+  ) {
+    throw configurationError(
+      'OMNIA_SYNC_SECRET_CANARIES must contain only live-github-secret',
+    );
+  }
+  const secretCanary = canaries['live-github-secret'];
   if (secretCanary.length < 20 || secretCanary.length > 256) {
     throw configurationError(
-      'LIVE_GITHUB_SECRET_CANARY must contain 20-256 characters',
+      'The live-github-secret canary must contain 20-256 characters',
     );
   }
 
@@ -99,6 +123,28 @@ export function readLiveGitHubConfiguration(environment = process.env) {
     );
   }
 
+  const candidateCommit = required(environment, 'LIVE_GITHUB_CANDIDATE_COMMIT');
+  const candidateRelease = required(
+    environment,
+    'LIVE_GITHUB_CANDIDATE_RELEASE',
+  );
+  const artifactDigest = required(environment, 'LIVE_GITHUB_ARTIFACT_DIGEST');
+  if (!fullCommit.test(candidateCommit)) {
+    throw configurationError(
+      'LIVE_GITHUB_CANDIDATE_COMMIT must be a full lowercase Git commit',
+    );
+  }
+  if (!safeIdentifier.test(candidateRelease)) {
+    throw configurationError(
+      'LIVE_GITHUB_CANDIDATE_RELEASE must be a sanitized release identifier',
+    );
+  }
+  if (!sha256Digest.test(artifactDigest)) {
+    throw configurationError(
+      'LIVE_GITHUB_ARTIFACT_DIGEST must be an immutable SHA-256 digest',
+    );
+  }
+
   return Object.freeze({
     baseUrl: parsedBaseUrl.toString().replace(/\/$/, ''),
     authStatePath,
@@ -107,6 +153,9 @@ export function readLiveGitHubConfiguration(environment = process.env) {
     repositoryName,
     secretCanary,
     throttleAvailable: throttleAvailable === '1',
+    candidateCommit,
+    candidateRelease,
+    artifactDigest,
   });
 }
 
@@ -159,6 +208,12 @@ export async function invokeLiveGitHubControl(
         configuration.runId,
         '--repository',
         configuration.repositoryName,
+        '--candidate-commit',
+        configuration.candidateCommit,
+        '--candidate-release',
+        configuration.candidateRelease,
+        '--artifact-digest',
+        configuration.artifactDigest,
       ],
       {
         encoding: 'utf8',
@@ -186,6 +241,9 @@ export async function invokeLiveGitHubControl(
     result.operation !== operation ||
     result.runId !== configuration.runId ||
     result.repository !== configuration.repositoryName ||
+    result.candidateCommit !== configuration.candidateCommit ||
+    result.candidateRelease !== configuration.candidateRelease ||
+    result.artifactDigest !== configuration.artifactDigest ||
     (result.outcome !== 'ok' && result.outcome !== 'unavailable')
   ) {
     throw new Error(
@@ -237,7 +295,13 @@ function isGitHubOrigin(origin) {
 }
 
 function isRecord(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype ||
+      Object.getPrototypeOf(value) === null)
+  );
 }
 
 function configurationError(message) {

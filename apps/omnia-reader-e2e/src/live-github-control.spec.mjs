@@ -17,8 +17,13 @@ const validEnvironment = {
   LIVE_GITHUB_AUTH_STATE: '/run/secrets/github-storage-state.json',
   LIVE_GITHUB_CONTROL_DRIVER: '/opt/omnia/live-github-control',
   LIVE_GITHUB_RUN_ID: '20260912-a1b2c3d4',
-  LIVE_GITHUB_SECRET_CANARY: 'canary-that-must-not-leak-1234',
+  OMNIA_SYNC_SECRET_CANARIES: JSON.stringify({
+    'live-github-secret': 'canary-that-must-not-leak-1234',
+  }),
   LIVE_GITHUB_THROTTLE_AVAILABLE: '0',
+  LIVE_GITHUB_CANDIDATE_COMMIT: 'a'.repeat(40),
+  LIVE_GITHUB_CANDIDATE_RELEASE: '0.1.0-rc.1',
+  LIVE_GITHUB_ARTIFACT_DIGEST: `sha256:${'b'.repeat(64)}`,
 };
 
 test('keeps the live journey disabled unless explicitly requested', () => {
@@ -34,6 +39,9 @@ test('accepts a complete protected live GitHub configuration', () => {
     repositoryName: 'omnia-reader-live-20260912-a1b2c3d4',
     secretCanary: 'canary-that-must-not-leak-1234',
     throttleAvailable: false,
+    candidateCommit: 'a'.repeat(40),
+    candidateRelease: '0.1.0-rc.1',
+    artifactDigest: `sha256:${'b'.repeat(64)}`,
   });
 });
 
@@ -47,8 +55,22 @@ test('fails closed for unprotected, insecure, ambiguous, or incomplete runs', ()
     { LIVE_GITHUB_AUTH_STATE: 'github-state.json' },
     { LIVE_GITHUB_CONTROL_DRIVER: './control' },
     { LIVE_GITHUB_RUN_ID: 'shared' },
-    { LIVE_GITHUB_SECRET_CANARY: 'short' },
+    {
+      OMNIA_SYNC_SECRET_CANARIES: JSON.stringify({
+        'live-github-secret': 'short',
+      }),
+    },
+    { OMNIA_SYNC_SECRET_CANARIES: '{not-json' },
+    {
+      OMNIA_SYNC_SECRET_CANARIES: JSON.stringify({
+        'live-github-secret': 'canary-that-must-not-leak-1234',
+        extra: 'another-secret-canary-value',
+      }),
+    },
     { LIVE_GITHUB_THROTTLE_AVAILABLE: 'maybe' },
+    { LIVE_GITHUB_CANDIDATE_COMMIT: 'main' },
+    { LIVE_GITHUB_CANDIDATE_RELEASE: 'release with spaces' },
+    { LIVE_GITHUB_ARTIFACT_DIGEST: 'latest' },
   ]) {
     assert.throws(
       () => readLiveGitHubConfiguration({ ...validEnvironment, ...override }),
@@ -101,7 +123,7 @@ test('validates the scoped control-driver envelope without exposing output', asy
     driverPath,
     `#!/usr/bin/env node
 const values = Object.fromEntries(Array.from({ length: process.argv.length - 2 }, (_, index) => index).filter((index) => index % 2 === 0).map((index) => [process.argv[index + 2].replace(/^--/, ''), process.argv[index + 3]]));
-process.stdout.write(JSON.stringify({ schemaVersion: 1, operation: values.operation, runId: values['run-id'], repository: values.repository, outcome: process.env.DRIVER_OUTCOME ?? 'ok' }));
+process.stdout.write(JSON.stringify({ schemaVersion: 1, operation: values.operation, runId: values['run-id'], repository: values.repository, candidateCommit: values['candidate-commit'], candidateRelease: values['candidate-release'], artifactDigest: values['artifact-digest'], outcome: process.env.DRIVER_OUTCOME ?? 'ok' }));
 `,
   );
   await chmod(driverPath, 0o700);
