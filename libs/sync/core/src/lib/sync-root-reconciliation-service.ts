@@ -11,6 +11,7 @@ import type {
 } from './library-sync-transport';
 import { SyncConflictError } from './library-sync-transport';
 import { PREVIOUS_SYNC_ROOT, SYNC_ROOT } from './library-sync-manifest';
+import { blobSha256 } from './blob-sha256';
 import type {
   SyncWorkerOptions,
   SyncWorkerResult,
@@ -39,7 +40,9 @@ export class SyncRootReconciliationService {
       );
     }
     throwIfAborted(options.signal);
-    this.previousEntries = await this.remote.listEntries(PREVIOUS_SYNC_ROOT);
+    const previousEntries = await this.remote.listEntries(PREVIOUS_SYNC_ROOT);
+    validatePreviousInventory(previousEntries);
+    this.previousEntries = previousEntries;
     let pushed = 0;
     for (const entry of this.previousEntries) {
       throwIfAborted(options.signal);
@@ -115,12 +118,16 @@ export class SyncRootReconciliationService {
   ): Promise<MigrationTarget | null> {
     const directory = entry.path.slice(0, entry.path.lastIndexOf('/'));
     const manifestDocument = await this.remote.read(`${directory}/book.json`);
-    if (!manifestDocument) return null;
+    if (!manifestDocument) {
+      throw new TypeError('Previous sync book manifest is unavailable');
+    }
     const manifest = parsePreviousBookManifest(
       manifestDocument.content,
       directory,
     );
-    if (!manifest) return null;
+    if (!manifest) {
+      throw new TypeError('Previous sync book manifest is invalid');
+    }
     if (entry.path.endsWith('/book.json') && entry.kind === 'document') {
       const content = `${JSON.stringify(manifest, null, 2)}\n`;
       return {
@@ -194,6 +201,12 @@ export class SyncRootReconciliationService {
       expectedSize: source.size,
       onProgress: options.onTransferProgress,
     });
+    if (
+      content.size !== source.size ||
+      (await blobSha256(content, options.signal)) !== source.sha256
+    ) {
+      throw new Error('Previous sync object failed integrity verification');
+    }
     const uploaded = await this.remote.uploadObject({
       path: target.path,
       content,
@@ -212,6 +225,32 @@ export class SyncRootReconciliationService {
     }
     return 1;
   }
+}
+
+function validatePreviousInventory(entries: readonly RemoteSyncEntry[]): void {
+  const paths = new Set<string>();
+  for (const entry of entries) {
+    if (
+      !isCanonicalPath(entry.path) ||
+      (entry.path !== PREVIOUS_SYNC_ROOT &&
+        !entry.path.startsWith(`${PREVIOUS_SYNC_ROOT}/`))
+    ) {
+      throw new TypeError('Provider inventory escaped the previous sync root');
+    }
+    if (paths.has(entry.path)) {
+      throw new TypeError('Provider inventory contains duplicate paths');
+    }
+    paths.add(entry.path);
+  }
+}
+
+function isCanonicalPath(path: string): boolean {
+  return (
+    !path.includes('\\') &&
+    path
+      .split('/')
+      .every((segment) => segment && segment !== '.' && segment !== '..')
+  );
 }
 
 function parsePreviousBookManifest(

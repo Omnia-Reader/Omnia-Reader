@@ -1,0 +1,26 @@
+{
+  "corpusVersion": 1,
+  "expectedOutcome": "reject",
+  "cases": [
+    {
+      "name": "missing version",
+      "content": "oid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 4\n"
+    },
+    {
+      "name": "wrong algorithm",
+      "content": "version https://git-lfs.github.com/spec/v1\noid sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 4\n"
+    },
+    {
+      "name": "invalid digest",
+      "content": "version https://git-lfs.github.com/spec/v1\noid sha256:not-a-digest\nsize 4\n"
+    },
+    {
+      "name": "negative size",
+      "content": "version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize -1\n"
+    },
+    {
+      "name": "unexpected field",
+      "content": "version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 4\nextension hostile\n"
+    }
+  ]
+}

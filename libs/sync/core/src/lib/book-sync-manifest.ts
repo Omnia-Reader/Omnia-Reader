@@ -140,7 +140,7 @@ export function isBookSyncManifest(value: unknown): value is BookSyncManifest {
     sha256 !== null &&
     (format === 'epub' || format === 'pdf') &&
     isBoundedString(value['fileName']) &&
-    isBoundedString(value['mediaType']) &&
+    value['mediaType'] === expectedMediaType(format) &&
     Number.isSafeInteger(value['size']) &&
     (value['size'] as number) > 0 &&
     value['sha256'] === sha256 &&
@@ -161,6 +161,10 @@ export function isBookSyncManifest(value: unknown): value is BookSyncManifest {
     isCanonicalTimestamp(value['updatedAt']) &&
     isBoundedString(value['appVersion'])
   );
+}
+
+function expectedMediaType(format: PublicationFormat): string {
+  return format === 'pdf' ? 'application/pdf' : 'application/epub+zip';
 }
 
 export function isBookSyncDeletionTombstone(

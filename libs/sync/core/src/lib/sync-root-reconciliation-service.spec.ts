@@ -28,7 +28,7 @@ describe('SyncRootReconciliationService', () => {
     remote.seedObject(
       '.omnia-reader/v1/library/Book--aaaaaaaaaaaa/Book.epub',
       new Blob(['book'], { type: 'application/epub+zip' }),
-      'a'.repeat(64),
+      '92719fe0cf8cd51592af31ee8a5736d79f7273777fa3f7b70bfe993a4cd32180',
     );
     remote.seedObject(
       '.omnia-reader/v1/obsolete.bin',
@@ -44,7 +44,7 @@ describe('SyncRootReconciliationService', () => {
     expect(
       remote.objects.get('.omnia-reader/library/Book--aaaaaaaaaaaa/Book.epub')
         ?.sha256,
-    ).toBe('a'.repeat(64));
+    ).toBe('92719fe0cf8cd51592af31ee8a5736d79f7273777fa3f7b70bfe993a4cd32180');
     expect(
       remote.documents.has('.omnia-reader/v1/progress/book/device.json'),
     ).toBe(true);
@@ -77,9 +77,93 @@ describe('SyncRootReconciliationService', () => {
     ).toBe(true);
   });
 
+  it('merges identical current and previous records without rewriting them', async () => {
+    const remote = new MemoryTransport();
+    const content = '{\n  "value": 1\n}\n';
+    const sourcePath = '.omnia-reader/v1/progress/book/device.json';
+    const targetPath = '.omnia-reader/progress/book/device.json';
+    remote.seedDocument(sourcePath, content);
+    remote.seedDocument(targetPath, content);
+    const service = new SyncRootReconciliationService(remote);
+
+    await expect(service.prepare()).resolves.toEqual({
+      pulled: 0,
+      pushed: 0,
+      conflicts: 0,
+      rejected: 0,
+    });
+    expect(remote.writeRequests).toEqual([]);
+    await expect(service.cleanup()).resolves.toMatchObject({ pushed: 1 });
+    expect(remote.documents.has(sourcePath)).toBe(false);
+    expect(remote.documents.get(targetPath)?.content).toBe(content);
+  });
+
+  it.each([
+    {
+      name: 'an entry outside the requested root',
+      entries: [
+        {
+          path: '.omnia-reader/escape.json',
+          revision: 'hostile-1',
+          kind: 'document' as const,
+        },
+      ],
+    },
+    {
+      name: 'duplicate paths',
+      entries: [
+        {
+          path: '.omnia-reader/v1/progress/book/device.json',
+          revision: 'hostile-1',
+          kind: 'document' as const,
+        },
+        {
+          path: '.omnia-reader/v1/progress/book/device.json',
+          revision: 'hostile-2',
+          kind: 'document' as const,
+        },
+      ],
+    },
+  ])('rejects provider inventory containing $name', async ({ entries }) => {
+    const remote = new MemoryTransport();
+    remote.inventoryOverride = entries;
+    const service = new SyncRootReconciliationService(remote);
+
+    await expect(service.prepare()).rejects.toBeInstanceOf(TypeError);
+    expect(remote.writeRequests).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: 'declared size',
+      content: new Blob(['boo'], { type: 'application/pdf' }),
+    },
+    {
+      name: 'declared digest',
+      content: new Blob(['boox'], { type: 'application/pdf' }),
+    },
+  ])('rejects migration bytes with the wrong $name', async ({ content }) => {
+    const remote = new MemoryTransport();
+    const path = '.omnia-reader/v1/library/Book--92719fe0cf8c/Book.pdf';
+    remote.seedObject(
+      path,
+      new Blob(['book'], { type: 'application/pdf' }),
+      '92719fe0cf8cd51592af31ee8a5736d79f7273777fa3f7b70bfe993a4cd32180',
+    );
+    remote.downloadOverride = content;
+    const service = new SyncRootReconciliationService(remote);
+
+    await expect(service.prepare()).rejects.toThrow(
+      'Previous sync object failed integrity verification',
+    );
+    expect(remote.uploadRequests).toEqual([]);
+    expect(remote.objects.has(path)).toBe(true);
+  });
+
   it('moves a remote-only hash-addressed v1 publication to its named path', async () => {
     const remote = new MemoryTransport();
-    const digest = 'c'.repeat(64);
+    const digest =
+      '92719fe0cf8cd51592af31ee8a5736d79f7273777fa3f7b70bfe993a4cd32180';
     const book = {
       id: `sha256:${digest}`,
       format: 'pdf' as const,
@@ -123,6 +207,60 @@ describe('SyncRootReconciliationService', () => {
     expect(remote.documents.has(`${directory}/book.json`)).toBe(false);
     expect(remote.objects.has(objectPath)).toBe(false);
   });
+
+  it.each([
+    {
+      name: 'object path',
+      mutate: (manifest: Record<string, unknown>) => ({
+        ...manifest,
+        objectPath: '.omnia-reader/v1/escape/publication.pdf',
+      }),
+    },
+    {
+      name: 'media type',
+      mutate: (manifest: Record<string, unknown>) => ({
+        ...manifest,
+        mediaType: 'text/plain',
+      }),
+    },
+  ])(
+    'fails closed for a legacy manifest with an invalid $name',
+    async ({ mutate }) => {
+      const remote = new MemoryTransport();
+      const digest =
+        '92719fe0cf8cd51592af31ee8a5736d79f7273777fa3f7b70bfe993a4cd32180';
+      const book = {
+        id: `sha256:${digest}`,
+        format: 'pdf' as const,
+        fileName: 'Exact Name.pdf',
+        mediaType: 'application/pdf',
+        size: 4,
+        title: 'Exact Name',
+        authors: [],
+        importedAt: '2026-08-02T08:00:00.000Z',
+      };
+      const directory = `.omnia-reader/v1/books/${digest}`;
+      const objectPath = `${directory}/publication.pdf`;
+      remote.seedDocument(
+        `${directory}/book.json`,
+        `${JSON.stringify(mutate({ ...createBookSyncManifest(book), objectPath }), null, 2)}\n`,
+      );
+      remote.seedObject(
+        objectPath,
+        new Blob(['book'], { type: 'application/pdf' }),
+        digest,
+      );
+      const service = new SyncRootReconciliationService(remote);
+
+      await expect(service.prepare()).rejects.toThrow(
+        'Previous sync book manifest is invalid',
+      );
+      expect(remote.writeRequests).toEqual([]);
+      expect(remote.uploadRequests).toEqual([]);
+      expect(remote.documents.has(`${directory}/book.json`)).toBe(true);
+      expect(remote.objects.has(objectPath)).toBe(true);
+    },
+  );
 });
 
 class MemoryTransport implements LibrarySyncTransport {
@@ -130,6 +268,10 @@ class MemoryTransport implements LibrarySyncTransport {
   readonly objects = new Map<string, RemoteObject>();
   private readonly blobs = new Map<string, Blob>();
   readonly deletionBatches: RemoteSyncEntryDeleteRequest[][] = [];
+  readonly writeRequests: DocumentWriteRequest[] = [];
+  readonly uploadRequests: ObjectUploadRequest[] = [];
+  inventoryOverride?: readonly RemoteSyncEntry[];
+  downloadOverride?: Blob;
   private revision = 0;
 
   seedDocument(path: string, content: string): void {
@@ -153,6 +295,7 @@ class MemoryTransport implements LibrarySyncTransport {
   }
 
   async listEntries(prefix: string): Promise<readonly RemoteSyncEntry[]> {
+    if (this.inventoryOverride) return this.inventoryOverride;
     return [
       ...[...this.documents.values()].map((entry) => ({
         path: entry.path,
@@ -174,6 +317,7 @@ class MemoryTransport implements LibrarySyncTransport {
   }
 
   async write(request: DocumentWriteRequest): Promise<RemoteDocument> {
+    this.writeRequests.push(request);
     const document = {
       path: request.path,
       content: request.content,
@@ -192,12 +336,14 @@ class MemoryTransport implements LibrarySyncTransport {
   }
 
   async downloadObject(path: string): Promise<Blob> {
+    if (this.downloadOverride) return this.downloadOverride;
     const blob = this.blobs.get(path);
     if (!blob) throw new Error('missing object');
     return blob;
   }
 
   async uploadObject(request: ObjectUploadRequest): Promise<RemoteObject> {
+    this.uploadRequests.push(request);
     this.blobs.set(request.path, request.content);
     const object = {
       path: request.path,

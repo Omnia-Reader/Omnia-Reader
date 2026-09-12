@@ -35,7 +35,7 @@ describe('LibrarySyncManifestService', () => {
     ]);
   });
 
-  it('accepts an existing compatible manifest without rewriting it', async () => {
+  it('accepts forward-compatible fields and features without rewriting them', async () => {
     const remote = new MemoryTransport();
     remote.documents.set(
       SYNC_MANIFEST_PATH,
@@ -45,6 +45,7 @@ describe('LibrarySyncManifestService', () => {
           ...createLibrarySyncManifest().features,
           'reading-statistics',
         ],
+        compatibilityNote: 'Owned by a future reader version',
       }),
     );
 
@@ -68,7 +69,13 @@ describe('LibrarySyncManifestService', () => {
         schemaVersion: 1,
         application: 'omnia-reader',
         publicationIdentity: 'sha256',
-        features: ['annotations', 'bookmarks', 'books', 'progress'],
+        features: [
+          'annotations',
+          'bookmarks',
+          'books',
+          'progress',
+          'reading-statistics',
+        ],
       }),
     );
 
@@ -214,17 +221,41 @@ describe('LibrarySyncManifestService', () => {
     expect(remote.writeRequests).toHaveLength(1);
   });
 
+  it('fails closed for an unknown future root schema', async () => {
+    const remote = new MemoryTransport();
+    remote.documents.set(SYNC_MANIFEST_PATH, {
+      path: SYNC_MANIFEST_PATH,
+      content: JSON.stringify({
+        ...createLibrarySyncManifest(),
+        schemaVersion: 3,
+      }),
+      revision: 'root-1',
+    });
+
+    await expect(
+      new LibrarySyncManifestService(remote).synchronize(),
+    ).rejects.toBeInstanceOf(LibrarySyncManifestCompatibilityError);
+    expect(remote.writeRequests).toEqual([]);
+    expect(remote.documents.get(SYNC_MANIFEST_PATH)?.revision).toBe('root-1');
+  });
+
   it.each([
-    '{',
-    JSON.stringify({
-      ...createLibrarySyncManifest(),
-      schemaVersion: 3,
-    }),
-    JSON.stringify({
-      ...createLibrarySyncManifest(),
-      features: ['books'],
-    }),
-  ])('fails closed for an incompatible root manifest', async (content) => {
+    ['malformed JSON', '{'],
+    [
+      'missing required features',
+      JSON.stringify({
+        ...createLibrarySyncManifest(),
+        features: ['books'],
+      }),
+    ],
+    [
+      'duplicate features',
+      JSON.stringify({
+        ...createLibrarySyncManifest(),
+        features: [...createLibrarySyncManifest().features, 'books'],
+      }),
+    ],
+  ])('fails closed for a root manifest with %s', async (_name, content) => {
     const remote = new MemoryTransport();
     remote.documents.set(SYNC_MANIFEST_PATH, {
       path: SYNC_MANIFEST_PATH,

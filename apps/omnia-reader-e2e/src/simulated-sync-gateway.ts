@@ -135,6 +135,26 @@ export class SimulatedSyncGateway {
     });
   }
 
+  seedObject(
+    path: string,
+    content: Buffer,
+    metadata: Pick<SimulatedObject, 'mediaType' | 'size' | 'sha256'>,
+  ): void {
+    const bytes = Buffer.from(content);
+    if (
+      bytes.byteLength !== metadata.size ||
+      createHash('sha256').update(bytes).digest('hex') !== metadata.sha256
+    ) {
+      throw new TypeError('Simulated synchronization object metadata mismatch');
+    }
+    this.objects.set(path, {
+      path,
+      content: bytes,
+      revision: this.nextRevision(),
+      ...metadata,
+    });
+  }
+
   objectPaths(): readonly string[] {
     return [...this.objects.keys()].sort();
   }

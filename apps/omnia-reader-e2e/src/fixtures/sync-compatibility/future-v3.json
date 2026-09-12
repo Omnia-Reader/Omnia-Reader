@@ -1,0 +1,23 @@
+{
+  "corpusVersion": 1,
+  "schema": "future-v3",
+  "expectedOutcome": "reject-without-mutation",
+  "documents": [
+    {
+      "path": ".omnia-reader/manifest.json",
+      "value": {
+        "schemaVersion": 3,
+        "application": "omnia-reader",
+        "publicationIdentity": "sha256",
+        "features": [
+          "annotations",
+          "bookmarks",
+          "books",
+          "progress",
+          "logical-books"
+        ]
+      }
+    }
+  ],
+  "objects": []
+}

@@ -1,0 +1,96 @@
+{
+  "corpusVersion": 1,
+  "schema": "current-v2",
+  "expectedOutcome": "restore",
+  "documents": [
+    {
+      "path": ".omnia-reader/manifest.json",
+      "value": {
+        "schemaVersion": 2,
+        "application": "omnia-reader",
+        "publicationIdentity": "sha256",
+        "features": [
+          "annotations",
+          "bookmarks",
+          "books",
+          "progress",
+          "logical-books",
+          "reading-statistics"
+        ],
+        "compatibilityNote": "Unknown fields are preserved by their owner"
+      }
+    },
+    {
+      "path": ".omnia-reader/library/Corpus Book--fe7749d6680c/book.json",
+      "value": {
+        "schemaVersion": 2,
+        "bookId": "sha256:fe7749d6680cd9b49b1e67868e82c8e183e75486d00b6becdd598819333fa3fb",
+        "format": "pdf",
+        "fileName": "Corpus Book.pdf",
+        "mediaType": "application/pdf",
+        "size": 1876,
+        "sha256": "fe7749d6680cd9b49b1e67868e82c8e183e75486d00b6becdd598819333fa3fb",
+        "objectPath": ".omnia-reader/library/Corpus Book--fe7749d6680c/Corpus Book.pdf",
+        "title": "Corpus Book",
+        "authors": ["Omnia Reader"],
+        "importedAt": "2026-08-02T08:00:00.000Z",
+        "updatedAt": "2026-08-02T09:00:00.000Z",
+        "appVersion": "1.0.0"
+      }
+    },
+    {
+      "path": ".omnia-reader/logical-books/changes/change%3Acorpus%3A1.json",
+      "value": {
+        "schemaVersion": 1,
+        "changeId": "change:corpus:1",
+        "kind": "bootstrap",
+        "parents": [],
+        "resultingBooks": [
+          {
+            "schemaVersion": 1,
+            "id": "logical:sha256:fe7749d6680cd9b49b1e67868e82c8e183e75486d00b6becdd598819333fa3fb",
+            "title": "Corpus Book",
+            "authors": ["Omnia Reader"],
+            "importedAt": "2026-08-02T08:00:00.000Z",
+            "updatedAt": "2026-08-02T09:00:00.000Z",
+            "coverState": "pending",
+            "variants": {
+              "pdf": "sha256:fe7749d6680cd9b49b1e67868e82c8e183e75486d00b6becdd598819333fa3fb"
+            }
+          }
+        ],
+        "removedLogicalBookIds": [],
+        "variantEffects": [
+          {
+            "operation": "upsert",
+            "variant": {
+              "id": "sha256:fe7749d6680cd9b49b1e67868e82c8e183e75486d00b6becdd598819333fa3fb",
+              "format": "pdf",
+              "fileName": "Corpus Book.pdf",
+              "mediaType": "application/pdf",
+              "size": 1876,
+              "title": "Corpus Book",
+              "authors": ["Omnia Reader"],
+              "importedAt": "2026-08-02T08:00:00.000Z"
+            },
+            "objectPath": ".omnia-reader/library/Corpus Book--fe7749d6680c/Corpus Book.pdf"
+          }
+        ],
+        "preferenceEffects": [],
+        "resolvesConflictIds": [],
+        "createdAt": "2026-08-02T09:00:00.000Z",
+        "deviceId": "corpus-device",
+        "appVersion": "1.0.0"
+      }
+    }
+  ],
+  "objects": [
+    {
+      "path": ".omnia-reader/library/Corpus Book--fe7749d6680c/Corpus Book.pdf",
+      "mediaType": "application/pdf",
+      "size": 1876,
+      "sha256": "fe7749d6680cd9b49b1e67868e82c8e183e75486d00b6becdd598819333fa3fb",
+      "base64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgL0Fjcm9Gb3JtIDEyIDAgUiA+PgplbmRvYmoKMiAwIG9iago8PCAvVHlwZSAvUGFnZXMgL0tpZHMgWzMgMCBSIDQgMCBSXSAvQ291bnQgMiA+PgplbmRvYmoKMyAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSIC9NZWRpYUJveCBbMCAwIDYxMiA3OTJdIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDcgMCBSID4+ID4+IC9Db250ZW50cyA1IDAgUiAvQW5ub3RzIFs5IDAgUiAxMCAwIFIgMTEgMCBSXSA+PgplbmRvYmoKNCAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSIC9NZWRpYUJveCBbMCAwIDYxMiA3OTJdIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDcgMCBSID4+ID4+IC9Db250ZW50cyA2IDAgUiA+PgplbmRvYmoKNSAwIG9iago8PCAvTGVuZ3RoIDIxNSA+PgpzdHJlYW0KQlQgL0YxIDE4IFRmIDcyIDcyMCBUZCAoT21uaWEgUERGIEZpeHR1cmUgLSBQYWdlIE9uZSkgVGogRVQKQlQgL0YxIDEyIFRmIDcyIDY2MCBUZCAoUmVhZGVyIG5hbWU6KSBUaiBFVApCVCAvRjEgMTIgVGYgNzIgNjEwIFRkIChWaXNpdCB0aGUgZXh0ZXJuYWwgcmVmZXJlbmNlKSBUaiBFVApCVCAvRjEgMTIgVGYgNzIgNTY1IFRkIChDb250aW51ZSB0byBwYWdlIHR3bykgVGogRVQKZW5kc3RyZWFtCmVuZG9iago2IDAgb2JqCjw8IC9MZW5ndGggNTkgPj4Kc3RyZWFtCkJUIC9GMSAxOCBUZiA3MiA3MjAgVGQgKE9tbmlhIFBERiBGaXh0dXJlIC0gUGFnZSBUd28pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNyAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCjggMCBvYmoKPDwgL1RpdGxlIChPbW5pYSBQREYgRml4dHVyZSkgL0F1dGhvciAoT21uaWEgVGVzdCBTdWl0ZSkgPj4KZW5kb2JqCjkgMCBvYmoKPDwgL1R5cGUgL0Fubm90IC9TdWJ0eXBlIC9MaW5rIC9SZWN0IFs3MiA1OTYgMjgwIDYyNl0gL0JvcmRlciBbMCAwIDFdIC9Db250ZW50cyAoVmlzaXQgdGhlIGV4dGVybmFsIHJlZmVyZW5jZSkgL0EgPDwgL1MgL1VSSSAvVVJJIChodHRwczovL2V4YW1wbGUuY29tL29tbmlhLXJlYWRlci1wZGYpID4+ID4+CmVuZG9iagoxMCAwIG9iago8PCAvVHlwZSAvQW5ub3QgL1N1YnR5cGUgL0xpbmsgL1JlY3QgWzcyIDU1MSAyODAgNTgxXSAvQm9yZGVyIFswIDAgMV0gL0NvbnRlbnRzIChDb250aW51ZSB0byBwYWdlIHR3bykgL0Rlc3QgWzQgMCBSIC9GaXRdID4+CmVuZG9iagoxMSAwIG9iago8PCAvVHlwZSAvQW5ub3QgL1N1YnR5cGUgL1dpZGdldCAvRlQgL1R4IC9UIChyZWFkZXItbmFtZSkgL1RVIChSZWFkZXIgbmFtZSkgL1JlY3QgWzE2MCA2NDYgMzkwIDY3Nl0gL1YgKCkgL0RBICgvRjEgMTIgVGYgMCBnKSAvUCAzIDAgUiA+PgplbmRvYmoKMTIgMCBvYmoKPDwgL0ZpZWxkcyBbMTEgMCBSXSAvTmVlZEFwcGVhcmFuY2VzIHRydWUgL0RBICgvRjEgMTIgVGYgMCBnKSAvRFIgPDwgL0ZvbnQgPDwgL0YxIDcgMCBSID4+ID4+ID4+CmVuZG9iagp4cmVmCjAgMTMKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNzUgMDAwMDAgbiAKMDAwMDAwMDEzOCAwMDAwMCBuIAowMDAwMDAwMjk0IDAwMDAwIG4gCjAwMDAwMDA0MjAgMDAwMDAgbiAKMDAwMDAwMDY4NiAwMDAwMCBuIAowMDAwMDAwNzk1IDAwMDAwIG4gCjAwMDAwMDA4NjUgMDAwMDAgbiAKMDAwMDAwMDk0MCAwMDAwMCBuIAowMDAwMDAxMTMwIDAwMDAwIG4gCjAwMDAwMDEyNzEgMDAwMDAgbiAKMDAwMDAwMTQyNSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDEzIC9Sb290IDEgMCBSIC9JbmZvIDggMCBSID4+CnN0YXJ0eHJlZgoxNTM4CiUlRU9GCg=="
+    }
+  ]
+}

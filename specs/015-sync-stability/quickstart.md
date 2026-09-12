@@ -91,6 +91,27 @@ Feature 015 preparation evidence on 2026-09-12:
   Firefox convergence suite then passed 6/6 in 1.6 minutes. WebKit passed 6/6
   in 6.8 minutes. These are local browser-engine results, not CI or packaged-host
   evidence.
+- The versioned synchronization corpus now records current v2, legacy v1,
+  future v3, and five malformed Git LFS pointer inputs. The first clean-profile
+  restore run rejected the incomplete corpus: it lacked the logical membership
+  change and its placeholder bytes were correctly quarantined as an unsupported
+  PDF. After adding the required logical record and canonical two-page PDF, the
+  current restore, legacy migrate-and-restore, and rejection cases passed 3/3
+  with exact 1,876-byte SHA-256 evidence. The combined corpus plus full
+  convergence run passed 9/9 in 49.1 seconds across Git/MEGA and EPUB/PDF.
+- Five intended reconciliation rejection cases failed before implementation:
+  duplicate inventory, downloaded size, downloaded digest, legacy object path,
+  and legacy media type. The identical-merge case initially supplied a
+  noncanonical current JSON representation and was corrected to represent an
+  actual prior migration result. After atomic inventory validation, streaming
+  digest verification, strict format/media-type matching, and fail-closed
+  legacy parsing, sync-core passed 211/211 and sync-git passed 40/40 in a serial
+  no-cache run. The two new Git protocol regressions also reject escaped or
+  duplicate inventory and mismatched read/upload identities.
+- `npx nx run-many -t lint -p sync-core,omnia-reader-e2e --skip-nx-cache
+--parallel=1` passed. An initial corpus test import crossed an Nx project
+  boundary; the corrected provider-neutral corpus contract leaves production
+  parsing in the owning sync library suites.
 
 ## 2. Deterministic browser convergence
 
