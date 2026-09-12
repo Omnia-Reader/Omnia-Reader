@@ -6,6 +6,7 @@ import {
   type Page,
 } from '@playwright/test';
 import { createEpubFixture, createPdfFixture } from './publication-fixtures';
+import { isExpectedSandboxEnforcementMessage } from './browser-failure-helpers';
 import {
   assertClosedMatrix,
   canonicalInventoryFields,
@@ -20,6 +21,7 @@ import {
 import {
   createEpubHighlight,
   createPdfHighlight,
+  openLibraryPublication,
 } from './reader-state-helpers';
 import {
   canonicalRecoveryInventory,
@@ -942,7 +944,9 @@ async function synchronizeBetweenTwoDevices(
       publication,
       scenario.title,
     );
-    await firstDevice.page.getByText(scenario.title, { exact: true }).click();
+    await openLibraryPublication(firstDevice.page, scenario.title, {
+      navigateToLibrary: false,
+    });
     await expectInitialReaderLocation(firstDevice.page, scenario);
     await scenario.navigate(firstDevice.page);
     await createReaderState(firstDevice.page, scenario);
@@ -994,13 +998,7 @@ async function synchronizeBetweenTwoDevices(
         { timeout: 30_000 },
       );
 
-      await secondDevice.page.goto('/');
-      await expect(
-        secondDevice.page.getByText(scenario.title, { exact: true }),
-      ).toBeVisible({ timeout: 20_000 });
-      await secondDevice.page
-        .getByText(scenario.title, { exact: true })
-        .click();
+      await openLibraryPublication(secondDevice.page, scenario.title);
       await expect(
         secondDevice.page.getByText(scenario.title, { exact: true }),
       ).toBeVisible();
@@ -1023,9 +1021,9 @@ async function synchronizeBetweenTwoDevices(
       ).toHaveLength(2);
 
       await synchronizeConfiguredDevice(firstDevice.page, scenario);
-      await openPublication(firstDevice.page, scenario.title);
+      await openLibraryPublication(firstDevice.page, scenario.title);
       await expectConvergedReaderState(firstDevice.page, scenario);
-      await openPublication(secondDevice.page, scenario.title);
+      await openLibraryPublication(secondDevice.page, scenario.title);
       await expectConvergedReaderState(secondDevice.page, scenario);
     } finally {
       await secondDevice.context.close();
@@ -1167,17 +1165,6 @@ async function synchronizeConfiguredDevice(
   await expect(
     page.getByText(/0 local changes are waiting to sync/),
   ).toBeVisible();
-}
-
-async function openPublication(page: Page, title: string): Promise<void> {
-  await page.goto('/');
-  await expect(page.getByText(title, { exact: true })).toBeVisible({
-    timeout: 20_000,
-  });
-  await page.getByText(title, { exact: true }).click();
-  await expect(page.getByText(title, { exact: true })).toBeVisible({
-    timeout: 20_000,
-  });
 }
 
 async function verifyInterruptedGitUpload(
@@ -1355,6 +1342,7 @@ function monitorBrowserFailures(page: Page): () => string[] {
       ...consoleFailures
         .filter(
           (failure) =>
+            !isExpectedSandboxEnforcementMessage(failure) &&
             !isExpectedGatewayFailure(failure, observedGatewayFailures),
         )
         .map((failure) => `console: ${failure}`),

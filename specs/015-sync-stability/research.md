@@ -127,6 +127,34 @@ Primary platform references: [Tauri localhost plugin](https://v2.tauri.app/plugi
 treats custom-scheme input as forgeable, and the implementation must not treat
 encrypted storage alone as proof of OS-keystore-grade protection.
 
+### Exact native dependency decision
+
+The implementation proof uses the versions already resolved by the locked Tauri
+dependency graph where possible:
+
+- add direct `reqwest = "=0.13.4"` with default features disabled and only the
+  `cookies`, `json`, `stream`, and `rustls` features. Its Rust-owned
+  [`cookie::Jar`](https://docs.rs/reqwest/0.13.4/reqwest/cookie/struct.Jar.html)
+  remains private to the broker. `ClientBuilder` supplies HTTPS-only operation,
+  explicit connect/read/whole-request timeouts, a custom same-origin redirect
+  policy, and bounded response streaming;
+- add direct `url = "=2.5.8"` for canonical scheme, user-info, host, port,
+  fragment, relative-path, and exact-origin validation;
+- retain the existing exact `tauri-plugin-deep-link = "=2.4.9"`. Treat every
+  `on_open_url` value as hostile and validate the native request binding,
+  provider, expiry, and one-use handoff before redemption; and
+- add no generic Tauri HTTP plugin and no protected-persistence crate in the
+  first broker slice. The current Stronghold setup derives its vault key from a
+  password/hash policy supplied by the application, which does not itself prove
+  an OS-protected bootstrap secret. Until a platform-specific proof establishes
+  that property, the declared capability is `session-only`: the Rust process
+  owns the cookie jar and clears reusable authority on exit while preserving
+  local books and pending operations.
+
+This selection adds no JavaScript network authority and no new browser runtime
+dependency. Cargo must pin the two new direct crates exactly and preserve the
+lockfile checksums before the native broker implementation begins.
+
 ## Release artifacts and promotion
 
 **Decision**: Build web and gateway images once, bind source/runtime SBOM and

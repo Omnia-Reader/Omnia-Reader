@@ -35,6 +35,30 @@ Fresh pre-implementation evidence on 2026-09-11:
   initial red acceptance gate; do not claim convergence until it passes after
   the test-harness repair.
 
+Feature 015 preparation evidence on 2026-09-12:
+
+- `npx prettier --check specs/015-sync-stability tools/release/fixtures/sync-evidence`:
+  passed.
+- The candidate, rejected, and unavailable synchronization evidence fixtures
+  all parsed as JSON.
+- `git diff --check`: passed.
+- Native dependency review selected exact `reqwest` 0.13.4 and `url` 2.5.8,
+  retained exact `tauri-plugin-deep-link` 2.4.9, rejected a generic webview HTTP
+  plugin, and declared session-only native authority until protected bootstrap
+  is proven.
+- The accessible publication-open regression failed first because the helper
+  was absent, then passed after the helper and stale selector replacements were
+  implemented.
+- The sandbox-enforcement classifier regression failed first because the
+  classifier was absent, then passed with an exact Chromium diagnostic match;
+  other sandbox and application errors remain failures.
+- Focused Chromium helper verification passed 2 tests.
+- The two existing long Chromium convergence scenarios passed 2 tests: exact
+  PDF plus reader state through Git, and exact EPUB plus reader state through
+  deterministic MEGA. This repairs the initial red baseline without claiming
+  the missing format matrix, replacement-device, concurrent-mutation, or
+  cross-browser gates.
+
 ## 2. Deterministic browser convergence
 
 Run each command from the repository root after a fresh production build:

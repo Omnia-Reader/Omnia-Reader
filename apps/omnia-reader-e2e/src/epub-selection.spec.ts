@@ -1,7 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createEpubFixture } from './publication-fixtures';
-import { createEpubHighlight } from './reader-state-helpers';
+import {
+  createEpubHighlight,
+  openLibraryPublication,
+} from './reader-state-helpers';
 
 test('keeps a highlight while underlining and removing only a selected substring', async ({
   page,
@@ -18,7 +21,9 @@ test('keeps a highlight while underlining and removing only a selected substring
     mimeType: 'application/epub+zip',
     buffer: await createEpubFixture(),
   });
-  await page.getByText('Omnia EPUB Fixture', { exact: true }).click();
+  await openLibraryPublication(page, 'Omnia EPUB Fixture', {
+    navigateToLibrary: false,
+  });
 
   const paragraph = page
     .getByTestId('publication-viewport')

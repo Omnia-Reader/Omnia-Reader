@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "candidate": {
+    "commit": "3333333333333333333333333333333333333333",
+    "release": "sync-unavailable-1"
+  },
+  "artifacts": [
+    {
+      "name": "desktop-macos",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "environments": [],
+  "runs": [],
+  "unavailableGates": [
+    {
+      "gateId": "packaged-sync-macos",
+      "reason": "runner-unavailable"
+    }
+  ],
+  "startedAt": "2026-09-12T08:00:00.000Z",
+  "completedAt": "2026-09-12T08:00:00.000Z",
+  "result": "rejected"
+}

@@ -1,5 +1,31 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
+const READER_ROUTE = /\/reader\/[^/?#]+(?:[?#].*)?$/;
+
+export function preferredPublicationOpenButton(
+  page: Page,
+  title: string,
+): Locator {
+  return page.getByRole('button', {
+    name: `Open ${title} in its preferred format`,
+    exact: true,
+  });
+}
+
+export async function openLibraryPublication(
+  page: Page,
+  title: string,
+  options: { navigateToLibrary?: boolean } = {},
+): Promise<void> {
+  if (options.navigateToLibrary !== false) {
+    await page.goto('/');
+  }
+  const openButton = preferredPublicationOpenButton(page, title);
+  await expect(openButton).toBeVisible({ timeout: 20_000 });
+  await openButton.click();
+  await expect(page).toHaveURL(READER_ROUTE, { timeout: 20_000 });
+}
+
 export async function createPdfHighlight(
   page: Page,
   pageNumber: number,

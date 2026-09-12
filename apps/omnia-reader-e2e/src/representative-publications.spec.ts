@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { isExpectedSandboxEnforcementMessage } from './browser-failure-helpers';
 
 interface RepresentativePublication {
   readonly fileName: string;
@@ -72,7 +73,7 @@ test.describe('representative EPUB compatibility', () => {
     page.on('console', (message) => {
       if (
         message.type() === 'error' &&
-        !message.text().includes('Blocked script execution in')
+        !isExpectedSandboxEnforcementMessage(message.text())
       ) {
         failures.push(`console: ${message.text()}`);
       }

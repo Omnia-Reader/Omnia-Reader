@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "candidate": {
+    "commit": "2222222222222222222222222222222222222222",
+    "release": "sync-rejected-1"
+  },
+  "artifacts": [
+    {
+      "name": "sync-gateway",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "environments": [
+    {
+      "id": "sanitized-staging",
+      "profile": "sync-staging-v1"
+    }
+  ],
+  "runs": [
+    {
+      "gateId": "gateway-redis-lifecycle",
+      "provider": "git",
+      "scenario": "shared-session-restart",
+      "platform": "linux",
+      "attempt": 1,
+      "startedAt": "2026-09-12T08:00:00.000Z",
+      "completedAt": "2026-09-12T08:00:01.000Z",
+      "durationMs": 1000,
+      "result": "failed",
+      "artifact": "redis-lifecycle.json"
+    }
+  ],
+  "unavailableGates": [],
+  "startedAt": "2026-09-12T08:00:00.000Z",
+  "completedAt": "2026-09-12T08:00:01.000Z",
+  "result": "rejected"
+}

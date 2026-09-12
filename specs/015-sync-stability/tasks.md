@@ -20,9 +20,9 @@ behavioral implementation.
 
 - [x] T001 Re-run `codegraph explore "Feature 015 synchronization stability callers tests and Nx owners"` and reconcile changed ownership in `specs/015-sync-stability/plan.md`
 - [x] T002 [P] Define stable gate identifiers, mandatory-versus-reportable availability, and sanitized examples in `specs/015-sync-stability/contracts/sync-release-evidence.md`
-- [ ] T003 [P] Record primary-documentation review and exact versions for native HTTP, cookie, deep-link, and protected-storage crates in `specs/015-sync-stability/research.md`
-- [ ] T004 [P] Add sanitized valid, rejected, and unavailable evidence fixtures under `tools/release/fixtures/sync-evidence/`
-- [ ] T005 Run `npx prettier --check specs/015-sync-stability tools/release/fixtures/sync-evidence` and `git diff --check`, recording results in `specs/015-sync-stability/quickstart.md`
+- [x] T003 [P] Record primary-documentation review and exact versions for native HTTP, cookie, deep-link, and protected-storage crates in `specs/015-sync-stability/research.md`
+- [x] T004 [P] Add sanitized valid, rejected, and unavailable evidence fixtures under `tools/release/fixtures/sync-evidence/`
+- [x] T005 Run `npx prettier --check specs/015-sync-stability tools/release/fixtures/sync-evidence` and `git diff --check`, recording results in `specs/015-sync-stability/quickstart.md`
 
 **Checkpoint**: Shared evidence vocabulary, dependency boundaries, and owning
 projects are explicit.
@@ -41,7 +41,7 @@ identical valid logical state on both profiles.
 
 ### Tests for User Story 1
 
-- [ ] T006 [P] [US1] Add a failing regression for the current accessible library-open contract to `apps/omnia-reader-e2e/src/reader-state-helpers.spec.ts`
+- [x] T006 [P] [US1] Add a failing regression for the current accessible library-open contract to `apps/omnia-reader-e2e/src/reader-state-helpers.spec.ts`
 - [ ] T007 [US1] Extend `apps/omnia-reader-e2e/src/sync.spec.ts` with missing Git/EPUB and MEGA/PDF two-device cases and explicit reader-route preconditions
 - [ ] T008 [US1] Add clean replacement-device restore assertions for publication bytes, progress, bookmarks, annotations, membership, and tombstones in `apps/omnia-reader-e2e/src/sync.spec.ts`
 - [ ] T009 [US1] Add concurrent create/update/delete and destination-switch isolation cases to `apps/omnia-reader-e2e/src/sync.spec.ts`
@@ -49,7 +49,7 @@ identical valid logical state on both profiles.
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] Implement the accessible publication-open helper in `apps/omnia-reader-e2e/src/reader-state-helpers.ts` and replace stale title selectors in `apps/omnia-reader-e2e/src/sync.spec.ts` and `apps/omnia-reader-e2e/src/epub-selection.spec.ts`
+- [x] T011 [US1] Implement the accessible publication-open helper in `apps/omnia-reader-e2e/src/reader-state-helpers.ts` and replace stale title selectors in `apps/omnia-reader-e2e/src/sync.spec.ts` and `apps/omnia-reader-e2e/src/epub-selection.spec.ts`
 - [ ] T012 [US1] Split long convergence cases into `apps/omnia-reader-e2e/src/sync-convergence.spec.ts` while keeping shorter behavior in `apps/omnia-reader-e2e/src/sync.spec.ts`
 - [ ] T013 [US1] Extend `apps/omnia-reader-e2e/src/simulated-sync-gateway.ts` only for exact format coverage, hostile records, interruption ordering, and destination isolation required by T007–T010
 - [ ] T014 [US1] Add the fixed staging profile and 20-warm-up/200-measurement two-device latency runner in `apps/omnia-reader-e2e/src/sync-performance-profile.json`, `apps/omnia-reader-e2e/src/sync-performance-runner.mjs`, and `apps/omnia-reader-e2e/src/sync-performance-runner.spec.mjs`
