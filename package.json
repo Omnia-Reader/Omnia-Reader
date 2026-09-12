@@ -17,7 +17,7 @@
     "container:build": "docker compose --file deployment/compose.yaml build --parallel",
     "container:smoke": "bash deployment/smoke.sh",
     "container:smoke:test": "node --test deployment/smoke.spec.mjs",
-    "release:test": "node --test tools/release/license-policy.spec.mjs tools/release/sync-live-github-workflow.spec.mjs tools/release/sync-release-integration.spec.mjs tools/release/verify-release.spec.mjs tools/release/write-live-github-evidence.spec.mjs tools/release/write-native-provenance.spec.mjs",
+    "release:test": "node --test tools/release/assert-sync-release-evidence.spec.mjs tools/release/license-policy.spec.mjs tools/release/sync-live-github-workflow.spec.mjs tools/release/sync-release-integration.spec.mjs tools/release/sync-release-workflow.spec.mjs tools/release/verify-release.spec.mjs tools/release/write-live-github-evidence.spec.mjs tools/release/write-native-provenance.spec.mjs tools/release/write-sync-release-candidate.spec.mjs",
     "release:verify": "node tools/release/verify-release.mjs"
   },
   "private": true,

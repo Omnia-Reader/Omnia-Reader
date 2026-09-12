@@ -138,7 +138,7 @@ rebuild.
 - [x] T049 [US3] Implement sanitized low-cardinality sync telemetry in `apps/sync-gateway/src/sync-observability.ts` and `apps/sync-gateway/src/app.ts`, then extend `deployment/smoke.sh` with bounded health, headers, proxy, Redis readiness, alert, and shutdown checks
 - [x] T050 [US3] Implement digest-only staging, canary, acceptance, and rollback in `tools/release/sync-promotion.mjs` and document protected inputs in `deployment/gateway.env.example`
 - [x] T051 [US3] Add a protected live GitHub workflow that rejects untrusted PR execution and uploads only sanitized evidence in `.github/workflows/sync-live-github.yml`
-- [ ] T052 [US3] Add build-once OCI digest, SBOM, provenance, scan, signing, canary, and rollback jobs pinned by full commits in `.github/workflows/sync-release.yml`
+- [x] T052 [US3] Add build-once OCI digest, SBOM, provenance, scan, signing, canary, and rollback jobs pinned by full commits in `.github/workflows/sync-release.yml`
 - [ ] T053 [US3] Add deterministic container smoke and evidence gates to `.github/workflows/verify.yml`
 - [x] T054 [US3] Document routes, readiness, native handoff, Redis rotation/restore, and safe errors in `docs/sync-gateway-api.md`
 - [x] T055 [US3] Document promotion, canary thresholds, rollback, evidence retention, unavailable gates, and diagnostics in `docs/release-and-rollback.md`

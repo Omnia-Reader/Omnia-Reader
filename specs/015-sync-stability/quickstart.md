@@ -483,6 +483,23 @@ journey. The workflow was not dispatched because the protected staging runner,
 environment secrets, immutable deployed digest, and GitHub control driver are
 not available here; that execution gate remains T057.
 
+T052 was implemented on 2026-09-12 as a separate manual-default-branch release
+workflow. Its `build-canary` path builds the web and gateway images exactly once,
+records their registry digests, generates CycloneDX image SBOMs, retains both
+vulnerability decisions, publishes registry provenance, signs and verifies both
+digests with keyless identities, and passes only those digests through protected
+staging and canary drivers. The `promote` and `rollback` paths download evidence
+and receipts by immutable GitHub artifact ID plus originating run ID; neither
+path contains an image build or retag operation. Production promotion requires
+an accepted manifest for the dispatched commit and release, while rollback
+requires rejected active evidence plus a different previously accepted record.
+All third-party actions are pinned to full commits. Local workflow-contract,
+candidate-writer, evidence-binding, formatting, and YAML validation are recorded
+with the implementation commit. The workflow itself was not dispatched because
+the protected registry, OIDC signing, staging/canary/production runners,
+deployment driver, and complete accepted evidence are unavailable here; these
+remain explicit T057 gates.
+
 ## 7. Promotion decision
 
 GitHub maturity changes from experimental/recommended to supported only when one

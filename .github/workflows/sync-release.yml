@@ -1,0 +1,479 @@
+name: Immutable synchronization release
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Build one candidate, promote accepted evidence, or roll back
+        required: true
+        type: choice
+        options:
+          - build-canary
+          - promote
+          - rollback
+      candidate_commit:
+        description: Trusted full commit for the active candidate
+        required: true
+        type: string
+      candidate_release:
+        description: Sanitized release identifier for the active candidate
+        required: true
+        type: string
+      primary_run_id:
+        description: Evidence workflow run for promote or rollback
+        required: false
+        type: string
+      primary_artifact_id:
+        description: Accepted or rejected evidence artifact ID
+        required: false
+        type: string
+      supporting_run_id:
+        description: Canary receipt run or previous accepted evidence run
+        required: false
+        type: string
+      supporting_artifact_id:
+        description: Canary receipt or previous accepted evidence artifact ID
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: immutable-sync-release
+  cancel-in-progress: false
+
+jobs:
+  trust:
+    name: Validate trusted release request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      gateway_image: ${{ steps.identity.outputs.gateway_image }}
+      web_image: ${{ steps.identity.outputs.web_image }}
+    steps:
+      - name: Refuse non-default-branch dispatch
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_NAME" = workflow_dispatch
+          test "$WORKFLOW_REF" = refs/heads/main
+
+      - name: Check out trusted history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate candidate identity and operation inputs
+        id: identity
+        env:
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          CANDIDATE_RELEASE: ${{ inputs.candidate_release }}
+          OPERATION: ${{ inputs.operation }}
+          PRIMARY_ARTIFACT_ID: ${{ inputs.primary_artifact_id }}
+          PRIMARY_RUN_ID: ${{ inputs.primary_run_id }}
+          REPOSITORY: ${{ github.repository }}
+          SUPPORTING_ARTIFACT_ID: ${{ inputs.supporting_artifact_id }}
+          SUPPORTING_RUN_ID: ${{ inputs.supporting_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CANDIDATE_RELEASE" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$ ]]
+          git cat-file -e "$CANDIDATE_COMMIT^{commit}"
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" origin/main
+          if test "$OPERATION" = build-canary; then
+            test -z "$PRIMARY_RUN_ID$PRIMARY_ARTIFACT_ID$SUPPORTING_RUN_ID$SUPPORTING_ARTIFACT_ID"
+          else
+            [[ "$PRIMARY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$PRIMARY_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$SUPPORTING_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$SUPPORTING_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          fi
+          repository="${REPOSITORY,,}"
+          echo "gateway_image=ghcr.io/$repository/sync-gateway" >>"$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/$repository/web" >>"$GITHUB_OUTPUT"
+
+  build-web:
+    name: Build web image once
+    if: inputs.operation == 'build-canary'
+    needs: trust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out trusted history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate and check out the candidate
+        env:
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$CANDIDATE_COMMIT^{commit}"
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" origin/main
+          git checkout --detach "$CANDIDATE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Sign in to the immutable registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push web by digest
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deployment/Dockerfile.web
+          push: true
+          pull: true
+          tags: ${{ needs.trust.outputs.web_image }}:candidate-${{ inputs.candidate_commit }}
+          sbom: true
+          provenance: mode=max
+          build-args: |
+            OMNIA_VERSION=${{ inputs.candidate_release }}
+            OMNIA_REVISION=${{ inputs.candidate_commit }}
+
+  build-gateway:
+    name: Build gateway image once
+    if: inputs.operation == 'build-canary'
+    needs: trust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out trusted history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate and check out the candidate
+        env:
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$CANDIDATE_COMMIT^{commit}"
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" origin/main
+          git checkout --detach "$CANDIDATE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Sign in to the immutable registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push gateway by digest
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: deployment/Dockerfile.gateway
+          push: true
+          pull: true
+          tags: ${{ needs.trust.outputs.gateway_image }}:candidate-${{ inputs.candidate_commit }}
+          sbom: true
+          provenance: mode=max
+          build-args: |
+            OMNIA_VERSION=${{ inputs.candidate_release }}
+            OMNIA_REVISION=${{ inputs.candidate_commit }}
+
+  integrity:
+    name: Scan, attest, and sign exact image digests
+    if: inputs.operation == 'build-canary'
+    needs: [trust, build-web, build-gateway]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Sign in for private image inspection
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Install verified cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      - name: Generate web SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ needs.trust.outputs.web_image }}@${{ needs.build-web.outputs.digest }}
+          format: cyclonedx-json
+          output-file: dist/sync-release/web.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+      - name: Generate gateway SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ needs.trust.outputs.gateway_image }}@${{ needs.build-gateway.outputs.digest }}
+          format: cyclonedx-json
+          output-file: dist/sync-release/gateway.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+      - name: Scan web digest
+        id: web-scan
+        continue-on-error: true
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: ${{ needs.trust.outputs.web_image }}@${{ needs.build-web.outputs.digest }}
+          fail-build: true
+          output-format: json
+          output-file: dist/sync-release/web-grype.json
+          severity-cutoff: high
+      - name: Scan gateway digest
+        id: gateway-scan
+        continue-on-error: true
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: ${{ needs.trust.outputs.gateway_image }}@${{ needs.build-gateway.outputs.digest }}
+          fail-build: true
+          output-format: json
+          output-file: dist/sync-release/gateway-grype.json
+          severity-cutoff: high
+      - name: Attest web provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ needs.trust.outputs.web_image }}
+          subject-digest: ${{ needs.build-web.outputs.digest }}
+          push-to-registry: true
+      - name: Attest gateway provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ needs.trust.outputs.gateway_image }}
+          subject-digest: ${{ needs.build-gateway.outputs.digest }}
+          push-to-registry: true
+      - name: Sign and verify exact digests
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/sync-release.yml@refs/heads/main
+          GATEWAY_DIGEST: ${{ needs.build-gateway.outputs.digest }}
+          GATEWAY_IMAGE: ${{ needs.trust.outputs.gateway_image }}
+          WEB_DIGEST: ${{ needs.build-web.outputs.digest }}
+          WEB_IMAGE: ${{ needs.trust.outputs.web_image }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$WEB_IMAGE@$WEB_DIGEST"
+          cosign sign --yes "$GATEWAY_IMAGE@$GATEWAY_DIGEST"
+          cosign verify --certificate-identity "$CERTIFICATE_IDENTITY" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$WEB_IMAGE@$WEB_DIGEST" >/dev/null
+          cosign verify --certificate-identity "$CERTIFICATE_IDENTITY" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$GATEWAY_IMAGE@$GATEWAY_DIGEST" >/dev/null
+      - name: Write immutable candidate evidence
+        run: |
+          node tools/release/write-sync-release-candidate.mjs \
+            --output dist/sync-release/sync-evidence.json \
+            --candidate-commit "${{ inputs.candidate_commit }}" \
+            --candidate-release "${{ inputs.candidate_release }}" \
+            --web-digest "${{ needs.build-web.outputs.digest }}" \
+            --gateway-digest "${{ needs.build-gateway.outputs.digest }}"
+      - name: Upload immutable integrity evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-release-integrity-${{ inputs.candidate_commit }}
+          path: dist/sync-release/*.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record immutable evidence coordinates
+        run: |
+          echo "Integrity artifact ID: ${{ steps.upload.outputs.artifact-id }}" >>"$GITHUB_STEP_SUMMARY"
+          echo "Integrity artifact digest: ${{ steps.upload.outputs.artifact-digest }}" >>"$GITHUB_STEP_SUMMARY"
+      - name: Enforce vulnerability decisions after evidence retention
+        env:
+          GATEWAY_SCAN_OUTCOME: ${{ steps.gateway-scan.outcome }}
+          WEB_SCAN_OUTCOME: ${{ steps.web-scan.outcome }}
+        run: |
+          test "$WEB_SCAN_OUTCOME" = success
+          test "$GATEWAY_SCAN_OUTCOME" = success
+
+  stage:
+    name: Deploy exact digests to staging
+    if: inputs.operation == 'build-canary'
+    needs: [trust, integrity]
+    runs-on: [self-hosted, omnia-sync-staging-ephemeral]
+    environment: sync-staging
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact candidate tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          persist-credentials: false
+      - name: Download immutable candidate evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: sync-release-integrity-${{ inputs.candidate_commit }}
+          path: dist/sync-release
+      - name: Stage exact digests
+        env:
+          OMNIA_SYNC_PROMOTION_DRIVER: ${{ secrets.OMNIA_SYNC_PROMOTION_DRIVER }}
+        run: |
+          set -euo pipefail
+          node tools/release/assert-sync-release-evidence.mjs dist/sync-release/sync-evidence.json candidate "${{ inputs.candidate_commit }}" "${{ inputs.candidate_release }}"
+          node tools/release/sync-promotion.mjs stage dist/sync-release/sync-evidence.json >staging-receipt.json
+      - name: Upload staging receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-staging-receipt-${{ inputs.candidate_commit }}
+          path: staging-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  canary:
+    name: Exercise the same digests in canary
+    if: inputs.operation == 'build-canary'
+    needs: [trust, stage]
+    runs-on: [self-hosted, omnia-sync-canary-ephemeral]
+    environment: sync-canary
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact candidate tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          persist-credentials: false
+      - name: Download candidate and staging receipt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: sync-*-receipt-${{ inputs.candidate_commit }}
+          path: dist/checkpoints
+          merge-multiple: true
+      - name: Download immutable candidate evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: sync-release-integrity-${{ inputs.candidate_commit }}
+          path: dist/sync-release
+      - name: Canary exact digests
+        env:
+          OMNIA_SYNC_PROMOTION_DRIVER: ${{ secrets.OMNIA_SYNC_PROMOTION_DRIVER }}
+        run: |
+          set -euo pipefail
+          node tools/release/assert-sync-release-evidence.mjs dist/sync-release/sync-evidence.json candidate "${{ inputs.candidate_commit }}" "${{ inputs.candidate_release }}"
+          node tools/release/sync-promotion.mjs canary dist/sync-release/sync-evidence.json dist/checkpoints/staging-receipt.json >canary-receipt.json
+      - name: Upload canary receipt
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-canary-receipt-${{ inputs.candidate_commit }}
+          path: canary-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record promotion coordinates
+        run: |
+          echo "Canary receipt artifact ID: ${{ steps.upload.outputs.artifact-id }}" >>"$GITHUB_STEP_SUMMARY"
+
+  promote:
+    name: Promote accepted exact digests
+    if: inputs.operation == 'promote'
+    needs: trust
+    runs-on: [self-hosted, omnia-sync-production-ephemeral]
+    environment: sync-production
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact candidate tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          persist-credentials: false
+      - name: Download accepted evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          artifact-ids: ${{ inputs.primary_artifact_id }}
+          run-id: ${{ inputs.primary_run_id }}
+          github-token: ${{ github.token }}
+          path: dist/accepted
+      - name: Download canary receipt by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          artifact-ids: ${{ inputs.supporting_artifact_id }}
+          run-id: ${{ inputs.supporting_run_id }}
+          github-token: ${{ github.token }}
+          path: dist/canary
+      - name: Promote without rebuilding
+        env:
+          OMNIA_SYNC_PROMOTION_DRIVER: ${{ secrets.OMNIA_SYNC_PROMOTION_DRIVER }}
+        run: |
+          set -euo pipefail
+          node tools/release/assert-sync-release-evidence.mjs dist/accepted/sync-evidence.json accepted "${{ inputs.candidate_commit }}" "${{ inputs.candidate_release }}"
+          node tools/release/sync-promotion.mjs accept dist/accepted/sync-evidence.json dist/canary/canary-receipt.json >production-receipt.json
+      - name: Upload production receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-production-receipt-${{ inputs.candidate_commit }}
+          path: production-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  rollback:
+    name: Roll back to previously accepted digests
+    if: inputs.operation == 'rollback'
+    needs: trust
+    runs-on: [self-hosted, omnia-sync-production-ephemeral]
+    environment: sync-rollback
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted rollback tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          persist-credentials: false
+      - name: Download rejected active evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          artifact-ids: ${{ inputs.primary_artifact_id }}
+          run-id: ${{ inputs.primary_run_id }}
+          github-token: ${{ github.token }}
+          path: dist/rejected
+      - name: Download previous accepted evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          artifact-ids: ${{ inputs.supporting_artifact_id }}
+          run-id: ${{ inputs.supporting_run_id }}
+          github-token: ${{ github.token }}
+          path: dist/previous
+      - name: Roll back without rebuilding or retagging
+        env:
+          OMNIA_SYNC_PROMOTION_DRIVER: ${{ secrets.OMNIA_SYNC_PROMOTION_DRIVER }}
+        run: |
+          set -euo pipefail
+          node tools/release/assert-sync-release-evidence.mjs dist/rejected/sync-evidence.json rejected "${{ inputs.candidate_commit }}" "${{ inputs.candidate_release }}"
+          node tools/release/sync-promotion.mjs rollback dist/rejected/sync-evidence.json dist/previous/sync-evidence.json >rollback-receipt.json
+      - name: Upload rollback receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-rollback-receipt-${{ inputs.candidate_commit }}
+          path: rollback-receipt.json
+          if-no-files-found: error
+          retention-days: 90
