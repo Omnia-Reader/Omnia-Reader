@@ -260,6 +260,15 @@ Feature 015 preparation evidence on 2026-09-12:
   seven focused Node tests passed; direct CLI validation of the rejected fixture
   returned a deterministic rejected decision and a non-zero exit status. This
   completes T041 and T046 only; release-verifier integration remains T047.
+- The artifact canary scanner now requires non-empty trace, IPC, log, report,
+  redirect, evidence, and synchronized-record target classes and scans literal,
+  percent-encoded, form-encoded, Base64, Base64url, and bounded ZIP contents. It rejects
+  missing targets, symbolic links, unsafe archive paths, malformed archives,
+  and bounded-size violations. Its fourteen Node tests passed, including one
+  leak case per target class, compressed Playwright-style trace detection, and
+  a CLI check proving that clean scans exit zero, detections exit non-zero, and
+  neither output repeats the protected canary value. This completes T045 and
+  T048; protected-workflow collection and execution remain T051/T052.
 
 ## 2. Deterministic browser convergence
 

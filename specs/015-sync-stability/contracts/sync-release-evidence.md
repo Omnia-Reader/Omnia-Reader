@@ -81,6 +81,22 @@ provider transfer URLs, publication contents, raw provider errors, or secret
 environment values. Test canaries must be reported only by identifier and
 present/absent result, never by secret value.
 
+### Canary scan input
+
+The protected release environment supplies canary values only through the
+`OMNIA_SYNC_SECRET_CANARIES` environment variable as a JSON object whose keys
+are sanitized canary identifiers. The scan root contains non-empty `trace`,
+`ipc`, `log`, `report`, `redirect`, `evidence`, and `synchronized-record`
+directories. Regular files and bounded ZIP contents are scanned for literal,
+percent-encoded, form-encoded, Base64, and Base64url representations. Symbolic links,
+missing target classes, unsafe archive paths, malformed archives, and bounded
+size violations fail closed.
+
+Scanner output contains only canary identifiers, present/absent results,
+target classes, opaque file identifiers, and encoding names. It never repeats
+the canary value or source path. Any detection produces a failed result and a
+non-zero command exit status.
+
 ## Immutability
 
 Evidence is append-only for one candidate. A changed commit, image digest,
