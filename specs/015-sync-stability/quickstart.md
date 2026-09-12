@@ -374,12 +374,16 @@ The application initial bundle remains within budget at 424.83 kB raw and
 before commit because it increased the initial bundle to 620.38 kB raw and
 151.02 kB estimated transfer.
 
-With a writable task-local Cargo cache, the complete release verifier now
-passes both builds and the production npm audit, then rejects seven locked Rust
-dependencies whose compound or CDLA license expressions have not yet been
-reviewed by the allowlist. This is the next actionable verifier boundary; it is
-not a dependency-download or sandbox failure. T056 remains open until that
-review and the unavailable container gates are completed.
+With a writable task-local Cargo cache, the release verifier next rejected
+seven locked Rust TLS dependencies whose five distinct compound or CDLA license
+expressions had not yet been reviewed by the fail-closed allowlist. The exact
+crate manifests and bundled license texts were inspected before adding those
+five expressions; the policy still rejects any unreviewed composite expression.
+The focused release suite passed 16/16 tests, and the no-build verifier then
+passed for 68 production npm components, 527 Rust components, four pinned
+bridge inputs, four pinned CI actions, and 132 release files. T056 remains open
+for the unavailable container gates even though the deterministic release
+verifier boundary is now clear.
 
 ## 5. Packaged-host proof and compatibility
 
