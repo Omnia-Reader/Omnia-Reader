@@ -453,7 +453,7 @@ impl SyncBroker {
         let origin_string = origin.origin().ascii_serialization();
         let origin_header = HeaderValue::from_str(&origin_string)
             .map_err(|_| BrokerError::new("origin-mismatch"))?;
-        let session = SyncSession::session_only(origin.clone());
+        let session = SyncSession::for_origin(origin.clone(), unix_time_ms());
         let client = build_client(
             origin.scheme() == "https",
             session

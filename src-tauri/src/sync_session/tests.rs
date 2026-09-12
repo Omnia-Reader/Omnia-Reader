@@ -195,6 +195,14 @@ fn malformed_or_expired_records_never_restore() {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[test]
+fn selected_desktop_store_declares_until_delete_protection() {
+    let origin = Url::parse("https://sync.test").unwrap();
+    let store = OsProtectedSessionStore::for_origin(&origin).unwrap();
+    assert!(store.is_os_protected());
+}
+
 fn cookie_header(session: &SyncSession, origin: &Url) -> String {
     session
         .jar()

@@ -3,9 +3,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 use url::Url;
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use keyring::{credential::CredentialPersistence, Entry};
+
 const PERSISTENCE_VERSION: u16 = 1;
 const MAX_COOKIE_HEADER_BYTES: usize = 16 * 1024;
 const MAX_PERSISTED_LIFETIME_MS: u64 = 12 * 60 * 60 * 1_000;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const SESSION_KEYRING_SERVICE: &str = "io.github.omniareader.reader.sync-session";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,6 +35,59 @@ pub(crate) trait ProtectedSessionStore: Send + Sync {
     fn load(&self) -> Result<Option<Vec<u8>>, SessionPersistenceError>;
     fn store(&self, value: &[u8]) -> Result<(), SessionPersistenceError>;
     fn clear(&self) -> Result<(), SessionPersistenceError>;
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+struct OsProtectedSessionStore {
+    entry: Entry,
+    persists_until_delete: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl OsProtectedSessionStore {
+    fn for_origin(origin: &Url) -> Result<Self, SessionPersistenceError> {
+        let persists_until_delete = matches!(
+            keyring::default::default_credential_builder().persistence(),
+            CredentialPersistence::UntilDelete
+        );
+        let entry = Entry::new(
+            SESSION_KEYRING_SERVICE,
+            &origin.origin().ascii_serialization(),
+        )
+        .map_err(|_| SessionPersistenceError)?;
+        Ok(Self {
+            entry,
+            persists_until_delete,
+        })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl ProtectedSessionStore for OsProtectedSessionStore {
+    fn is_os_protected(&self) -> bool {
+        self.persists_until_delete
+    }
+
+    fn load(&self) -> Result<Option<Vec<u8>>, SessionPersistenceError> {
+        match self.entry.get_secret() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(SessionPersistenceError),
+        }
+    }
+
+    fn store(&self, value: &[u8]) -> Result<(), SessionPersistenceError> {
+        self.entry
+            .set_secret(value)
+            .map_err(|_| SessionPersistenceError)
+    }
+
+    fn clear(&self) -> Result<(), SessionPersistenceError> {
+        match self.entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err(SessionPersistenceError),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -62,6 +120,30 @@ pub(crate) struct SyncSession {
 }
 
 impl SyncSession {
+    #[cfg(test)]
+    pub(crate) fn for_origin(origin: Url, _now_ms: u64) -> Self {
+        Self::session_only(origin)
+    }
+
+    #[cfg(all(
+        not(test),
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    ))]
+    pub(crate) fn for_origin(origin: Url, now_ms: u64) -> Self {
+        if let Ok(store) = OsProtectedSessionStore::for_origin(&origin) {
+            return Self::with_protected_store(origin, Arc::new(store), now_ms);
+        }
+        Self::session_only(origin)
+    }
+
+    #[cfg(all(
+        not(test),
+        not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+    ))]
+    pub(crate) fn for_origin(origin: Url, _now_ms: u64) -> Self {
+        Self::session_only(origin)
+    }
+
     pub(crate) fn session_only(origin: Url) -> Self {
         Self {
             origin,
@@ -72,9 +154,6 @@ impl SyncSession {
         }
     }
 
-    // Kept crate-private until a platform backend passes its packaged-host
-    // protection and restart gate; current release builds use session_only.
-    #[allow(dead_code)]
     pub(crate) fn with_protected_store(
         origin: Url,
         store: Arc<dyn ProtectedSessionStore>,

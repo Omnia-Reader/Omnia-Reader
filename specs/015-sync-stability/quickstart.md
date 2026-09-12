@@ -235,6 +235,21 @@ Feature 015 preparation evidence on 2026-09-12:
   complete. T034 remains open: no OS backend is enabled and no protected-host
   claim is made because current cross-platform keyring releases exceed the
   declared Rust baseline and still require packaged platform proof.
+- T034 now selects exact, target-scoped `keyring` 3.6.3 backends without
+  raising the Rust 1.77.2 baseline: persistent Secret Service/keyutils on
+  Linux, Keychain on macOS, and Credential Manager on Windows. The production
+  broker restores its bounded origin-bound cookie record only when the selected
+  backend declares until-delete persistence; construction, load, write, clear,
+  validation, or locking failures erase process authority and downgrade to
+  `session-only`. Android has no compatible protected backend at this baseline
+  and remains explicitly session-only. Cargo resolved no `keyring` package for
+  `aarch64-linux-android` and resolved exactly `keyring v3.6.3` for
+  `x86_64-unknown-linux-gnu`. `cargo test --locked` passed 28/28 Rust tests,
+  `cargo check --all-targets --locked` and `cargo fmt -- --check` passed on
+  Linux. The Android source check reached the existing `aws-lc-sys` build and
+  then stopped because `aarch64-linux-android-clang`/the Android NDK is not
+  installed; Windows/macOS compilation and every packaged restart proof remain
+  unavailable locally and stay explicit under T040.
 - The exact T039 cross-project command passed 423/423 tests across sync-core,
   sync-git, sync-gateway, sync-native, and platform; the gateway's two
   environment-gated Redis cases were explicitly skipped in this non-Redis run.

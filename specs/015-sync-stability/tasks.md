@@ -96,7 +96,7 @@ authority, duplicate acknowledgement, or dangling publication reference.
 - [x] T031 [US2] Register only narrow synchronization commands in `src-tauri/src/lib.rs` and `src-tauri/capabilities/default.json`
 - [x] T032 [US2] Implement single-use native handoff storage and routes in `apps/sync-gateway/src/native-handoff.ts`, `apps/sync-gateway/src/provider-routes.ts`, and `apps/sync-gateway/src/app.ts`
 - [x] T033 [US2] Implement deep-link validation and direct handoff redemption into the native jar in `src-tauri/src/native_handoff.rs` and `src-tauri/src/lib.rs`
-- [ ] T034 [US2] Implement Rust-only protected session persistence with explicit session-only fallback in `src-tauri/src/sync_session.rs`
+- [x] T034 [US2] Implement Rust-only protected session persistence with explicit session-only fallback in `src-tauri/src/sync_session.rs`
 - [x] T035 [US2] Integrate reconnect, cancellation, expiry, permission-loss, and focus restoration in `apps/omnia-reader/src/app/features/settings/sync-settings-page.component.ts`, `.html`, and `.spec.ts`
 - [x] T036 [US2] Make Redis-backed production readiness fail closed without memory fallback in `apps/sync-gateway/src/shared-session-stores.ts`, `apps/sync-gateway/src/configuration.ts`, and `apps/sync-gateway/src/app.ts`
 - [x] T037 [US2] Add a pinned loopback Redis harness in `deployment/compose.redis-test.yaml` and `apps/sync-gateway/project.json`

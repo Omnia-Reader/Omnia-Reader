@@ -156,23 +156,28 @@ dependency graph where possible:
 - retain the existing exact `tauri-plugin-deep-link = "=2.4.9"`. Treat every
   `on_open_url` value as hostile and validate the native request binding,
   provider, expiry, and one-use handoff before redemption; and
-- add no generic Tauri HTTP plugin and no protected-persistence crate in the
-  first broker slice. The current Stronghold setup derives its vault key from a
-  password/hash policy supplied by the application, which does not itself prove
-  an OS-protected bootstrap secret. Until a platform-specific proof establishes
-  that property, the declared capability is `session-only`: the Rust process
-  owns the cookie jar and clears reusable authority on exit while preserving
-  local books and pending operations.
+- add no generic Tauri HTTP plugin. The current Stronghold setup derives its
+  vault key from a password/hash policy supplied by the application, which does
+  not itself prove an OS-protected bootstrap secret. Desktop targets instead
+  pin `keyring = "=3.6.3"` with only their native persistent backend: Linux
+  Secret Service/keyutils through `crypto-rust` and
+  `linux-native-sync-persistent`, macOS Keychain through `apple-native`, and
+  Windows Credential Manager through `windows-native`. The Rust process owns
+  the private cookie jar and stores only its bounded, origin-bound sealed
+  session record; any unproven or failed store downgrades fail closed to
+  `session-only` while preserving local books and pending operations.
 
-The T025 persistence-policy checkpoint on 2026-09-12 rechecked the current
-Rust keyring choices with `cargo info`. `keyring` 4.2.0 and its
-`android-native-keyring-store` 1.0.0 backend both require Rust 1.88.0, above
-this crate's declared Rust 1.77.2 baseline. The compatible `keyring` 3.6.3
-requires Rust 1.75 but has no Android-native backend. Therefore this checkpoint
-adds no credential-store dependency and makes no protected-host claim. It
-implements and tests the sealed Rust persistence contract, but the production
-factory remains explicitly `session-only` until each selected OS store is
-pinned and passes packaged restart, failure, and canary gates.
+The T025/T034 persistence-policy checkpoints on 2026-09-12 rechecked the
+current Rust keyring choices with `cargo info` and the downloaded crates'
+primary source. `keyring` 4.2.0 and its `android-native-keyring-store` 1.0.0
+backend both require Rust 1.88.0, above this crate's declared Rust 1.77.2
+baseline. The compatible `keyring` 3.6.3 requires Rust 1.75 and its selected
+desktop builders declare `CredentialPersistence::UntilDelete`, but it has no
+Android-native backend. The production factory therefore enables protected
+persistence only on Linux, macOS, and Windows; Android and other targets remain
+explicitly `session-only`. Cargo's Android target graph contains no `keyring`
+package. Packaged restart, failure, and canary proof remains a T040 release gate
+and must not be inferred from dependency selection or unit tests.
 
 This selection adds no JavaScript network authority and no new browser runtime
 dependency. Cargo must pin all three direct declarations exactly (only
