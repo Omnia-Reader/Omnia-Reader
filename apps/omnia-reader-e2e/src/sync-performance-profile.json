@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "profileId": "sync-staging-v1",
+  "provider": "git",
+  "devices": 2,
+  "resources": {
+    "logicalCpu": 2,
+    "memoryMiB": 4096
+  },
+  "network": {
+    "roundTripTimeMs": 100,
+    "downloadKilobitsPerSecond": 10000,
+    "uploadKilobitsPerSecond": 10000,
+    "packetLossPercent": 0
+  },
+  "synchronization": {
+    "readingStateQuietPeriodMs": 1000,
+    "remoteRevisionPollMs": 10000
+  },
+  "measurement": {
+    "warmupAttempts": 20,
+    "measuredAttempts": 200,
+    "manualSyncTargetMs": 2000,
+    "minimumWithinTargetRatio": 0.95,
+    "remoteVisibilityTargetMs": 15000
+  }
+}

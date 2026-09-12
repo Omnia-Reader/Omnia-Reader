@@ -112,6 +112,14 @@ Feature 015 preparation evidence on 2026-09-12:
 --parallel=1` passed. An initial corpus test import crossed an Nx project
   boundary; the corrected provider-neutral corpus contract leaves production
   parsing in the owning sync library suites.
+- The `sync-staging-v1` measurement contract fixes two logical CPUs, 4 GiB,
+  100 ms RTT, 10,000 kbit/s symmetric bandwidth, zero packet loss, the
+  one-second reading-state quiet period, and the ten-second revision poll. Its
+  runner rejects qualification drift, discards exactly 20 warm-ups, retains 200
+  raw two-device measurements, recomputes p95 and within-target ratio, requires
+  visibility within 15 seconds, and fails any publication transfer. The four
+  Node contract tests and E2E lint passed. This proves the runner contract only;
+  no qualified staging latency measurement has run on this host.
 
 ## 2. Deterministic browser convergence
 

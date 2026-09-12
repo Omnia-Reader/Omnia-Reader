@@ -20,6 +20,7 @@ const firefoxE2EEnabled = process.env['FIREFOX_E2E'] === '1';
  */
 export default defineConfig({
   ...nxE2EPreset(__filename, { testDir: './src' }),
+  testIgnore: '**/*.spec.mjs',
   // Local Playwright and Nx runs use the four physical cores available on the
   // development machine. CI overrides this with one worker per shard. Firefox
   // is temporarily opt-in through FIREFOX_E2E=1.
