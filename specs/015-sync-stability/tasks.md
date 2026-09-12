@@ -124,7 +124,7 @@ rebuild.
 
 ### Tests for User Story 3
 
-- [ ] T041 [P] [US3] Add schema, confidentiality, candidate-identity, browser-attempt, unavailable-gate, and aggregate-decision tests to `tools/release/verify-sync-evidence.spec.mjs`
+- [x] T041 [P] [US3] Add schema, confidentiality, candidate-identity, browser-attempt, unavailable-gate, and aggregate-decision tests to `tools/release/verify-sync-evidence.spec.mjs`
 - [ ] T042 [P] [US3] Add public HTTPS, headers, readiness, Redis failure, graceful shutdown, image identity, low-cardinality telemetry, and injected alert-threshold assertions to `deployment/smoke.spec.mjs` and `apps/sync-gateway/src/sync-observability.spec.ts`
 - [ ] T043 [P] [US3] Add staging canary and digest-only rollback tests to `tools/release/sync-promotion.spec.mjs`
 - [ ] T044 [P] [US3] Add protected GitHub OAuth, LFS EPUB/PDF, two-client, restore, conflict, interruption, permission, revocation, replica-restart, fixed-profile latency sampling, and scoped-cleanup journeys to `apps/omnia-reader-e2e/src/sync-live-github.spec.ts`
@@ -132,7 +132,7 @@ rebuild.
 
 ### Implementation for User Story 3
 
-- [ ] T046 [US3] Implement the evidence validator and aggregator in `tools/release/verify-sync-evidence.mjs`
+- [x] T046 [US3] Implement the evidence validator and aggregator in `tools/release/verify-sync-evidence.mjs`
 - [ ] T047 [US3] Integrate sync evidence into `tools/release/verify-release.mjs` and `tools/release/verify-release.spec.mjs`
 - [ ] T048 [US3] Implement the artifact canary scanner in `tools/release/scan-sync-evidence.mjs`
 - [ ] T049 [US3] Implement sanitized low-cardinality sync telemetry in `apps/sync-gateway/src/sync-observability.ts` and `apps/sync-gateway/src/app.ts`, then extend `deployment/smoke.sh` with bounded health, headers, proxy, Redis readiness, alert, and shutdown checks

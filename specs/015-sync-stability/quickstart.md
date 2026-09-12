@@ -252,6 +252,14 @@ Feature 015 preparation evidence on 2026-09-12:
   restart persistence, provider consequences, and browser error monitoring.
   The production application build passed at 424.42 kB raw and 93.65 kB
   estimated initial transfer size.
+- The synchronization evidence validator now rejects unsupported schemas,
+  malformed or duplicate candidate artifact identities, confidential fields,
+  unsafe report paths, duplicate run identities, invalid time intervals,
+  missing or failed mandatory gates, unavailable mandatory gates, and fewer
+  than three distinct passing attempts for each browser-convergence gate. Its
+  seven focused Node tests passed; direct CLI validation of the rejected fixture
+  returned a deterministic rejected decision and a non-zero exit status. This
+  completes T041 and T046 only; release-verifier integration remains T047.
 
 ## 2. Deterministic browser convergence
 
