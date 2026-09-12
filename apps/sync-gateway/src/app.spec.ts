@@ -1,5 +1,6 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { createClient } from 'redis';
 import { buildSyncGateway } from './app.js';
 import {
   AuthorizationHttpError,
@@ -21,6 +22,7 @@ import {
 } from './gateway-contract.js';
 import { MemoryGitHubAuthorizationRevocationStore } from './github-authorization-revocations.js';
 import type { GitHubWebhookOptions } from './github-webhook.js';
+import { gatewaySessionStoresFromEnvironment } from './shared-session-stores.js';
 import { UnconfiguredSyncGatewayAdapter } from './unconfigured-adapter.js';
 
 const HOST = 'reader.test';
@@ -39,6 +41,38 @@ describe('sync gateway', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
+      status: 'ok',
+      service: 'omnia-reader-sync-gateway',
+    });
+    await app.close();
+  });
+
+  it('keeps liveness available while dependency readiness fails closed', async () => {
+    const readiness = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValue(new Error('redis connection detail'));
+    const app = buildSyncGateway({
+      github: new MemoryGatewayAdapter('github'),
+      mega: new MemoryGatewayAdapter('mega'),
+      readiness,
+      secureCookies: false,
+    });
+
+    const health = await app.inject({ method: 'GET', url: '/healthz' });
+    const unavailable = await app.inject({ method: 'GET', url: '/readyz' });
+
+    expect(health.statusCode).toBe(200);
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toEqual({
+      status: 'unavailable',
+      service: 'omnia-reader-sync-gateway',
+    });
+    expect(unavailable.body).not.toContain('redis connection detail');
+
+    readiness.mockResolvedValue(undefined);
+    const recovered = await app.inject({ method: 'GET', url: '/readyz' });
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json()).toEqual({
       status: 'ok',
       service: 'omnia-reader-sync-gateway',
     });
@@ -795,6 +829,96 @@ describe('sync gateway', () => {
   });
 });
 
+describe.skipIf(!process.env['OMNIA_SYNC_REDIS_TEST_URL'])(
+  'Redis-backed gateway integration',
+  () => {
+    it('shares webhook invalidation and replay state across replicas and restart', async () => {
+      const redisUrl = process.env['OMNIA_SYNC_REDIS_TEST_URL'] as string;
+      const prefix = `omnia:app-test:${randomBytes(8).toString('hex')}`;
+      const configured: NodeJS.ProcessEnv = {
+        OMNIA_GITHUB_CLIENT_ID: 'configured',
+        OMNIA_SYNC_SESSION_KEY: Buffer.alloc(32, 7).toString('base64'),
+        OMNIA_SYNC_REDIS_URL: redisUrl,
+        OMNIA_SYNC_REDIS_PREFIX: prefix,
+      };
+      const firstStores = await gatewaySessionStoresFromEnvironment(configured);
+      const secondStores =
+        await gatewaySessionStoresFromEnvironment(configured);
+      const secret = 'w'.repeat(32);
+      const first = redisBackedGateway(firstStores, secret);
+      const second = redisBackedGateway(secondStores, secret);
+      const observer = createClient({ url: redisUrl });
+      await observer.connect();
+      let restartedStores: Awaited<
+        ReturnType<typeof gatewaySessionStoresFromEnvironment>
+      > | null = null;
+      let restarted: ReturnType<typeof redisBackedGateway> | null = null;
+      const payload = JSON.stringify({
+        action: 'revoked',
+        sender: { id: 42, login: 'reader' },
+      });
+
+      try {
+        const applied = await first.inject({
+          method: 'POST',
+          url: '/api/sync/github/webhook',
+          headers: webhookHeaders(secret, payload, 'delivery-real-1'),
+          payload,
+        });
+        const replay = await second.inject({
+          method: 'POST',
+          url: '/api/sync/github/webhook',
+          headers: webhookHeaders(secret, payload, 'delivery-real-1'),
+          payload,
+        });
+
+        expect(applied.statusCode).toBe(204);
+        expect(replay.statusCode).toBe(204);
+        await expect(
+          secondStores.githubRevocations?.generation(42),
+        ).resolves.toBe(1);
+        expect(
+          (await second.inject({ method: 'GET', url: '/readyz' })).statusCode,
+        ).toBe(200);
+
+        await first.close();
+        await firstStores.close();
+        restartedStores = await gatewaySessionStoresFromEnvironment(configured);
+        restarted = redisBackedGateway(restartedStores, secret);
+        await expect(
+          restartedStores.githubRevocations?.generation(42),
+        ).resolves.toBe(1);
+
+        const next = await restarted.inject({
+          method: 'POST',
+          url: '/api/sync/github/webhook',
+          headers: webhookHeaders(secret, payload, 'delivery-real-2'),
+          payload,
+        });
+        expect(next.statusCode).toBe(204);
+        await expect(
+          secondStores.githubRevocations?.generation(42),
+        ).resolves.toBe(2);
+        expect(
+          (await restarted.inject({ method: 'GET', url: '/readyz' }))
+            .statusCode,
+        ).toBe(200);
+      } finally {
+        await first.close();
+        await second.close();
+        await restarted?.close();
+        await firstStores.close();
+        await secondStores.close();
+        await restartedStores?.close();
+        for (const key of await observer.keys(`${prefix}:*`)) {
+          await observer.del(key);
+        }
+        observer.destroy();
+      }
+    });
+  },
+);
+
 function gateway(
   github = new MemoryGatewayAdapter('github'),
   mega = new MemoryGatewayAdapter('mega'),
@@ -806,6 +930,22 @@ function gateway(
     ...(githubWebhook ? { githubWebhook } : {}),
     secureCookies: false,
     maxPublicationBytes: 1024 * 1024,
+  });
+}
+
+function redisBackedGateway(
+  stores: Awaited<ReturnType<typeof gatewaySessionStoresFromEnvironment>>,
+  secret: string,
+) {
+  if (!stores.githubRevocations) {
+    throw new Error('Redis revocation storage is unavailable');
+  }
+  return buildSyncGateway({
+    github: new MemoryGatewayAdapter('github'),
+    mega: new MemoryGatewayAdapter('mega'),
+    githubWebhook: { secret, revocations: stores.githubRevocations },
+    readiness: () => stores.ready(),
+    secureCookies: false,
   });
 }
 

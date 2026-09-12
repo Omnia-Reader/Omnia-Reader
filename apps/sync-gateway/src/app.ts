@@ -17,6 +17,7 @@ export interface SyncGatewayOptions {
   logger?: boolean;
   secureCookies?: boolean;
   maxPublicationBytes?: number;
+  readiness?: () => Promise<void>;
 }
 
 export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
@@ -64,6 +65,20 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
     status: 'ok',
     service: 'omnia-reader-sync-gateway',
   }));
+  app.get('/readyz', async (_request, reply) => {
+    try {
+      await options.readiness?.();
+      return {
+        status: 'ok',
+        service: 'omnia-reader-sync-gateway',
+      };
+    } catch {
+      return reply.code(503).send({
+        status: 'unavailable',
+        service: 'omnia-reader-sync-gateway',
+      });
+    }
+  });
 
   const githubWebhook = options.githubWebhook;
   if (githubWebhook) {

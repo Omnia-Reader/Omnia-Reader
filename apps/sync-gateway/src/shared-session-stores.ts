@@ -20,12 +20,14 @@ export interface GatewaySessionStores {
   github?: GatewaySessionStore<GitHubSessionState>;
   githubRevocations?: GitHubAuthorizationRevocationStore;
   mega?: GatewaySessionStore<MegaSessionState>;
+  ready(): Promise<void>;
   close(): Promise<void>;
 }
 
 export interface SharedRedisClient extends RedisSessionClient {
   on(event: 'error', listener: (error: unknown) => void): this;
   connect(): Promise<unknown>;
+  ping(): Promise<string>;
   destroy(): void;
 }
 
@@ -51,12 +53,18 @@ export async function gatewaySessionStoresFromEnvironment(
   options: GatewaySessionStoreOptions = {},
 ): Promise<GatewaySessionStores> {
   if (!PROVIDER_KEYS.some((key) => environment[key])) {
-    return { close: async () => undefined };
+    return {
+      ready: async () => undefined,
+      close: async () => undefined,
+    };
   }
 
   const currentKey = environment['OMNIA_SYNC_SESSION_KEY'];
   if (!currentKey) {
-    return { close: async () => undefined };
+    return {
+      ready: async () => undefined,
+      close: async () => undefined,
+    };
   }
   const keys = sessionEncryptionKeys(
     currentKey,
@@ -92,6 +100,7 @@ export async function gatewaySessionStoresFromEnvironment(
         filePath: resolve(directory, 'mega-sessions.json'),
         ttlMs,
       }),
+      ready: async () => undefined,
       close: async () => undefined,
     };
   }
@@ -100,6 +109,7 @@ export async function gatewaySessionStoresFromEnvironment(
       github: new EncryptedMemorySessionStore(keys, { ttlMs }),
       githubRevocations: new MemoryGitHubAuthorizationRevocationStore(),
       mega: new EncryptedMemorySessionStore(keys, { ttlMs }),
+      ready: async () => undefined,
       close: async () => undefined,
     };
   }
@@ -146,6 +156,9 @@ export async function gatewaySessionStoresFromEnvironment(
       prefix: `${prefix}:mega`,
       ttlMs,
     }),
+    ready: async () => {
+      await client.ping();
+    },
     close: async () => {
       if (!closed) {
         closed = true;

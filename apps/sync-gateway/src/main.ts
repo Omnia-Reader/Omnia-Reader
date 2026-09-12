@@ -44,6 +44,7 @@ async function start(): Promise<void> {
         ...(activeStores.mega ? { sessions: activeStores.mega } : {}),
       }),
       ...(githubWebhook ? { githubWebhook } : {}),
+      readiness: () => activeStores.ready(),
       logger: true,
       secureCookies: process.env['NODE_ENV'] === 'production',
     });

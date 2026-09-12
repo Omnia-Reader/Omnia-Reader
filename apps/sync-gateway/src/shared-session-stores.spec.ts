@@ -1,7 +1,8 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createClient } from 'redis';
 import {
   gatewaySessionStoresFromEnvironment,
   type SharedRedisClient,
@@ -127,17 +128,31 @@ describe('gatewaySessionStoresFromEnvironment', () => {
 describe.skipIf(!process.env['OMNIA_SYNC_REDIS_TEST_URL'])(
   'Redis session store integration',
   () => {
-    it('shares and atomically rotates a session between real clients', async () => {
+    it('survives replicas, restart, key rotation, backup, restore, and outage without extending TTL', async () => {
       const prefix = `omnia:test:${randomBytes(8).toString('hex')}`;
       const redisUrl = process.env['OMNIA_SYNC_REDIS_TEST_URL'] as string;
+      const oldKey = Buffer.alloc(32, 7).toString('base64');
+      const currentKey = Buffer.alloc(32, 8).toString('base64');
       const configured = environment({
         OMNIA_SYNC_REDIS_URL: redisUrl,
         OMNIA_SYNC_REDIS_PREFIX: prefix,
+        OMNIA_SYNC_SESSION_KEY: oldKey,
+        OMNIA_SYNC_SESSION_TTL_MS: '120000',
       });
       const first = await gatewaySessionStoresFromEnvironment(configured);
       const second = await gatewaySessionStoresFromEnvironment(configured);
+      const observer = createClient({ url: redisUrl });
+      await observer.connect();
+      let rotated: Awaited<
+        ReturnType<typeof gatewaySessionStoresFromEnvironment>
+      > | null = null;
+      let currentOnly: Awaited<
+        ReturnType<typeof gatewaySessionStoresFromEnvironment>
+      > | null = null;
 
       try {
+        await expect(first.ready()).resolves.toBeUndefined();
+        await expect(second.ready()).resolves.toBeUndefined();
         await first.github?.set('session-a', {
           authorizationState: 'shared-state',
         });
@@ -164,10 +179,75 @@ describe.skipIf(!process.env['OMNIA_SYNC_REDIS_TEST_URL'])(
           second.githubRevocations?.revoke(42, 'delivery-shared'),
         ).resolves.toBe(false);
         await expect(first.githubRevocations?.generation(42)).resolves.toBe(1);
-        await first.github?.delete('session-b');
+
+        const redisKey = sessionRedisKey(prefix, 'github', 'session-b');
+        const ciphertextBefore = await observer.get(redisKey);
+        const ttlBefore = await observer.pTTL(redisKey);
+        expect(ciphertextBefore).toBeTruthy();
+        expect(ttlBefore).toBeGreaterThan(0);
+
+        await first.close();
+        await second.close();
+        rotated = await gatewaySessionStoresFromEnvironment(
+          environment({
+            OMNIA_SYNC_REDIS_URL: redisUrl,
+            OMNIA_SYNC_REDIS_PREFIX: prefix,
+            OMNIA_SYNC_SESSION_KEY: currentKey,
+            OMNIA_SYNC_SESSION_PREVIOUS_KEYS: oldKey,
+            OMNIA_SYNC_SESSION_TTL_MS: '120000',
+          }),
+        );
+        await expect(rotated.github?.get('session-b')).resolves.toEqual({
+          authorizationState: 'rotated-state',
+        });
+        await expect(rotated.githubRevocations?.generation(42)).resolves.toBe(
+          1,
+        );
+        await expect(
+          rotated.githubRevocations?.revoke(42, 'delivery-shared'),
+        ).resolves.toBe(false);
+
+        const ciphertextAfter = await observer.get(redisKey);
+        const ttlAfter = await observer.pTTL(redisKey);
+        expect(ciphertextAfter).not.toBe(ciphertextBefore);
+        expect(ttlAfter).toBeLessThanOrEqual(ttlBefore);
+        expect(ttlAfter).toBeGreaterThanOrEqual(ttlBefore - 5_000);
+
+        await rotated.close();
+        currentOnly = await gatewaySessionStoresFromEnvironment(
+          environment({
+            OMNIA_SYNC_REDIS_URL: redisUrl,
+            OMNIA_SYNC_REDIS_PREFIX: prefix,
+            OMNIA_SYNC_SESSION_KEY: currentKey,
+            OMNIA_SYNC_SESSION_TTL_MS: '120000',
+          }),
+        );
+        await expect(currentOnly.github?.get('session-b')).resolves.toEqual({
+          authorizationState: 'rotated-state',
+        });
+
+        const backupValue = await observer.get(redisKey);
+        const backupTtl = await observer.pTTL(redisKey);
+        expect(backupValue).toBeTruthy();
+        await observer.del(redisKey);
+        await expect(currentOnly.github?.get('session-b')).resolves.toBeNull();
+        await observer.set(redisKey, backupValue as string, { PX: backupTtl });
+        await expect(currentOnly.github?.get('session-b')).resolves.toEqual({
+          authorizationState: 'rotated-state',
+        });
+
+        await currentOnly.close();
+        await expect(currentOnly.ready()).rejects.toThrow();
+        await expect(currentOnly.github?.get('session-b')).rejects.toThrow();
       } finally {
         await first.close();
         await second.close();
+        await rotated?.close();
+        await currentOnly?.close();
+        for (const key of await observer.keys(`${prefix}:*`)) {
+          await observer.del(key);
+        }
+        observer.destroy();
       }
     });
   },
@@ -179,6 +259,17 @@ function environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OMNIA_SYNC_SESSION_KEY: Buffer.alloc(32, 7).toString('base64'),
     ...overrides,
   };
+}
+
+function sessionRedisKey(
+  prefix: string,
+  provider: 'github' | 'mega',
+  sessionId: string,
+): string {
+  const digest = createHash('sha256')
+    .update(sessionId, 'utf8')
+    .digest('base64url');
+  return `${prefix}:${provider}:${digest}`;
 }
 
 interface FakeRecord {
@@ -198,6 +289,10 @@ class FakeSharedRedisClient implements SharedRedisClient {
   async connect(): Promise<unknown> {
     this.connectCount += 1;
     return this;
+  }
+
+  async ping(): Promise<string> {
+    return 'PONG';
   }
 
   destroy(): void {

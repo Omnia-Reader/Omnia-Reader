@@ -143,6 +143,14 @@ Feature 015 preparation evidence on 2026-09-12:
   whole LFS upload, verifies it, and only afterward publishes the attributes and
   exact pointer. Uncached sync-git passed 41/41; sync-gateway passed 121 tests
   with its existing opt-in Redis test skipped.
+- Against isolated Redis 7.2 (`redis:7.2-bookworm`, local image
+  `bcdbeda69e6e`), the expanded real integration passed 124/124 tests. It proved
+  two-replica sharing, atomic session movement, restart continuity,
+  current/previous encryption-key rotation without extending the remaining
+  TTL, encrypted-state backup/restore, fail-closed client outage, cross-replica
+  webhook replay/invalidation, and readiness recovery. `/healthz` remains a
+  dependency-independent liveness probe; `/readyz` now reflects the shared
+  store without exposing connection details.
 
 ## 2. Deterministic browser convergence
 

@@ -80,7 +80,7 @@ authority, duplicate acknowledgement, or dangling publication reference.
 
 - [x] T019 [P] [US2] Add retry-deadline, coalescing, cancellation, restart, and no-hot-loop assertions to `libs/sync/core/src/lib/auto-sync-scheduler.spec.ts` and `libs/sync/core/src/lib/change-aware-sync-worker.spec.ts`
 - [x] T020 [P] [US2] Add Git/LFS interrupted-upload ordering and whole-transfer retry assertions to `libs/sync/git/src/lib/github-gateway-client.spec.ts` and `apps/sync-gateway/src/github-adapter.spec.ts`
-- [ ] T021 [P] [US2] Extend real Redis coverage for two instances, restart, key rotation, unchanged TTL, webhook replay/invalidation, outage, backup, restore, and readiness in `apps/sync-gateway/src/shared-session-stores.spec.ts` and `apps/sync-gateway/src/app.spec.ts`
+- [x] T021 [P] [US2] Extend real Redis coverage for two instances, restart, key rotation, unchanged TTL, webhook replay/invalidation, outage, backup, restore, and readiness in `apps/sync-gateway/src/shared-session-stores.spec.ts` and `apps/sync-gateway/src/app.spec.ts`
 - [ ] T022 [P] [US2] Add exact-origin, typed-operation, bounded-body, redirect-denial, sanitization, cancellation, and teardown tests in `libs/sync/native/src/lib/native-sync-transport.spec.ts`
 - [ ] T023 [P] [US2] Add cookie-opacity, header-filtering, secret-canary, queue-bound, stream-progress, cancellation, and cleanup tests in `src-tauri/src/sync_broker/tests.rs`
 - [ ] T024 [P] [US2] Add handoff binding, provider, expiry, atomic-use, replay, forgery, and sanitized-failure tests in `apps/sync-gateway/src/native-handoff.spec.ts` and `src-tauri/src/native_handoff/tests.rs`
