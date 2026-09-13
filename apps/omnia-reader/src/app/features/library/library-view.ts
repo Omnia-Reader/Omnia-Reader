@@ -140,7 +140,11 @@ export function selectLogicalLibraryCards(
         (!needle || searchableLogicalCardText(card).includes(needle))
       );
     })
-    .sort((left, right) => compareLogicalCards(left, right, sortMode));
+    .map((card) => ({ card, sortRecord: logicalCardSortRecord(card) }))
+    .sort((left, right) =>
+      compareBooks(left.sortRecord, right.sortRecord, sortMode),
+    )
+    .map(({ card }) => card);
 }
 
 export interface LibraryPreferenceStorage {
@@ -360,16 +364,6 @@ function searchableLogicalCardText(card: LogicalLibraryCard): string {
       ),
     ].join('\n'),
   );
-}
-
-function compareLogicalCards(
-  left: LogicalLibraryCard,
-  right: LogicalLibraryCard,
-  sortMode: LibrarySortMode,
-): number {
-  const leftBook = logicalCardSortRecord(left);
-  const rightBook = logicalCardSortRecord(right);
-  return compareBooks(leftBook, rightBook, sortMode);
 }
 
 function logicalCardSortRecord(card: LogicalLibraryCard): BookRecord {

@@ -306,6 +306,48 @@ describe('logical library view', () => {
     expect(selectLogicalLibraryCards(cards, 'pdf', 'title')).toHaveLength(1);
   });
 
+  it('sorts 10,000 cards consistently with book ordering without mutating inputs', () => {
+    const records = Array.from({ length: 10_000 }, (_, index) =>
+      createBook({
+        id: `sha256:${index.toString(16).padStart(64, '0')}`,
+        title: `Book ${(index * 7919) % 10_000}`,
+        authors: index % 3 ? [`Author ${index % 17}`] : [],
+        importedAt: new Date(Date.UTC(2026, 0, 1 + (index % 28))).toISOString(),
+        lastOpenedAt:
+          index % 2
+            ? new Date(Date.UTC(2026, 1, 1 + (index % 28))).toISOString()
+            : undefined,
+      }),
+    );
+    const cards = createLogicalLibraryCards(
+      records.map((record) => ({
+        ...logical,
+        id: `logical:sha256:${record.id.slice('sha256:'.length)}` as const,
+        title: record.title,
+        authors: record.authors,
+        importedAt: record.importedAt,
+        variants: { epub: record.id },
+      })),
+      records,
+      [],
+      new Map(),
+    );
+    const original = [...cards];
+    for (const mode of ['recent', 'added', 'title', 'author'] as const) {
+      expect(
+        selectLogicalLibraryCards(cards, '', mode).map((card) => card.id),
+      ).toEqual(
+        selectLibraryBooks(records, '', mode).map(
+          (record) => `logical:${record.id}`,
+        ),
+      );
+    }
+    expect(cards).toEqual(original);
+    expect(selectLogicalLibraryCards(cards, 'BOOK 7919', 'title')).toEqual([
+      cards[1],
+    ]);
+  });
+
   it('orders only verified healthy candidates by preference then EPUB/PDF', () => {
     const base = createLogicalLibraryCards(
       [logical],

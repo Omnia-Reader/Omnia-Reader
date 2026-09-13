@@ -122,6 +122,37 @@ describe('PublicationImportService', () => {
     });
   });
 
+  it('keeps validated local books when sync metadata lookup fails', async () => {
+    repository.findLogicalBookByVariant.mockRejectedValueOnce(
+      new Error('storage interrupted'),
+    );
+    const service = TestBed.inject(PublicationImportService);
+    await expect(service.importPublications([source, source])).resolves.toEqual(
+      {
+        books: [book, book],
+        added: [book],
+        duplicates: [book],
+        failures: [],
+      },
+    );
+    expect(repository.removeBook).not.toHaveBeenCalled();
+  });
+
+  it('notifies remaining observers when one observer throws', async () => {
+    const service = TestBed.inject(PublicationImportService);
+    service.onImported(() => {
+      throw new Error('observer failed');
+    });
+    const listener = vi.fn();
+    service.onImported(listener);
+    await expect(service.importPublications([source])).resolves.toMatchObject({
+      books: [book],
+      failures: [],
+    });
+    expect(listener).toHaveBeenCalledWith([book]);
+    expect(repository.removeBook).not.toHaveBeenCalled();
+  });
+
   it('removes locally before journaling a durable remote deletion', async () => {
     const service = TestBed.inject(PublicationImportService);
 

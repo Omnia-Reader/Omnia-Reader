@@ -90,9 +90,11 @@ export class PublicationImportService {
             operation: 'upsert',
             payload: createBookSyncManifest(book, new Date().toISOString()),
           });
-          const logicalBook = await this.repository.findLogicalBookByVariant(
-            book.id,
-          );
+          // Optional synchronization preparation must not roll back validated
+          // local bytes if the metadata read is temporarily unavailable.
+          const logicalBook = await this.repository
+            .findLogicalBookByVariant(book.id)
+            .catch(() => null);
           if (logicalBook) {
             const changeId = `change:bootstrap:${this.deviceId}:${createOpaqueId()}`;
             await this.appendJournalEntry({
@@ -142,7 +144,11 @@ export class PublicationImportService {
     }
     if (books.length > 0) {
       for (const listener of this.importedListeners) {
-        listener(books);
+        try {
+          listener(books);
+        } catch {
+          // Observers cannot invalidate a completed import or starve others.
+        }
       }
     }
     return { books, added, duplicates, failures };
