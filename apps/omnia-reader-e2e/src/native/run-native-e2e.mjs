@@ -1,3 +1,4 @@
+import { collectNativeFailureDiagnostics } from './native-failure-diagnostics.mjs';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -69,51 +70,10 @@ async function main() {
       tmpdir(),
       'omnia-reader-native-e2e-failure.png',
     );
-    const pageDiagnostic = driver
-      ? await driver
-          .execute(
-            `
-            return {
-              url: location.href,
-              stylesheets: Array.from(document.styleSheets, (sheet) => sheet.href),
-              styleLinks: Array.from(
-                document.querySelectorAll('link[rel="stylesheet"]'),
-                (link) => ({
-                  href: link.href,
-                  loaded: link.sheet !== null
-                })
-              ),
-              viewportPosition: document.querySelector(
-                '[data-testid="publication-viewport"]'
-              )
-                ? getComputedStyle(
-                    document.querySelector(
-                      '[data-testid="publication-viewport"]'
-                    )
-                  ).position
-                : null,
-              epubFrames: Array.from(
-                document.querySelectorAll(
-                  '[data-testid="publication-viewport"] iframe'
-                ),
-                (frame) => ({
-                  src: frame.getAttribute('src'),
-                  srcdocLength: frame.getAttribute('srcdoc')?.length ?? 0,
-                  sandbox: frame.getAttribute('sandbox'),
-                  readyState: frame.contentDocument?.readyState ?? null,
-                  bodyText: frame.contentDocument?.body?.innerText?.slice(0, 500)
-                    ?? null
-                })
-              ),
-              bodyText: document.body?.innerText?.slice(0, 2_000)
-            };
-          `,
-          )
-          .catch(() => undefined)
-      : undefined;
-    if (driver) {
-      await driver.saveScreenshot(screenshotPath).catch(() => undefined);
-    }
+    const pageDiagnostic = await collectNativeFailureDiagnostics(
+      driver,
+      screenshotPath,
+    );
     const nativeLog = app.output.trim();
     const diagnostic = [
       error instanceof Error ? error.stack : String(error),

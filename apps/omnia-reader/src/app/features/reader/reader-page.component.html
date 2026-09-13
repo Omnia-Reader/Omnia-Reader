@@ -1298,7 +1298,10 @@
         class="absolute inset-0 grid place-content-center justify-items-center gap-4 text-center"
         aria-live="polite"
       >
-        <mat-spinner diameter="40"></mat-spinner>
+        <mat-spinner
+          diameter="40"
+          aria-label="Opening publication"
+        ></mat-spinner>
         <span>Opening publication…</span>
       </div>
     }
@@ -1529,7 +1532,7 @@
                     [matTooltip]="format.label"
                     [matTooltipShowDelay]="700"
                     [attr.aria-pressed]="annotationStyleSelected(format.style)"
-                    [disabled]="annotationBusy"
+                    [disabled]="annotationStyleChangePending"
                     (click)="applyAnnotationStyle(format.style)"
                   >
                     @switch (format.style) {
@@ -1598,7 +1601,7 @@
                     }
                   </button>
                   <button
-                    class="flex h-7 w-4 items-center justify-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb] hover:!bg-[#d6e8f5]"
+                    class="flex h-7 w-6 items-center justify-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb] hover:!bg-[#d6e8f5]"
                     type="button"
                     aria-haspopup="true"
                     matTooltip="Choose {{

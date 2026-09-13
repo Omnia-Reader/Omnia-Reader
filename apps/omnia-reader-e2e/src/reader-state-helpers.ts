@@ -37,6 +37,11 @@ export async function createPdfHighlight(
   note: string,
   style: 'highlight' | 'underline' | 'strikethrough' = 'highlight',
 ): Promise<void> {
+  const existingAnnotationIds = await page
+    .locator('[data-omnia-annotation-id]')
+    .evaluateAll((marks) =>
+      marks.map((mark) => mark.getAttribute('data-omnia-annotation-id') ?? ''),
+    );
   const textLayer = page.locator(
     `.pdfViewer .page[data-page-number="${pageNumber}"] .textLayer`,
   );
@@ -74,19 +79,21 @@ export async function createPdfHighlight(
     await editor.getByRole('button', { name: 'Add note' }).click();
     await editor.getByRole('textbox', { name: 'Note' }).fill(note);
   }
-  await editor
-    .getByRole('button', {
-      name:
-        style === 'highlight'
-          ? 'Highlight'
-          : style === 'underline'
-            ? 'Underline'
-            : 'Strikethrough',
-      exact: true,
-    })
-    .click();
+  const styleButton = editor.getByRole('button', {
+    name:
+      style === 'highlight'
+        ? 'Highlight'
+        : style === 'underline'
+          ? 'Underline'
+          : 'Strikethrough',
+    exact: true,
+  });
+  await expect(styleButton).toHaveAttribute('aria-pressed', 'false');
+  await styleButton.click();
+  await expect(styleButton).toHaveAttribute('aria-pressed', 'true');
   await editor.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(editor).toBeHidden();
+  await expectNewPdfAnnotation(page, pageNumber, style, existingAnnotationIds);
 }
 
 export async function createEpubHighlight(
@@ -210,4 +217,27 @@ function annotationStyleLabel(
     : style === 'underline'
       ? 'Underline'
       : 'Highlight';
+}
+
+export async function expectNewPdfAnnotation(
+  page: Page,
+  pageNumber: number,
+  style: 'highlight' | 'underline' | 'strikethrough',
+  existingAnnotationIds: readonly string[],
+): Promise<void> {
+  const marks = page.locator(
+    `.pdfViewer .page[data-page-number="${pageNumber}"] [data-omnia-annotation-id][data-omnia-annotation-style="${style}"]`,
+  );
+  await expect
+    .poll(() =>
+      marks.evaluateAll(
+        (elements, existingIds) =>
+          elements.some((element) => {
+            const id = element.getAttribute('data-omnia-annotation-id');
+            return !!id && !existingIds.includes(id);
+          }),
+        existingAnnotationIds,
+      ),
+    )
+    .toBe(true);
 }

@@ -1456,6 +1456,25 @@ describe('ReaderPageComponent annotations', () => {
     const highlightButton = formattingButton('Highlight');
     const underlineButton = formattingButton('Underline');
     expect(formattingButton('Strikethrough')).toBeDefined();
+    fixture.componentInstance.annotationBusy = true;
+    fixture.detectChanges();
+    expect(highlightButton.disabled).toBe(false);
+    const queuedStyleSave = vi
+      .spyOn(fixture.componentInstance, 'saveAnnotation')
+      .mockResolvedValue();
+    const queuedStyleChange =
+      fixture.componentInstance.applyAnnotationStyle('highlight');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.annotationStyleChangePending).toBe(true);
+    fixture.componentInstance.annotationBusy = false;
+    await queuedStyleChange;
+    expect(queuedStyleSave).toHaveBeenCalledOnce();
+    expect(fixture.componentInstance.annotationStyles).toEqual(
+      new Set(['highlight']),
+    );
+    queuedStyleSave.mockRestore();
+    fixture.componentInstance.annotationStyles = new Set();
+    fixture.detectChanges();
     expect(highlightButton.getAttribute('aria-pressed')).toBe('false');
     expect(highlightButton.classList).not.toContain('bg-[#d9eaf7]');
     const highlightColor = colorTrigger('Highlight');
@@ -1886,7 +1905,77 @@ describe('ReaderPageComponent annotations', () => {
       zoomPercent: 105,
       rotation: 0,
     });
+    const staleStyleSave = vi
+      .spyOn(fixture.componentInstance, 'saveAnnotation')
+      .mockResolvedValue();
+    for (const changeContext of [
+      () => fixture.componentInstance.cancelAnnotationEditor(),
+      () => callbacks.selection?.({ ...publicationSelection }),
+      () => callbacks.selectionActionRequest?.({ ...publicationSelection }),
+      () =>
+        fixture.componentInstance.beginEditAnnotation({
+          schemaVersion: 1,
+          id: 'other-annotation',
+          bookId: BOOK.id,
+          format: 'pdf',
+          deviceId: 'test',
+          locator: publicationSelection.locator,
+          color: 'yellow',
+          style: 'highlight',
+          decorations: [],
+          note: 'Other note',
+          createdAt: BOOK.importedAt,
+          updatedAt: BOOK.importedAt,
+        }),
+    ]) {
+      callbacks.selection?.(publicationSelection);
+      callbacks.selectionActionRequest?.(publicationSelection);
+      staleStyleSave.mockClear();
+      fixture.componentInstance.annotationBusy = true;
+      const staleStyleChange =
+        fixture.componentInstance.applyAnnotationStyle('underline');
+      changeContext();
+      fixture.componentInstance.annotationBusy = false;
+      await staleStyleChange;
+      expect(staleStyleSave).not.toHaveBeenCalled();
+      expect(fixture.componentInstance.annotationStyles.has('underline')).toBe(
+        false,
+      );
+      expect(fixture.componentInstance.annotationStyleChangePending).toBe(
+        false,
+      );
+    }
+    callbacks.selection?.(publicationSelection);
+    callbacks.selectionActionRequest?.(publicationSelection);
+    staleStyleSave.mockRestore();
+    const annotationComponent = fixture.componentInstance;
+    annotationComponent.beginEditAnnotation(restoredAnnotation);
+    let finishSave!: () => void;
+    saveAnnotation.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    const oldSave = annotationComponent.saveAnnotation(false);
+    const newAnnotation = {
+      ...restoredAnnotation,
+      id: 'new-editor',
+      note: 'New draft',
+    };
+    annotationComponent.beginEditAnnotation(newAnnotation);
+    finishSave();
+    await oldSave;
+    expect(annotationComponent.editingAnnotation?.id).toBe('new-editor');
+    expect(annotationComponent.annotationNote).toBe('New draft');
+
+    annotationComponent.annotationBusy = true;
+    const destroyedStyleSave =
+      annotationComponent.applyAnnotationStyle('underline');
+    const savesBeforeDestroy = saveAnnotation.mock.calls.length;
     fixture.destroy();
+    await destroyedStyleSave;
+    expect(saveAnnotation).toHaveBeenCalledTimes(savesBeforeDestroy);
     const reopened = TestBed.createComponent(ReaderPageComponent);
     reopened.detectChanges();
     await reopened.whenStable();

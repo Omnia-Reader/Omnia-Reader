@@ -5,6 +5,7 @@ import {
   createEpubFixture,
   createPdfFixture,
 } from './publication-fixtures';
+import { isExpectedPublicationSecurityConsoleMessage } from './browser-failure-helpers';
 import { createPdfHighlight } from './reader-state-helpers';
 
 const wcagTags = [
@@ -21,7 +22,10 @@ test.beforeEach(async ({ page }) => {
   const failures: string[] = [];
   browserFailures.set(page, failures);
   page.on('console', (message) => {
-    if (message.type() === 'error') {
+    if (
+      message.type() === 'error' &&
+      !isExpectedPublicationSecurityConsoleMessage(message.text())
+    ) {
       failures.push(`console: ${message.text()}`);
     }
   });
@@ -151,9 +155,9 @@ test('PDF reader shell has no automated WCAG A or AA violations', async ({
     annotationDashboard.getByRole('textbox', { name: 'Note' }),
   ).toHaveValue('Accessibility note.');
   await expectAccessible(page);
-  await page
-    .getByTestId('publication-viewport')
-    .click({ position: { x: 8, y: 8 } });
+  await annotationDashboard
+    .getByRole('button', { name: 'Close', exact: true })
+    .click();
   await expect(annotationDashboard).toBeHidden();
 
   await page.goBack();

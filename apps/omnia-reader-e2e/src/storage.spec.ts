@@ -214,6 +214,9 @@ test('rejects an unsupported text import without changing canonical inventory', 
   page,
 }) => {
   await page.goto('/');
+  await expect(
+    page.getByRole('heading', { name: 'Your library is empty' }),
+  ).toBeVisible();
   const inventoryBeforeRejection = await canonicalRecoveryInventory(page);
   const importChooser = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Import books' }).click();
@@ -240,6 +243,9 @@ test('rolls back a corrupt PDF import without changing canonical inventory', asy
   page,
 }) => {
   await page.goto('/');
+  await expect(
+    page.getByRole('heading', { name: 'Your library is empty' }),
+  ).toBeVisible();
   const inventoryBeforeRejection = await canonicalRecoveryInventory(page);
   const importChooser = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Import books' }).click();

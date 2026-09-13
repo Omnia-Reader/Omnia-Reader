@@ -1836,6 +1836,7 @@ test('loads EPUB chapters from a blob-backed sandbox document', async ({
 
 test('imports an EPUB, navigates chapters, and blocks publication scripts', async ({
   page,
+  browserName,
 }) => {
   test.setTimeout(120_000);
   const publicationRequests: string[] = [];
@@ -2345,7 +2346,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     name: 'Open note: Portable EPUB note.',
   });
   await expect(epubAnnotationMarker).toBeVisible();
-  await epubAnnotationMarker.click();
+  await openEpubAnnotationEditor(
+    page,
+    browserName,
+    epubAnnotationMarker,
+    'Portable EPUB note.',
+  );
   const epubAnnotationEditor = page.getByTestId('annotation-dashboard');
   await expect(
     epubAnnotationEditor.getByRole('textbox', { name: 'Note' }),
@@ -2380,7 +2386,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
     name: 'Open note: Updated EPUB note.',
   });
   await expect(updatedEpubAnnotationMarker).toBeVisible();
-  await updatedEpubAnnotationMarker.click();
+  await openEpubAnnotationEditor(
+    page,
+    browserName,
+    updatedEpubAnnotationMarker,
+    'Updated EPUB note.',
+  );
   await epubAnnotationEditor
     .getByRole('button', { name: 'Delete annotation' })
     .click();
@@ -2391,7 +2402,12 @@ test('imports an EPUB, navigates chapters, and blocks publication scripts', asyn
   await epubAnnotationStatus.getByRole('button', { name: 'Undo' }).click();
   await expect(epubAnnotationStatus).toContainText('Annotation restored.');
   await expect(updatedEpubAnnotationMarker).toBeVisible();
-  await updatedEpubAnnotationMarker.click();
+  await openEpubAnnotationEditor(
+    page,
+    browserName,
+    updatedEpubAnnotationMarker,
+    'Updated EPUB note.',
+  );
   await epubAnnotationEditor
     .getByRole('button', { name: 'Delete annotation' })
     .click();
@@ -2632,6 +2648,7 @@ test('navigates PDF and EPUB publications with guarded touch swipes', async ({
   await expect(
     epubFrame.getByRole('heading', { name: 'Chapter One', exact: true }),
   ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('Opening publication…')).toBeHidden();
   const epubProgression = await storedProgression(page);
   await expect(
     dispatchTouchSwipe(
@@ -3180,6 +3197,28 @@ function libraryFormatButton(
   return card.getByRole('button', {
     name: new RegExp(`^${format.toUpperCase()}\\b`),
   });
+}
+
+async function openEpubAnnotationEditor(
+  page: Page,
+  browserName: string,
+  marker: Locator,
+  note: string,
+): Promise<void> {
+  if (browserName === 'webkit') {
+    await page
+      .getByRole('button', { name: 'Toggle highlights and notes' })
+      .click();
+    await page
+      .getByRole('complementary', { name: 'Highlights and notes' })
+      .getByRole('article')
+      .filter({ hasText: note })
+      .getByRole('button', { name: 'Edit annotation' })
+      .click();
+  } else {
+    await marker.click();
+  }
+  await expect(page.getByTestId('annotation-dashboard')).toBeVisible();
 }
 
 async function removeLibraryFormat(

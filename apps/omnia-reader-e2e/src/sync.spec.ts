@@ -142,10 +142,8 @@ test('restores GitHub setup and presents it consistently across Settings and the
   await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
 
   await expect(
-    page.getByText('Restored sync repository omnia-reader/e2e-library', {
-      exact: false,
-    }),
-  ).toBeVisible();
+    page.getByRole('link', { name: 'Open repository' }),
+  ).toHaveAttribute('href', 'https://github.com/omnia-reader/e2e-library');
   await expect(page.getByText('Connected to GitHub as')).toBeVisible();
   await expect(page.locator('select').first()).toHaveValue('1');
 
@@ -415,7 +413,7 @@ test('cancels an automatic publication upload without losing queued local work',
     const globalSyncStatus = page.getByTestId('global-sync-status');
     await expect(globalSyncStatus).toHaveAttribute(
       'aria-label',
-      /Syncing(?: \d+%)?\. View sync details\./,
+      /Syncing(?: \d+%)?\. Experimental provider\. Provider validation is incomplete; keep another backup\. View sync details\./,
     );
 
     await page.getByRole('link', { name: 'Settings' }).click();
@@ -448,7 +446,7 @@ test('cancels an automatic publication upload without losing queued local work',
     );
     await expect(globalSyncStatus).toHaveAttribute(
       'aria-label',
-      'Sync cancelled. View sync details.',
+      'Sync cancelled. Experimental provider. Provider validation is incomplete; keep another backup. View sync details.',
     );
     await expect(
       page.getByText(/local changes? (?:is|are) waiting to sync/),

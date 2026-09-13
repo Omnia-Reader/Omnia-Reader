@@ -116,10 +116,13 @@ test('keeps a highlight while underlining and removing only a selected substring
       async () =>
         (await compactHighlightControl.boundingBox())?.width ?? Infinity,
     )
-    .toBeLessThanOrEqual(46);
+    .toBeLessThanOrEqual(54);
   const compactHighlightColor = editor.getByRole('button', {
     name: /^Highlight color:/,
   });
+  await expect
+    .poll(async () => (await compactHighlightColor.boundingBox())?.width ?? 0)
+    .toBeGreaterThanOrEqual(24);
   await compactHighlightColor.click();
   const compactPalette = editor.getByRole('group', {
     name: 'Highlight color palette',

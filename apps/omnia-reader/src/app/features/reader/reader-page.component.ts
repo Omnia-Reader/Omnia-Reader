@@ -279,6 +279,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   bookmarkBusy = false;
   bookmarkError: string | null = null;
   annotationBusy = false;
+  annotationStyleChangePending = false;
+  private annotationEditorRevision = 0;
   annotationError: string | null = null;
   annotationStatus: string | null = null;
   annotationStatusIsError = false;
@@ -678,6 +680,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     ) {
       return;
     }
+    this.annotationEditorRevision++;
     this.editingAnnotation = null;
     this.annotationEditorOpen = true;
     this.annotationError = null;
@@ -1941,24 +1944,39 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   async applyAnnotationStyle(style: PublicationAnnotationStyle): Promise<void> {
-    this.clearAnnotationAutosaveTimeout();
-    await this.waitForAnnotationIdle();
-    const selected = new Set(this.annotationStyles);
-    if (selected.has(style)) {
-      selected.delete(style);
-    } else {
-      selected.add(style);
-    }
-    this.annotationStyle = style;
-    this.annotationStyles = selected;
-    this.annotationColorPalette = null;
-    if (selected.size === 0 && !this.annotationNote.trim()) {
-      if (this.editingAnnotation) {
-        await this.removeEditingAnnotation();
-      }
+    if (this.annotationStyleChangePending) {
       return;
     }
-    await this.saveAnnotation(false);
+    const editorRevision = this.annotationEditorRevision;
+    this.annotationStyleChangePending = true;
+    try {
+      this.clearAnnotationAutosaveTimeout();
+      if (!(await this.waitForAnnotationIdle())) {
+        return;
+      }
+      if (this.destroyed || editorRevision !== this.annotationEditorRevision) {
+        return;
+      }
+      const selected = new Set(this.annotationStyles);
+      if (selected.has(style)) {
+        selected.delete(style);
+      } else {
+        selected.add(style);
+      }
+      this.annotationStyle = style;
+      this.annotationStyles = selected;
+      this.annotationColorPalette = null;
+      if (selected.size === 0 && !this.annotationNote.trim()) {
+        if (this.editingAnnotation) {
+          await this.removeEditingAnnotation();
+        }
+        return;
+      }
+      await this.saveAnnotation(false);
+    } finally {
+      this.annotationStyleChangePending = false;
+      this.changeDetector.markForCheck();
+    }
   }
 
   toggleAnnotationColorPalette(style: PublicationAnnotationStyle): void {
@@ -1999,7 +2017,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     this.setAnnotationDecorationColor(style, color);
     this.closeAnnotationColorPalette();
     if (this.annotationStyleSelected(style) && this.editingAnnotation) {
-      await this.waitForAnnotationIdle();
+      if (!(await this.waitForAnnotationIdle())) {
+        return;
+      }
       await this.saveAnnotation(false);
     }
   }
@@ -2032,7 +2052,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     if (hasPendingAutosave) {
       this.clearAnnotationAutosaveTimeout();
     }
-    await this.waitForAnnotationIdle();
+    if (!(await this.waitForAnnotationIdle())) {
+      return;
+    }
     if (hasPendingAutosave) {
       await this.saveAnnotation();
       return;
@@ -2046,7 +2068,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
     this.clearAnnotationAutosaveTimeout();
     if (this.canSaveAnnotation) {
-      await this.waitForAnnotationIdle();
+      if (!(await this.waitForAnnotationIdle())) {
+        return;
+      }
       await this.saveAnnotation(false);
     }
   }
@@ -2185,6 +2209,8 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   beginEditAnnotation(annotation: PublicationAnnotation): void {
+    this.annotationEditorRevision++;
+    this.clearAnnotationAutosaveTimeout();
     const decorations = annotationDecorations(annotation);
     this.editingAnnotation = annotation;
     this.annotationEditorOpen = true;
@@ -2226,6 +2252,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private resetAnnotationDraft(): void {
+    this.annotationEditorRevision++;
     this.annotationStyle = 'highlight';
     this.annotationStyles = new Set();
     this.annotationDecorationColors = {
@@ -2246,6 +2273,7 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     ) {
       return;
     }
+    const editorRevision = this.annotationEditorRevision;
     this.annotationBusy = true;
     this.annotationError = null;
     try {
@@ -2262,7 +2290,12 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
           const annotation = this.editingAnnotation;
           this.annotationBusy = false;
           await this.removeAnnotation(annotation);
-          this.cancelAnnotationEditor();
+          if (
+            !this.destroyed &&
+            editorRevision === this.annotationEditorRevision
+          ) {
+            this.cancelAnnotationEditor();
+          }
         }
         return;
       }
@@ -2293,14 +2326,19 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
       ];
       await this.journalAnnotation(annotation);
       await this.engine.setAnnotations(this.annotations);
+      if (this.destroyed || editorRevision !== this.annotationEditorRevision) {
+        return;
+      }
       if (closeEditor) {
         this.cancelAnnotationEditor();
       } else {
         this.editingAnnotation = annotation;
       }
     } catch (error) {
-      this.annotationError =
-        error instanceof Error ? error.message : 'Unable to save annotation';
+      if (!this.destroyed && editorRevision === this.annotationEditorRevision) {
+        this.annotationError =
+          error instanceof Error ? error.message : 'Unable to save annotation';
+      }
     } finally {
       this.annotationBusy = false;
       this.changeDetector.markForCheck();
@@ -2412,11 +2450,16 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   async removeEditingAnnotation(): Promise<void> {
+    const editorRevision = this.annotationEditorRevision;
     const annotation = this.editingAnnotation;
     if (!annotation) {
       return;
     }
-    if (await this.removeAnnotation(annotation)) {
+    if (
+      (await this.removeAnnotation(annotation)) &&
+      !this.destroyed &&
+      editorRevision === this.annotationEditorRevision
+    ) {
       this.cancelAnnotationEditor();
     }
   }
@@ -3283,16 +3326,20 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   }
 
   private async autosaveAnnotation(): Promise<void> {
-    await this.waitForAnnotationIdle();
+    if (!(await this.waitForAnnotationIdle())) {
+      return;
+    }
     if (this.canSaveAnnotation) {
       await this.saveAnnotation(false);
     }
   }
 
-  private async waitForAnnotationIdle(): Promise<void> {
+  private async waitForAnnotationIdle(): Promise<boolean> {
+    const editorRevision = this.annotationEditorRevision;
     while (this.annotationBusy && !this.destroyed) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
+    return !this.destroyed && editorRevision === this.annotationEditorRevision;
   }
 
   private clearAnnotationAutosaveTimeout(): void {
