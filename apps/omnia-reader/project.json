@@ -110,6 +110,34 @@
         "staticFilePath": "dist/apps/omnia-reader/browser",
         "spa": true
       }
+    },
+    "serve-full": {
+      "continuous": true,
+      "executor": "@angular/build:dev-server",
+      "dependsOn": [
+        "wait-for-gateway",
+        {
+          "projects": ["sync-gateway"],
+          "target": "serve"
+        }
+      ],
+      "options": {
+        "port": 4300,
+        "proxyConfig": "apps/omnia-reader/proxy.conf.json",
+        "buildTarget": "omnia-reader:build:development"
+      }
+    },
+    "wait-for-gateway": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        {
+          "projects": ["sync-gateway"],
+          "target": "serve"
+        }
+      ],
+      "options": {
+        "command": "node tools/wait-for-gateway.mjs"
+      }
     }
   }
 }

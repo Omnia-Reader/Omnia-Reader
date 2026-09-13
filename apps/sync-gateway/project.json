@@ -22,7 +22,10 @@
       "configurations": {
         "development": {
           "minify": false,
-          "sourcemap": true
+          "sourcemap": true,
+          "format": ["cjs"],
+          "outputPath": "dist/apps/sync-gateway-development",
+          "generatePackageJson": false
         },
         "production": {
           "minify": true,
@@ -34,10 +37,10 @@
       "continuous": true,
       "executor": "@nx/js:node",
       "defaultConfiguration": "development",
-      "dependsOn": ["build"],
       "options": {
         "buildTarget": "sync-gateway:build",
-        "runBuildTargetDependencies": false
+        "runBuildTargetDependencies": false,
+        "inspect": false
       },
       "configurations": {
         "development": {

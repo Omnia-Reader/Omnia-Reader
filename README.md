@@ -69,6 +69,15 @@ cp apps/sync-gateway/.env.local.example apps/sync-gateway/.env.local
 npm run start:full
 ```
 
+Full startup waits up to 60 seconds for the gateway readiness endpoint before
+starting Angular. If startup fails, check the gateway output and ensure its
+`HOST` and `PORT` match `apps/omnia-reader/proxy.conf.json`. Gateway source
+changes rebuild the bundle and restart Node automatically. Development uses a
+CommonJS bundle to avoid the deprecated Nx ESM loader; production remains ESM.
+The inspector is not enabled by default. Development skips deployment metadata
+generation and writes to its own output directory; full startup builds the
+gateway once rather than pre-building it again before watch mode.
+
 The gateway listens on `127.0.0.1:3333`; the Angular development server proxies
 `/api/sync` to it. The GitHub App/Git LFS and MEGA adapters activate when their
 documented environment variables are present and otherwise fail closed. MEGA
