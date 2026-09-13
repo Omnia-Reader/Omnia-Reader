@@ -309,7 +309,9 @@ jobs:
 
       - name: Run native desktop lifecycle journey
         if: runner.os == 'Linux'
-        run: dbus-run-session -- xvfb-run -a npm run native:e2e
+        run: >-
+          dbus-run-session -- xvfb-run -a
+          npx nx run omnia-reader-e2e:native-linux-package
 
       - name: Upload unsigned Linux verification bundle
         if: runner.os == 'Linux'
@@ -374,11 +376,12 @@ jobs:
 
       - name: Install Android SDK and NDK components
         run: |
-          sdkmanager \
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-36" \
             "build-tools;36.1.0" \
             "ndk;29.0.14206865"
           echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
       - name: Install locked dependencies
         run: npm ci

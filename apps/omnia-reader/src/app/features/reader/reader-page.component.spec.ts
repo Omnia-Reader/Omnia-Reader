@@ -1803,6 +1803,14 @@ describe('ReaderPageComponent annotations', () => {
       annotationEditor.querySelector('button[aria-label="Delete annotation"]'),
     ).not.toBeNull();
     expect(fixture.componentInstance.annotationStyle).toBe('highlight');
+    callbacks.selection?.(null);
+    await Promise.resolve();
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector(
+        '[role="region"][aria-labelledby="annotation-editor-title"]',
+      ),
+    ).not.toBeNull();
 
     await fixture.componentInstance.removeEditingAnnotation();
     fixture.detectChanges();

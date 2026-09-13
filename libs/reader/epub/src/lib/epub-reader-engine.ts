@@ -1937,7 +1937,9 @@ export class EpubReaderEngine implements ReaderEngine {
           continue;
         }
         ranges.set(annotation.id, range);
-        appendEpubNoteMarker(document, range, annotation);
+        appendEpubNoteMarker(document, range, annotation, () =>
+          this.notifyAnnotationGroupActivated([annotation.id]),
+        );
         for (const decoration of annotationDecorations(annotation)) {
           const name = annotationHighlightName(annotation.id, decoration.style);
           view.CSS.highlights.set(name, new view.Highlight(range));
@@ -2287,6 +2289,7 @@ function appendEpubNoteMarker(
   document: Document,
   range: Range,
   annotation: PublicationAnnotation,
+  activate: () => void,
 ): void {
   const note = annotation.note?.trim();
   const view = document.defaultView;
@@ -2303,6 +2306,11 @@ function appendEpubNoteMarker(
     return;
   }
   const marker = annotationNoteMarker(document, annotation);
+  marker.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  });
   Object.assign(marker.style, {
     left: `${Math.max(0, rectangle.right + view.scrollX + 4)}px`,
     top: `${Math.max(0, rectangle.top + view.scrollY - 2)}px`,

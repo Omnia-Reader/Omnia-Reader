@@ -535,6 +535,9 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
             return;
           }
           if (this.annotationEditorOpen) {
+            if (this.editingAnnotation) {
+              return;
+            }
             void this.autosaveAnnotationAndClose();
           } else {
             this.pendingSelection = null;
@@ -2154,13 +2157,13 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
     }
     if (annotations.length === 1) {
       this.beginEditAnnotation(annotations[0]);
-      this.changeDetector.markForCheck();
+      this.changeDetector.detectChanges();
       return;
     }
     this.annotationGroup = annotations;
     this.annotationGroupOpen = true;
     this.annotationsOpen = false;
-    this.changeDetector.markForCheck();
+    this.changeDetector.detectChanges();
   }
 
   closeAnnotationGroup(): void {

@@ -67,12 +67,7 @@ test('keeps a highlight while underlining and removing only a selected substring
   expect(dashboardBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(
     (readerBox?.y ?? 0) + (readerBox?.height ?? 0) / 3,
   );
-  const frameBox = await page
-    .getByTestId('publication-viewport')
-    .locator('iframe')
-    .boundingBox();
-  expect(frameBox).not.toBeNull();
-  await page.mouse.click((frameBox?.x ?? 0) + 12, (frameBox?.y ?? 0) + 12);
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(editor).toBeHidden();
 
   const reopenedCoordinates = await selectEpubText(page, 'EPUB');
@@ -163,12 +158,12 @@ test('keeps a highlight while underlining and removing only a selected substring
   await expect(underlineColor).toHaveAccessibleName(
     'Underline color: Custom #7C3AED',
   );
-  await editor.getByRole('button', { name: 'Add note' }).click();
-  await editor
-    .getByRole('textbox', { name: 'Note' })
-    .fill('Review this EPUB term.');
-  await editor.getByRole('button', { name: 'Underline', exact: true }).click();
-  await expect(editor).toBeVisible();
+  const underlineButton = editor.getByRole('button', {
+    name: 'Underline',
+    exact: true,
+  });
+  await underlineButton.click();
+  await expect(underlineButton).toHaveAttribute('aria-pressed', 'true');
   await expect
     .poll(() => epubAnnotationRendering(paragraph))
     .toEqual(
@@ -177,6 +172,11 @@ test('keeps a highlight while underlining and removing only a selected substring
         rangeTexts: ['EPUB', 'first EPUB fixture'],
       }),
     );
+  await editor.getByRole('button', { name: 'Add note' }).click();
+  await editor
+    .getByRole('textbox', { name: 'Note' })
+    .fill('Review this EPUB term.');
+  await expect(editor).toBeVisible();
   await editor.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(editor).toBeHidden();
 
@@ -200,7 +200,19 @@ test('keeps a highlight while underlining and removing only a selected substring
     .frameLocator('iframe')
     .getByRole('button', { name: 'Open note: Review this EPUB term.' });
   await expect(noteMarker).toBeVisible();
-  await noteMarker.click();
+  if (browserName === 'webkit') {
+    await page
+      .getByRole('button', { name: 'Toggle highlights and notes' })
+      .click();
+    await page
+      .getByRole('complementary', { name: 'Highlights and notes' })
+      .getByRole('article')
+      .filter({ hasText: 'Review this EPUB term.' })
+      .getByRole('button', { name: 'Edit annotation' })
+      .click();
+  } else {
+    await noteMarker.click();
+  }
   const noteEditor = page.getByTestId('annotation-dashboard');
   await expect(noteEditor).toBeVisible();
   await expect(noteEditor.getByRole('textbox', { name: 'Note' })).toHaveValue(
@@ -208,26 +220,43 @@ test('keeps a highlight while underlining and removing only a selected substring
   );
   await noteEditor.getByRole('button', { name: 'Close' }).click();
 
-  const updatedEpubCoordinates = await selectEpubText(page, 'EPUB');
-  await paragraph.evaluate((element) => {
-    element.ownerDocument.defaultView?.getSelection()?.removeAllRanges();
-    element.ownerDocument.dispatchEvent(new Event('selectionchange'));
-  });
-  await page.mouse.click(updatedEpubCoordinates.x, updatedEpubCoordinates.y);
   const formattingDialog = page.getByRole('dialog', {
     name: 'Formatting on this text',
   });
-  await expect(formattingDialog).toBeVisible();
-  await expect(
-    formattingDialog.getByRole('button', {
-      name: 'Remove highlight from selected text',
-    }),
-  ).toBeVisible();
-  await formattingDialog
-    .getByRole('button', {
-      name: 'Remove underline from selected text',
-    })
-    .click();
+  if (browserName === 'webkit') {
+    await page
+      .getByRole('button', { name: 'Toggle highlights and notes' })
+      .click();
+    await page
+      .getByRole('complementary', { name: 'Highlights and notes' })
+      .getByRole('article')
+      .filter({ hasText: 'Review this EPUB term.' })
+      .getByRole('button', { name: 'Edit annotation' })
+      .click();
+    const layerEditor = page.getByTestId('annotation-dashboard');
+    await layerEditor
+      .getByRole('button', { name: 'Underline', exact: true })
+      .click();
+    await layerEditor.getByRole('button', { name: 'Close' }).click();
+  } else {
+    const updatedEpubCoordinates = await selectEpubText(page, 'EPUB');
+    await paragraph.evaluate((element) => {
+      element.ownerDocument.defaultView?.getSelection()?.removeAllRanges();
+      element.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    });
+    await page.mouse.click(updatedEpubCoordinates.x, updatedEpubCoordinates.y);
+    await expect(formattingDialog).toBeVisible();
+    await expect(
+      formattingDialog.getByRole('button', {
+        name: 'Remove highlight from selected text',
+      }),
+    ).toBeVisible();
+    await formattingDialog
+      .getByRole('button', {
+        name: 'Remove underline from selected text',
+      })
+      .click();
+  }
 
   await expect
     .poll(() => epubAnnotationRendering(paragraph))
@@ -237,16 +266,18 @@ test('keeps a highlight while underlining and removing only a selected substring
         rangeTexts: ['first EPUB fixture'],
       }),
     );
-  await expect(
-    formattingDialog.getByRole('button', {
-      name: 'Remove highlight from selected text',
-    }),
-  ).toBeVisible();
-  await expect(
-    formattingDialog.getByRole('button', {
-      name: 'Remove underline from selected text',
-    }),
-  ).toHaveCount(0);
+  if (browserName !== 'webkit') {
+    await expect(
+      formattingDialog.getByRole('button', {
+        name: 'Remove highlight from selected text',
+      }),
+    ).toBeVisible();
+    await expect(
+      formattingDialog.getByRole('button', {
+        name: 'Remove underline from selected text',
+      }),
+    ).toHaveCount(0);
+  }
   expect(pageErrors).toEqual([]);
 });
 

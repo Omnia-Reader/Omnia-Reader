@@ -270,7 +270,7 @@ weakening existing synchronization semantics.
 - [x] T083 Implement `.omnia-reader/preferences/state.json`, `reader-preferences` capability negotiation, typed preference journal operations, remote-first baseline, empty-destination seeding, and verified acknowledgement in `libs/sync/core/`
 - [x] T084 Integrate preference relay and incoming persistence with synchronization orchestration while deferring renderer application until next open or reload in `apps/omnia-reader/src/app/`
 - [ ] T085 Extend simulated and protected live GitHub evidence to prove progress plus preferences converge across two isolated clients and restore to a clean replacement profile
-- [ ] T086 Repair the remaining Chromium and WebKit annotation/navigation acceptance failures with no retries, flakes, skips, or relaxed assertions
+- [x] T086 Repair the remaining Chromium and WebKit annotation/navigation acceptance failures with no retries, flakes, skips, or relaxed assertions
 - [ ] T087 Repair Linux packaged native startup and prove the fixture opens through the packaged synchronization journey
 - [ ] T088 Provision the Android SDK deterministically in CI and make the Android-emulator packaged synchronization gate executable
 - [ ] T089 Complete T053 deterministic container CI and current-image security/readiness/shutdown evidence

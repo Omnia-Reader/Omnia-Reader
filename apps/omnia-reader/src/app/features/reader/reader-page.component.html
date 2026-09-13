@@ -88,7 +88,8 @@
             @let progressPercent = formatControlProgressPercent(format);
             <button
               [class]="
-                multiFormatControlBaseClass + ' ' +
+                multiFormatControlBaseClass +
+                ' ' +
                 (book?.format === format
                   ? multiFormatControlActiveClass
                   : multiFormatControlInactiveClass)
@@ -307,12 +308,13 @@
       </div>
       <nav class="grid gap-1" aria-label="Mobile reader tools">
         @if (hasMultipleFormats()) {
-        <div class="mb-0.5 flex w-full flex-col gap-0.25">
+          <div class="mb-0.5 flex w-full flex-col gap-0.25">
             @for (format of formatOrder; track format) {
               @let progressPercent = formatControlProgressPercent(format);
               <button
                 [class]="
-                  multiFormatControlBaseClass + ' ' +
+                  multiFormatControlBaseClass +
+                  ' ' +
                   (book?.format === format
                     ? multiFormatControlActiveClass
                     : multiFormatControlInactiveClass)
@@ -1596,7 +1598,7 @@
                     }
                   </button>
                   <button
-                    class="flex size-7 items-center justify-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb] hover:!bg-[#d6e8f5]"
+                    class="flex h-7 w-4 items-center justify-center border-0 bg-transparent p-0 transition group-hover:bg-[#e5f1fb] hover:!bg-[#d6e8f5]"
                     type="button"
                     aria-haspopup="true"
                     matTooltip="Choose {{
@@ -1693,6 +1695,7 @@
               matTooltip="Close"
               [matTooltipShowDelay]="700"
               [disabled]="annotationBusy"
+              (pointerdown)="$event.preventDefault()"
               (click)="autosaveAnnotationAndClose()"
             >
               <mat-icon class="!size-5 text-[20px]">close</mat-icon>
