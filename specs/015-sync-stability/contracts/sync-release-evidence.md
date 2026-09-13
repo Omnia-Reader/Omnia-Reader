@@ -47,24 +47,24 @@ per supported browser.
 The following identifiers are mandatory for a candidate whose GitHub maturity
 is `supported`:
 
-| Gate ID                          | Required evidence                                                                                         |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `deterministic-sync`             | Provider-neutral, Git/LFS, MEGA, journal, merge, tombstone, integrity, and compatibility-corpus contracts |
-| `browser-convergence-chromium`   | Three complete Git/MEGA EPUB/PDF attempts in Chromium                                                     |
-| `browser-convergence-firefox`    | Three complete Git/MEGA EPUB/PDF attempts in Firefox                                                      |
-| `browser-convergence-webkit`     | Three complete Git/MEGA EPUB/PDF attempts in WebKit                                                       |
-| `sync-performance-staging`       | Fixed-profile latency, no-op request count, 25 MiB progress/cancellation, and memory limits               |
-| `gateway-redis-lifecycle`        | Multi-replica restart, rotation, TTL, invalidation, outage, backup, restore, and readiness                |
-| `packaged-sync-linux`            | Packaged Linux connection, synchronization, restart, offline use, recovery, and native-boundary checks    |
-| `packaged-sync-windows`          | The equivalent packaged Windows journey                                                                   |
-| `packaged-sync-macos`            | The equivalent packaged macOS journey                                                                     |
-| `packaged-sync-android-emulator` | The equivalent Android emulator journey                                                                   |
-| `live-github-conformance`        | Protected public-HTTPS GitHub App and Git LFS contract                                                    |
-| `sync-observability`             | Sanitized telemetry plus injected readiness/failure alert exercises                                       |
-| `container-security`             | Current-image smoke, public route, headers, readiness, scan, and clean shutdown                           |
-| `artifact-integrity`             | Immutable digests, SBOM, provenance, vulnerability decision, and signatures                               |
-| `canary-rollback`                | Same-digest canary promotion and rollback to a previously accepted digest                                 |
-| `sync-accessibility`             | Keyboard, touch, narrow-viewport, screen-reader, focus, and automated accessibility evidence              |
+| Gate ID                          | Required evidence                                                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `deterministic-sync`             | Provider-neutral, Git/LFS, MEGA, journal, merge, tombstone, preference, integrity, and compatibility-corpus contracts |
+| `browser-convergence-chromium`   | Three complete Git/MEGA EPUB/PDF attempts in Chromium                                                                 |
+| `browser-convergence-firefox`    | Three complete Git/MEGA EPUB/PDF attempts in Firefox                                                                  |
+| `browser-convergence-webkit`     | Three complete Git/MEGA EPUB/PDF attempts in WebKit                                                                   |
+| `sync-performance-staging`       | Fixed-profile latency, no-op request count, 25 MiB progress/cancellation, and memory limits                           |
+| `gateway-redis-lifecycle`        | Multi-replica restart, rotation, TTL, invalidation, outage, backup, restore, and readiness                            |
+| `packaged-sync-linux`            | Packaged Linux connection, synchronization, restart, offline use, recovery, and native-boundary checks                |
+| `packaged-sync-windows`          | The equivalent packaged Windows journey                                                                               |
+| `packaged-sync-macos`            | The equivalent packaged macOS journey                                                                                 |
+| `packaged-sync-android-emulator` | The equivalent Android emulator journey                                                                               |
+| `live-github-conformance`        | Protected public-HTTPS GitHub App, Git LFS, reading-state, and reader-preference contract                             |
+| `sync-observability`             | Sanitized telemetry plus injected readiness/failure alert exercises                                                   |
+| `container-security`             | Current-image smoke, public route, headers, readiness, scan, and clean shutdown                                       |
+| `artifact-integrity`             | Immutable digests, SBOM, provenance, vulnerability decision, and signatures                                           |
+| `canary-rollback`                | Same-digest canary promotion and rollback to a previously accepted digest                                             |
+| `sync-accessibility`             | Keyboard, touch, narrow-viewport, screen-reader, focus, and automated accessibility evidence                          |
 
 An unavailable mandatory gate is recorded in `unavailableGates` and forces
 `result: rejected`; it is never converted to a skipped or passing run. A physical

@@ -1,5 +1,36 @@
 # Research: Production-Ready Synchronization
 
+## Portable reader-preference synchronization
+
+**Decision**: Store portable EPUB/PDF preferences in the canonical
+`.omnia-reader/preferences/state.json` document and advertise the additive
+`reader-preferences` manifest capability. Model every field as an independent
+validated register ordered by monotonic revision, device identity, then
+immutable change identity. Reuse the reserved `preference` journal entity with
+typed payloads.
+
+**Rationale**: Per-field registers preserve unrelated concurrent edits and make
+same-field conflicts converge without wall-clock authority. One provider-neutral
+document keeps GitHub, MEGA, and future transports aligned while allowing older
+clients to ignore it safely.
+
+**Durability decision**: Upgrade IndexedDB to version 11 with a preference
+outbox and synchronization metadata. Commit a preference mutation and outbox
+entry atomically, relay it to the normal journal after commit, and acknowledge
+only after remote reread verifies the winning register. Existing remote state is
+the first-upgrade baseline; only an empty destination is seeded from stored
+non-default preferences.
+
+**Application decision**: Persist incoming preferences immediately, but do not
+mutate an already-mounted reader engine. The persisted state becomes effective
+on the next publication opening or explicit reload.
+
+**Alternatives considered**: A whole-document last-writer-wins value, timestamps
+as merge authority, immediate live renderer mutation, and publishing all legacy
+defaults during migration. Rejected because they respectively lose independent
+changes, depend on clock accuracy, disrupt active reading, or can overwrite an
+established remote baseline.
+
 ## Stable provider boundary
 
 **Decision**: Promote GitHub/Git LFS first. Keep MEGA visible but experimental;
@@ -203,14 +234,15 @@ evidence that the tested bytes are the deployed bytes.
 
 ## Durable compatibility
 
-**Decision**: Do not change synchronized record schemas, merge ordering,
-tombstone semantics, backup format, or journal acknowledgement. Add a versioned
-release-evidence format only; it is operational metadata and contains no reader
-data.
+**Decision**: Do not change existing synchronized record schemas, merge
+ordering, tombstone semantics, or backup format. Add the versioned preference
+document and typed preference journal payload described above plus the
+versioned release-evidence format.
 
 **Rationale**: The deterministic core is healthy (203 sync-core, 38 sync-git,
 10 sync-mega, and 121 gateway tests passed in the fresh baseline). Stability is
 blocked by acceptance and deployment evidence, not a missing domain redesign.
 
-**Alternatives considered**: Introduce a new sync schema for the stable release.
-Rejected because it adds migration risk without addressing any observed gap.
+**Alternatives considered**: Modify existing book/reading-state schemas.
+Rejected because the isolated preference document supplies the approved behavior
+without migration risk to established synchronized records.

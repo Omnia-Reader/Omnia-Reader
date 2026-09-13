@@ -50,6 +50,10 @@
 - [x] CHK025 Are zero-secret diagnostic requirements exhaustive across IPC, storage, redirects, logs, reports, synchronized data, and evidence artifacts? [Security, Spec §FR-013, §SC-006]
 - [x] CHK026 Are disposable GitHub, HTTPS staging, Redis, registry-signing, packaged-host, emulator, and physical-device dependencies explicitly separated into mandatory versus reportable-unavailable gates? [Dependency, Spec §FR-018–FR-020, §SC-008]
 - [x] CHK027 Is the assumption that safe whole-transfer retry is sufficient consistent with cancellation, 25 MiB transfer, and no-dangling-reference criteria? [Assumption, Spec §Non-goals, §FR-007–FR-008, §SC-004]
+- [x] CHK028 Are every portable EPUB/PDF preference field and every excluded provider, credential, service, and hardware setting explicitly identified? [Completeness, Spec §FR-021]
+- [x] CHK029 Are different-field preservation and same-field deterministic conflict ordering independently testable without wall-clock authority? [Clarity, Spec §FR-022, §SC-009]
+- [x] CHK030 Are atomic local durability, crash relay, acknowledgement, remote-first migration, and empty-destination seeding requirements complete? [Coverage, Spec §FR-023–FR-024]
+- [x] CHK031 Is immediate persistence but next-open rendering application unambiguous and observable? [Acceptance Criteria, Spec §FR-025, §SC-009]
 
 ## Notes
 

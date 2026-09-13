@@ -31,11 +31,15 @@ its independent live-provider acceptance gates pass.
 - Establish deployment, monitoring, canary, rollback, image-integrity, and
   incident-diagnostic evidence for the synchronization service.
 - Present provider maturity and unavailable capabilities truthfully to readers.
+- Synchronize portable EPUB and PDF reading preferences independently per
+  field without synchronizing provider or device configuration.
 
 **Non-goals**:
 
-- Add new synchronized record types or change the current library, progress,
-  bookmark, annotation, publication, or tombstone semantics.
+- Change the current library, progress, bookmark, annotation, publication, or
+  tombstone semantics beyond the approved additive reader-preference state.
+- Synchronize repository selection, authentication, credentials, provider
+  configuration, synchronization-service settings, or hardware-specific state.
 - Require partial-transfer or byte-range resume; safe whole-transfer retry is
   sufficient for this stability milestone.
 - Guarantee delivery after a browser or operating system forcibly terminates
@@ -52,7 +56,9 @@ its independent live-provider acceptance gates pass.
 
 A reader connects a private GitHub destination, imports EPUB and PDF books, and
 uses two devices. Publications, progress, bookmarks, highlights, notes, and
-deletions converge without either device losing a valid contribution.
+deletions converge without either device losing a valid contribution. Portable
+EPUB and PDF reading preferences converge without one field overwriting an
+independent field changed on the other device.
 
 **Why this priority**: Cross-device convergence without loss is the core promise
 that must be true before synchronization can be called stable.
@@ -76,6 +82,13 @@ bytes on both profiles and at the remote destination.
    device, **When** the reader reconnects that destination, **Then** the complete
    readable library and reading state can be restored without access to the
    original device.
+4. **Given** two devices change different reading-preference fields, **When**
+   they synchronize in either order, **Then** both fields converge and neither
+   valid change is discarded.
+5. **Given** an upgraded device has legacy local preferences and the destination
+   already contains reader-preference state, **When** it synchronizes for the
+   first time, **Then** the remote state is adopted as the baseline without an
+   unversioned local value overwriting it.
 
 ---
 
@@ -176,6 +189,15 @@ experimental until the final candidate evidence is accepted.
 - Two devices concurrently create, update, or delete the same logical record;
   deterministic conflict rules converge and deletion tombstones are not
   silently resurrected.
+- Two devices concurrently change different preference fields; both changes
+  survive. Concurrent changes to the same field converge by revision, device
+  identity, and immutable change identity, independent of arrival order.
+- A preference document contains an invalid or duplicate field, malformed
+  revision, unknown field, oversized content, or future schema; synchronization
+  rejects it without changing valid local preferences.
+- Remote preferences arrive while a publication is open; they are persisted
+  immediately but do not alter that renderer until the publication is reopened
+  or reloaded.
 - A remote manifest, child record, pointer, publication, declared size, or
   digest is malformed, inconsistent, missing, duplicated, or from an unknown
   future schema; synchronization fails closed while valid local data remains
@@ -198,8 +220,9 @@ experimental until the final candidate evidence is accepted.
 ### Functional Requirements
 
 - **FR-001**: Omnia Reader MUST synchronize exact EPUB and PDF editions,
-  library membership, per-device progress, bookmarks, annotations, and their
-  deletion tombstones between two devices through the supported provider.
+  library membership, per-device progress, bookmarks, annotations, their
+  deletion tombstones, preferred editions, and portable EPUB/PDF reading
+  preferences between two devices through the supported provider.
 - **FR-002**: Omnia Reader MUST converge distinct valid contributions from two
   devices deterministically without silently discarding data or resurrecting a
   stale deletion.
@@ -266,6 +289,24 @@ experimental until the final candidate evidence is accepted.
 - **FR-020**: GitHub synchronization MUST be presented as supported only after
   all mandatory release evidence passes; MEGA MUST remain labeled experimental
   until its independent completion gates pass.
+- **FR-021**: Omnia Reader MUST synchronize EPUB theme, font family, font size,
+  line height, paragraph spacing, margins, maximum line width, flow, and spread,
+  plus PDF zoom mode, zoom percentage, and rotation, as independent fields.
+- **FR-022**: Every synchronized preference field MUST be a validated bounded
+  register containing its value, monotonic revision, device identity, and
+  immutable change identity. Concurrent values MUST resolve deterministically
+  by revision, device identity, then change identity without wall-clock
+  authority.
+- **FR-023**: A local preference mutation and its preference outbox record MUST
+  commit atomically. Pending preference work MUST survive failure, cancellation,
+  throttling, and restart until the remote state is reread and verified.
+- **FR-024**: On first upgraded synchronization, existing remote preference
+  state MUST be authoritative. When no remote state exists, the first upgraded
+  device MAY seed it from stored preferences, but unchanged defaults MUST NOT
+  create work and unversioned legacy values MUST NOT overwrite remote state.
+- **FR-025**: Valid remotely received preferences MUST be persisted immediately
+  and MUST affect rendering only when the next publication is opened or the
+  current publication is explicitly reloaded.
 
 ### Key Entities and Durable State _(include when data changes)_
 
@@ -281,10 +322,13 @@ experimental until the final candidate evidence is accepted.
 - **Release evidence set**: The immutable collection of automated, browser,
   live-provider, deployment, security, and recovery results that authorizes a
   specific synchronization release and provider-maturity label.
+- **Reader preference synchronization state**: The canonical versioned
+  `.omnia-reader/preferences/state.json` document containing one deterministic
+  register per portable EPUB/PDF preference field.
 - **Existing synchronization records**: Current manifests, publications,
   progress, bookmarks, annotations, exclusions, and tombstones retain their
-  existing identities and merge semantics; this feature introduces no new
-  synchronized record type or incompatible schema.
+  existing identities and merge semantics; the additive reader-preference
+  document does not alter those records or introduce an incompatible schema.
 
 ### Quality and Boundary Requirements _(mandatory)_
 
@@ -353,6 +397,10 @@ experimental until the final candidate evidence is accepted.
 - The existing synchronization schema and valid persisted provider selections,
   pending operations, histories, and sessions must remain compatible through
   the stabilization release.
+- IndexedDB version 11 migration MUST preserve existing preferences, create the
+  preference outbox and synchronization metadata stores, and implement the
+  remote-first or empty-destination seeding rules without publishing unchanged
+  defaults.
 - Release rollback may revert application or service code only when the prior
   version can safely read all durable state produced by the candidate. Durable
   schemas use forward repair rather than destructive rollback.
@@ -378,8 +426,9 @@ experimental until the final candidate evidence is accepted.
 
 - **SC-001**: In three consecutive release-candidate runs per supported browser,
   two clean devices synchronize an EPUB and a PDF plus distinct progress,
-  bookmark, annotation, and deletion changes with 100 percent byte identity and
-  no lost or resurrected record.
+  bookmark, annotation, deletion, preferred-edition, and reading-preference
+  changes with 100 percent byte identity and no lost or resurrected record or
+  preference field.
 - **SC-002**: Every required interruption, conflict, authentication,
   authorization, throttling, restart, and corrupt-remote scenario preserves
   local usability and completes a successful retry without manual data repair.
@@ -402,12 +451,16 @@ experimental until the final candidate evidence is accepted.
 - **SC-008**: One immutable candidate completes all mandatory deterministic,
   browser, packaged-host, credentialed-provider, deployment, security, canary,
   and rollback gates before GitHub synchronization is labeled stable.
+- **SC-009**: Preference migration, different-field merge, same-field conflict,
+  outbox crash recovery, invalid-document rejection, and next-open application
+  tests pass with identical state regardless of synchronization order.
 
 ## Acceptance Evidence _(mandatory)_
 
 - Focused contract evidence for deterministic merges, tombstones, operation
-  acknowledgement, immutable publication ordering, input validation, retry
-  deadlines, session rotation, and destination isolation.
+  acknowledgement, immutable publication ordering, preference registers and
+  outbox recovery, input validation, retry deadlines, session rotation, and
+  destination isolation.
 - Mandatory two-device simulated-provider journeys for Git and MEGA on Chromium,
   Firefox, and WebKit, repeated three times against isolated profiles.
 - Credentialed GitHub App and Git LFS journeys through a production-shaped HTTPS
@@ -432,9 +485,10 @@ experimental until the final candidate evidence is accepted.
 - GitHub and Git LFS are the supported priority synchronization provider for
   this milestone; MEGA remains available only with an experimental maturity
   label until a later promotion decision.
-- The existing provider-neutral schema, merge rules, tombstones, operation
-  journal, same-origin credential boundary, and safe whole-transfer retry are
-  the behavioral baseline and do not require redesign.
+- Existing provider-neutral record schemas, tombstones, same-origin credential
+  boundaries, and safe whole-transfer retry remain the baseline. The approved
+  additive preference document and typed preference journal payload extend that
+  baseline without changing existing record semantics.
 - Disposable provider accounts, a private GitHub repository, HTTPS staging,
   multiple synchronization service instances, a production-shaped shared
   session store, supported browser engines, packaged desktop hosts, and an

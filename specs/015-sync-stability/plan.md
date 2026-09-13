@@ -9,9 +9,10 @@
 ## Summary
 
 Promote GitHub/Git LFS synchronization to a production-supported capability
-without changing the provider-neutral record schema or local-first merge
-semantics. First repair the stale browser acceptance harness revealed by the
-fresh 16/18 Chromium run, then make complete convergence mandatory across
+while preserving existing provider-neutral record semantics and adding a
+backward-compatible per-field reader-preference state. First repair the stale
+browser acceptance harness revealed by the fresh 16/18 Chromium run, then make
+complete convergence mandatory across
 Chromium, Firefox, and WebKit. Add truthful provider maturity UI, real Redis
 lifecycle evidence, a protected live-GitHub staging gate, and immutable
 container promotion/rollback evidence. Packaged desktop and Android use a
@@ -30,10 +31,12 @@ planned. Native HTTP and cookie-jar dependencies are version-pinned. Desktop
 hosts use `keyring` 3.6.3 platform backends for protected reusable sessions;
 Android remains session-only and requires reauthentication after restart.
 
-**Storage**: Existing IndexedDB journal and synchronized records, OPFS or
+**Storage**: Existing IndexedDB journal and synchronized records plus an
+IndexedDB version 11 preference outbox and synchronization metadata, OPFS or
 IndexedDB publication bytes, browser provider selection/history, encrypted
 gateway sessions in Redis, and conditional protected native session state for
-packaged hosts. No synchronized schema migration is planned.
+packaged hosts. The remote layout adds
+`.omnia-reader/preferences/state.json` without changing existing records.
 
 **Testing**: Vitest/Angular unit tests; Playwright for real-browser journeys;
 Rust tests and packaged WebDriver/emulator journeys for the native broker;
@@ -59,7 +62,8 @@ interaction, bounded renderer lifecycle, locked dependencies
 
 **Scope**: Stable GitHub/Git LFS synchronization of EPUB/PDF publications,
 membership, progress, bookmarks, annotations, exclusions, and tombstones;
-provider maturity UI; browser and packaged-host routing; gateway session
+preferred editions and portable EPUB/PDF reading preferences; provider
+maturity UI; browser and packaged-host routing; gateway session
 continuity; CI, staging, deployment, and release evidence. MEGA behavior stays
 implemented but experimental.
 
@@ -94,8 +98,10 @@ exception blocks task generation.
   `ChangeAwareSyncWorker`, `GitHubGatewayClient`, `MegaGatewayClient`,
   `GatewaySessionStore`, `gatewaySessionStoresFromEnvironment`,
   `GitHubSyncGatewayAdapter`, `SimulatedSyncGateway`, the Tauri command registry,
-  and the release verifier/workflows. The fresh failure is owned by stale
-  `sync.spec.ts` library-opening selectors and does not reach a reader engine.
+  `ReaderPageComponent`, `BrowserLibraryRepository`, the provider-neutral
+  preference contract/service, and the release verifier/workflows. The fresh
+  failure is owned by stale `sync.spec.ts` library-opening selectors and does
+  not reach a reader engine.
 - **Owning project(s)**: `omnia-reader`, `omnia-reader-e2e`, `sync-core`,
   `sync-git`, `sync-mega`, `sync-gateway`, `platform`, the new `sync-native`
   adapter, the Tauri host, deployment tooling, and release tooling.
@@ -103,10 +109,10 @@ exception blocks task generation.
   application DI composition; Git/MEGA logical transport consumers; production
   browser/PWA and packaged hosts; GitHub Actions release gates and deployment
   operators.
-- **Unchanged boundaries**: EPUB/PDF engine contracts, synchronized record and
-  tombstone schemas, local library persistence, backup format, merge ordering,
-  MEGA wire protocol, and reader rendering remain unchanged unless a focused
-  failing test proves otherwise.
+- **Unchanged boundaries**: EPUB/PDF engine contracts, existing synchronized
+  record and tombstone schemas, backup format, existing merge ordering, MEGA
+  wire protocol, and active reader rendering remain unchanged. Local persistence
+  changes only for the version 11 preference outbox and sync metadata.
 
 ### Repository Paths
 
@@ -133,9 +139,20 @@ directories that own the change.
 
 ### Contracts and State
 
-- Keep `LibrarySyncTransport`, provider-neutral records, root manifest, hashes,
-  tombstones, and journal acknowledgement semantics unchanged. Browser clients
-  continue using the same-origin gateway implementations.
+- Keep `LibrarySyncTransport`, provider-neutral records, hashes, tombstones, and
+  existing journal acknowledgement semantics unchanged. Extend only the root
+  manifest capability list with backward-compatible `reader-preferences` and
+  add the canonical `.omnia-reader/preferences/state.json` document. Browser
+  clients continue using the same-origin gateway implementations.
+- Model each EPUB/PDF preference field as an independent validated register with
+  value, revision, device ID, and change ID. Merge registers deterministically
+  by revision, device ID, then change ID. Reuse the reserved `preference`
+  journal entity with typed payloads.
+- Upgrade IndexedDB to version 11. A local preference mutation and outbox entry
+  commit atomically; relay occurs after commit and remains pending until remote
+  reread verifies the winning register. Existing remote state is authoritative
+  on first upgrade; only an empty destination is seeded from stored non-default
+  preferences.
 - Add a `sync-native` implementation of the existing logical transport using
   narrow typed Tauri commands. Rust owns the allowlisted HTTPS origin, cookies,
   reusable session state, request headers, redirects, streaming, cancellation,
@@ -172,6 +189,9 @@ directories that own the change.
 - Native authorization opens in the system browser and returns through the
   registered deep link; cancellation, replay, expiry, and an unavailable system
   browser return focus to a safe Sync Settings recovery action.
+- Persist remotely received preferences immediately, but leave an already
+  mounted EPUB/PDF engine unchanged. New values apply on next open or explicit
+  reload.
 
 ### Security and Failure Handling
 
@@ -222,21 +242,22 @@ directories that own the change.
 List the exact smallest-to-broadest commands required by
 `.agents/skills/verify-omnia-reader/references/change-matrix.md`.
 
-| Requirement/story      | Evidence                                                                                       | Command or environment                                                                                                                                                       | Required locally?                                                                          |
-| ---------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| US1, FR-001–FR-008     | Core, Git, MEGA merge/journal/integrity regressions                                            | `npx nx run-many -t test -p sync-core sync-git sync-mega --skip-nx-cache`                                                                                                    | Yes                                                                                        |
-| Fresh red gate         | Correct current library-open contract reaches the reader before convergence                    | `REMOTE_SYNC_E2E=1 npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 sync.spec.ts`                                      | Yes                                                                                        |
-| US1, FR-017            | Complete Git/MEGA EPUB/PDF two-device convergence                                              | Dedicated Chromium, Firefox, and WebKit CI matrix; release candidate uses `--repeat-each=3`                                                                                  | Chromium locally; all in CI                                                                |
-| SC-003                 | Two-device visibility and manual synchronization latency under the fixed staging profile       | Versioned profile plus dedicated performance runner with 20 warm-up and at least 200 measured attempts                                                                       | Protected staging                                                                          |
-| US2, FR-009–FR-014     | Gateway security, auth lifecycle, throttling, session rotation, and fail-closed behavior       | `npx nx test sync-gateway --skip-nx-cache`                                                                                                                                   | Yes                                                                                        |
-| FR-014                 | Real Redis multi-replica, restart, key rotation, webhook, TTL, outage, backup/restore          | Pinned loopback Redis plus `OMNIA_SYNC_REDIS_TEST_URL=redis://127.0.0.1:6379/15 npx nx test sync-gateway --skip-nx-cache`                                                    | When container runtime is available                                                        |
-| US4, FR-011, FR-020    | Provider maturity and accessible status/card behavior                                          | `npx nx test omnia-reader --skip-nx-cache`; focused sync accessibility journeys                                                                                              | Yes                                                                                        |
-| FR-019                 | Browser accessibility and compatibility                                                        | Chromium/Firefox/WebKit Playwright matrix for sync and accessibility specs                                                                                                   | CI required                                                                                |
-| FR-012, FR-013, FR-019 | Native broker allowlist, handoff replay/expiry, secret-canary, streaming and restart contracts | `cargo test --manifest-path src-tauri/Cargo.toml`; `npx nx test platform`; `npx nx test sync-native`                                                                         | Yes where toolchain is available                                                           |
-| FR-019                 | Packaged provider connection, sync, offline restart, recovery                                  | Linux, Windows, and macOS packaged journeys plus Android emulator using HTTPS simulated/staging gateway                                                                      | Release environment                                                                        |
-| US1, US2, FR-018       | Credentialed GitHub two-device/live failure conformance                                        | Protected `LIVE_GITHUB_SYNC_E2E=1 BASE_URL=https://<staging>` Playwright workflow                                                                                            | Protected staging                                                                          |
-| US3, FR-012–FR-016     | Production container, public HTTPS, Redis readiness, scan/sign, canary and rollback            | `npm run container:smoke`, release verifier, protected immutable-digest workflow and deployment scripts                                                                      | Smoke when a functioning container runtime is available; mandatory for candidate promotion |
-| All                    | Affected lint, builds, dependency audit, formatting and diff integrity                         | `npx nx run-many -t lint --all --skip-nx-cache`; production app/gateway builds; `npm audit --omit=dev`; `npm run release:test`; `npm run release:verify`; `git diff --check` | Yes except unavailable external tooling                                                    |
+| Requirement/story      | Evidence                                                                                                       | Command or environment                                                                                                                                                       | Required locally?                                                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| US1, FR-001–FR-008     | Core, Git, MEGA merge/journal/integrity regressions                                                            | `npx nx run-many -t test -p sync-core sync-git sync-mega --skip-nx-cache`                                                                                                    | Yes                                                                                        |
+| FR-021–FR-025, SC-009  | Preference validation, per-field merge, migration, outbox recovery, synchronization, and next-open application | `npx nx run-many -t test -p reader-domain library-data-access sync-core omnia-reader --skip-nx-cache`                                                                        | Yes                                                                                        |
+| Fresh red gate         | Correct current library-open contract reaches the reader before convergence                                    | `REMOTE_SYNC_E2E=1 npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts --project=chromium --workers=1 sync.spec.ts`                                      | Yes                                                                                        |
+| US1, FR-017            | Complete Git/MEGA EPUB/PDF two-device convergence                                                              | Dedicated Chromium, Firefox, and WebKit CI matrix; release candidate uses `--repeat-each=3`                                                                                  | Chromium locally; all in CI                                                                |
+| SC-003                 | Two-device visibility and manual synchronization latency under the fixed staging profile                       | Versioned profile plus dedicated performance runner with 20 warm-up and at least 200 measured attempts                                                                       | Protected staging                                                                          |
+| US2, FR-009–FR-014     | Gateway security, auth lifecycle, throttling, session rotation, and fail-closed behavior                       | `npx nx test sync-gateway --skip-nx-cache`                                                                                                                                   | Yes                                                                                        |
+| FR-014                 | Real Redis multi-replica, restart, key rotation, webhook, TTL, outage, backup/restore                          | Pinned loopback Redis plus `OMNIA_SYNC_REDIS_TEST_URL=redis://127.0.0.1:6379/15 npx nx test sync-gateway --skip-nx-cache`                                                    | When container runtime is available                                                        |
+| US4, FR-011, FR-020    | Provider maturity and accessible status/card behavior                                                          | `npx nx test omnia-reader --skip-nx-cache`; focused sync accessibility journeys                                                                                              | Yes                                                                                        |
+| FR-019                 | Browser accessibility and compatibility                                                                        | Chromium/Firefox/WebKit Playwright matrix for sync and accessibility specs                                                                                                   | CI required                                                                                |
+| FR-012, FR-013, FR-019 | Native broker allowlist, handoff replay/expiry, secret-canary, streaming and restart contracts                 | `cargo test --manifest-path src-tauri/Cargo.toml`; `npx nx test platform`; `npx nx test sync-native`                                                                         | Yes where toolchain is available                                                           |
+| FR-019                 | Packaged provider connection, sync, offline restart, recovery                                                  | Linux, Windows, and macOS packaged journeys plus Android emulator using HTTPS simulated/staging gateway                                                                      | Release environment                                                                        |
+| US1, US2, FR-018       | Credentialed GitHub two-device/live failure conformance                                                        | Protected `LIVE_GITHUB_SYNC_E2E=1 BASE_URL=https://<staging>` Playwright workflow                                                                                            | Protected staging                                                                          |
+| US3, FR-012–FR-016     | Production container, public HTTPS, Redis readiness, scan/sign, canary and rollback                            | `npm run container:smoke`, release verifier, protected immutable-digest workflow and deployment scripts                                                                      | Smoke when a functioning container runtime is available; mandatory for candidate promotion |
+| All                    | Affected lint, builds, dependency audit, formatting and diff integrity                                         | `npx nx run-many -t lint --all --skip-nx-cache`; production app/gateway builds; `npm audit --omit=dev`; `npm run release:test`; `npm run release:verify`; `git diff --check` | Yes except unavailable external tooling                                                    |
 
 Always include `git diff --check`. Include lint for each affected TypeScript
 project and a production build when application, worker, asset, style,
@@ -251,7 +272,11 @@ dependency, service-worker, or bundle composition changes.
   authorization handoff; (6) add protected live GitHub conformance and
   production-shaped staging; (7) automate immutable scan/sign/canary/rollback;
   (8) run the complete candidate matrix and only then promote GitHub maturity.
-- **Migration/rollout**: No synchronized schema migration. Deploy additive
+- **Migration/rollout**: Negotiate the additive `reader-preferences` capability;
+  older clients safely ignore the new document. IndexedDB version 11 preserves
+  existing values and creates only preference outbox/synchronization metadata.
+  On first upgraded synchronization, adopt existing remote preference state or
+  seed an empty destination from stored non-default preferences. Deploy additive
   gateway native-handoff support first, then packaged clients. Browser routes
   remain compatible. Rotate session encryption keys using current-plus-previous
   acceptance before removing old keys. Promote exact image digests from staging

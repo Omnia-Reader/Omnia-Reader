@@ -1,8 +1,61 @@
 # Data Model: Production-Ready Synchronization
 
-Feature 015 preserves every existing synchronized and local-library schema. The
-models below describe release policy and evidence plus the existing state whose
-lifecycle must be proven; they do not add reader data to the remote layout.
+Feature 015 preserves every existing synchronized record and local-library
+schema while adding one backward-compatible reader-preference document and a
+local durability migration. The models below describe that additive state plus
+the release policy and evidence whose lifecycle must be proven.
+
+## Reader preference synchronization state
+
+Canonical path: `.omnia-reader/preferences/state.json`
+
+```text
+ReaderPreferenceSyncState {
+  schemaVersion: 1
+  epub: { <known EPUB field>: PreferenceRegister }
+  pdf: { <known PDF field>: PreferenceRegister }
+}
+
+PreferenceRegister {
+  value: validated field-specific value
+  revision: non-negative safe integer
+  deviceId: stable non-empty device identity
+  changeId: immutable non-empty change identity
+}
+```
+
+The EPUB field set is `theme`, `fontFamily`, `fontSizePercent`, `lineHeight`,
+`paragraphSpacingRem`, `marginPercent`, `maxLineWidthRem`, `flow`, and `spread`.
+The PDF field set is `zoomMode`, `zoomPercent`, and `rotation`. Unknown,
+duplicate, invalid, oversized, malformed-revision, and future-schema input is
+rejected before persistence.
+
+Registers merge independently. A register wins by lexicographic comparison of
+`revision`, `deviceId`, then `changeId`; wall-clock time is diagnostic only and
+never merge authority. Canonical serialization emits the fixed EPUB/PDF field
+order and rejects duplicate JSON properties before parsing.
+
+The root manifest advertises the additive, backward-compatible
+`reader-preferences` capability. Older clients may ignore the capability and
+document without losing any existing synchronized data.
+
+### IndexedDB version 11 durability
+
+Version 11 adds a preference-change outbox and preference synchronization
+metadata. A local preference value and its typed outbox entry commit in the
+same transaction. The outbox relays to the existing journal only after that
+transaction commits, and remains recoverable until a remote reread verifies the
+corresponding winning register.
+
+| Starting state                                   | Migration result                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Version 10 and remote preference state exists    | Adopt remote registers as the baseline; do not publish legacy local values           |
+| Version 10 and no remote preference state exists | Seed stored non-default preferences once; unchanged defaults create no work          |
+| Version 11 local edit                            | Atomically persist value plus outbox, then relay a typed `preference` journal change |
+
+Incoming registers are persisted immediately. A mounted EPUB/PDF engine keeps
+its current preference snapshot; the new values apply when the next publication
+is opened or the current publication is explicitly reloaded.
 
 ## Provider maturity
 
@@ -95,7 +148,9 @@ requires reauthentication without clearing local or pending data.
 
 ## Existing pending operation
 
-Feature 015 does not change its schema. The required lifecycle remains:
+The existing reserved `preference` entity receives a typed preference-change
+payload. Other operation entities and acknowledgement semantics remain
+unchanged. The required lifecycle remains:
 
 ```text
 local write complete -> pending -> active -> remotely confirmed -> acknowledged

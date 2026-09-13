@@ -35,4 +35,6 @@
 - Product and provider names are retained where required to define the supported
   release boundary; implementation ownership is deferred to planning.
 - MEGA promotion, provider-native partial-transfer resume, forced-termination
-  delivery guarantees, and new synchronized data types are explicitly excluded.
+  delivery guarantees, and synchronized provider/device configuration are
+  explicitly excluded. The approved amendment adds only portable reader
+  preferences through a backward-compatible state document.

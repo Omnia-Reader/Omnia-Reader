@@ -245,7 +245,47 @@ T026: packaged black-box journey in apps/omnia-reader-e2e/src/native/
 - Mark a task `[x]` only after its artifact or exact command is complete.
 - Preserve unrelated Feature 014 changes; do not stage or rewrite them here.
 - Keep commits narrow and aligned with verified vertical slices.
-- Do not change synchronized schemas, merge ordering, tombstones, backup
-  format, or journal acknowledgement without an approved amendment.
+- Do not change existing synchronized record schemas, merge ordering,
+  tombstones, backup format, or journal acknowledgement beyond the approved
+  additive preference document and typed preference payload amendment.
 - Report unavailable browser, provider, credentialed, native, emulator,
   physical-device, registry, signing, and deployment gates explicitly.
+
+---
+
+## Phase 6: Convergence - Reader Preferences and Release Baseline
+
+**Goal**: Add durable provider-neutral EPUB/PDF preference synchronization,
+repair the release baseline, and qualify the exact GitHub distributable without
+weakening existing synchronization semantics.
+
+- [x] T075 Amend Feature 015 specification, data model, research, contracts, plan, checklist, and append-only task traceability for portable preferences
+- [ ] T076 [P] Add preference schema, validation, canonical serialization, per-field register merge, and malformed-input tests in `libs/reader/domain/`
+- [ ] T077 [P] Add IndexedDB v10-to-v11 migration, atomic preference/outbox, recovery, acknowledgement, and synchronization-metadata tests in `libs/library/data-access/`
+- [ ] T078 [P] Add provider-neutral preference document, manifest capability, typed journal payload, remote-first baseline, seeding, retry, and verification tests in `libs/sync/core/`
+- [ ] T079 [P] Add application orchestration and next-open preference application tests in `apps/omnia-reader/src/app/`
+- [ ] T080 [P] Add simulated and live two-device preference convergence, clean-profile restore, invalid-input, interruption, and secret-scan journeys in `apps/omnia-reader-e2e/`
+- [ ] T081 Implement version 1 `ReaderPreferenceSyncState`, field registers, validation, canonical serialization, and deterministic merge in the provider-neutral domain
+- [ ] T082 Upgrade IndexedDB to version 11 and implement atomic preference-plus-outbox persistence, relay recovery, acknowledgement, and sync metadata in `libs/library/data-access/`
+- [ ] T083 Implement `.omnia-reader/preferences/state.json`, `reader-preferences` capability negotiation, typed preference journal operations, remote-first baseline, empty-destination seeding, and verified acknowledgement in `libs/sync/core/`
+- [ ] T084 Integrate preference relay and incoming persistence with synchronization orchestration while deferring renderer application until next open or reload in `apps/omnia-reader/src/app/`
+- [ ] T085 Extend simulated and protected live GitHub evidence to prove progress plus preferences converge across two isolated clients and restore to a clean replacement profile
+- [ ] T086 Repair the remaining Chromium and WebKit annotation/navigation acceptance failures with no retries, flakes, skips, or relaxed assertions
+- [ ] T087 Repair Linux packaged native startup and prove the fixture opens through the packaged synchronization journey
+- [ ] T088 Provision the Android SDK deterministically in CI and make the Android-emulator packaged synchronization gate executable
+- [ ] T089 Complete T053 deterministic container CI and current-image security/readiness/shutdown evidence
+- [ ] T090 Complete T038 packaged Linux, Windows, macOS, and Android-emulator synchronization targets
+- [ ] T091 Complete T040 real-Redis lifecycle and packaged synchronization evidence
+- [ ] T092 Run Spec Kit analysis, `$verify-omnia-reader`, `$review-omnia-reader`, formatting, lint, builds, and complete mandatory browser matrices; reconcile documentation and evidence
+- [ ] T093 Require a green `Verify` run on `dev`, merge that exact candidate to `main`, then activate the protected stagingHub workflows and provision the GitHub App, disposable private repositories, public HTTPS staging, Redis, protected runners/environments, signing, and control drivers
+- [ ] T094 Produce an accepted evidence manifest with no missing, failed, unavailable, skipped, retried, flaky, or insufficient-attempt mandatory gate before T074
+- [ ] T095 After T074, rerun the complete evidence set for the exact supported distributable commit; revert GitHub maturity to experimental if that post-promotion evidence is not accepted
+
+### Phase 6 Dependencies
+
+- T076-T080 precede their corresponding implementation tasks T081-T085.
+- T081 precedes T082-T084; T082 and T083 precede T084; T084 precedes T085.
+- T086-T091 may proceed independently after T075, but all are required by T092.
+- T093 requires T092 and a fully green `dev` Verify run. T094 requires T085 and
+  T093. T074 still requires T094; T095 follows T074 and binds qualification to
+  the exact supported distributable commit.
