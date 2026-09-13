@@ -162,6 +162,28 @@ test('accepts only the recaptured mobile environment as sampling identity', () =
   );
 });
 
+test('accepts only the recaptured packaged desktop environment as sampling identity', () => {
+  const profileSet = profileSetV2Fixture();
+  const environment = environmentFixture(profileSet, 'packaged-desktop-v2');
+  const workload = createManagementWorkload();
+
+  assert.deepEqual(
+    assertSamplingIdentity(
+      profileSet,
+      environment,
+      workload,
+      structuredClone(environment),
+    ),
+    environment,
+  );
+  const drifted = structuredClone(environment);
+  drifted.values['runtime.webkitVersion'] = '0.0.0';
+  assert.throws(
+    () => assertSamplingIdentity(profileSet, environment, workload, drifted),
+    /packaged-desktop sampling identity drift/,
+  );
+});
+
 test('rejects invalid adapter timings and incomplete counters', async () => {
   const fixture = await primaryFixture();
   const validCounters = async () => ({

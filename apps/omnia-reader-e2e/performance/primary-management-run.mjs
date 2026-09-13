@@ -31,12 +31,13 @@ export function assertSamplingIdentity(
   const workload = assertManagementWorkload(workloadInput);
   if (
     profileSet.schemaVersion === 2 &&
-    environment.profileId === 'mobile-web-v2'
+    ['mobile-web-v2', 'packaged-desktop-v2'].includes(environment.profileId)
   ) {
     const current = assertEnvironmentRecord(value, profileSet);
     if (canonicalStringify(current) !== canonicalStringify(environment)) {
+      const platform = environment.profileId.replace(/-v2$/, '');
       throw new EvidenceValidationError(
-        'mobile-web sampling identity drift detected',
+        `${platform} sampling identity drift detected`,
         'samplingIdentity',
       );
     }

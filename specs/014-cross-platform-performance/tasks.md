@@ -77,11 +77,11 @@
 
 - [x] T026 [US2] Implement release package extraction/runtime/process attestation in `apps/omnia-reader-e2e/performance/packaged-desktop-environment.mjs`
 - [x] T027 [US2] Implement a bounded protocol-neutral semantic automation adapter in `apps/omnia-reader-e2e/performance/management-automation.mjs`
-- [ ] T028 [US2] Implement the fail-closed external-Tauri packaged driver in `apps/omnia-reader-e2e/performance/run-packaged-desktop.mjs`
+- [x] T028 [US2] Implement the fail-closed external-Tauri packaged driver foundation, executable preflight, supplemental smoke path, process harness, and exact packaged sampling-identity validation in `apps/omnia-reader-e2e/performance/run-packaged-desktop.mjs` and the shared performance contracts
 - [x] T029 [US2] Generate bounded native package provenance and checksums in `tools/release/write-native-provenance.mjs`
-- [ ] T030 [US2] Upload only intended native packages plus provenance/checksums in `.github/workflows/verify.yml`
-- [ ] T031 [US2] Wire packaged-desktop smoke/primary targets in `apps/omnia-reader-e2e/project.json`
-- [ ] T032 [US2] Freeze the reviewed package/runtime identity in `specs/001-multi-format-books/performance/profiles-v2.json` only after the external-driver spike passes
+- [x] T030 [US2] Upload only intended native packages plus provenance/checksums in `.github/workflows/verify.yml`
+- [x] T031 [US2] Wire packaged-desktop smoke/primary targets in `apps/omnia-reader-e2e/project.json`
+- [ ] T032 [US2] Freeze the reviewed package/runtime identity in `specs/001-multi-format-books/performance/profiles-v2.json` only after the external-driver spike passes and every required four-platform v2 identity is reviewed
 
 **Checkpoint**: Packaged desktop independently measures exact unmodified release bytes or remains explicitly `UNVERIFIED`.
 
@@ -119,6 +119,7 @@
 - [ ] T044 Re-run existing desktop evidence, branch smoke, E2E lint, production build, and platform contract gates from `specs/014-cross-platform-performance/quickstart.md`
 - [ ] T045 Reconcile verified gate status and explicit unavailable boundaries in `docs/universal-reader-plan.md`
 - [ ] T046 Run repository review and self-review against `specs/014-cross-platform-performance/spec.md`, `plan.md`, and `tasks.md`
+- [ ] T047 [US2] Implement the external-WebDriver primary workload adapter and replace the packaged-desktop CLI's explicit `PACKAGED_DESKTOP_PRIMARY_RUNNER_UNAVAILABLE` result with exact full-cardinality execution through `runPackagedDesktopMeasurementProcess`
 
 ---
 

@@ -2,6 +2,7 @@
 /* eslint-disable playwright/no-conditional-in-test -- Contract cases inject distinct failure modes. */
 
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -14,6 +15,7 @@ import {
   PackagedDesktopProcessError,
   parsePackagedDesktopCliArguments,
   runPackagedDesktopMeasurementProcess,
+  runPackagedDesktopSmokeProcess,
 } from './run-packaged-desktop.mjs';
 import { environmentFixture, rawResultFixture } from './test-fixtures.mjs';
 
@@ -58,6 +60,44 @@ test('confines packaged CLI profiles and results to the committed contract', () 
     /usage: run-packaged-desktop\.mjs/,
   );
   assert.equal(parsePackagedDesktopCliArguments(['--smoke']).smoke, true);
+  assert.throws(
+    () =>
+      parsePackagedDesktopCliArguments([
+        '--driver-port',
+        '4444',
+        '--native-driver-port',
+        '4444',
+      ]),
+    /ports must be distinct/,
+  );
+  assert.throws(
+    () => parsePackagedDesktopCliArguments(['--driver-port', '80']),
+    /1024 through 65535/,
+  );
+});
+
+test('CLI reports an absent reviewed profile set as UNVERIFIED before launch', async () => {
+  const outcome = await runCli([]);
+  assert.equal(outcome.code, 1);
+  assert.match(outcome.stderr, /Reviewed profile set is unavailable/);
+  assert.deepEqual(JSON.parse(outcome.stdout), {
+    schemaVersion: 1,
+    profileId: 'packaged-desktop-v2',
+    status: 'UNVERIFIED',
+    mayMeasure: false,
+    reasons: [
+      {
+        code: 'PROFILE_SET_MISSING',
+        path: 'packaged-desktop',
+        message:
+          'Reviewed profile set is unavailable at ' +
+          resolve(
+            dirname(fileURLToPath(import.meta.url)),
+            '../../../specs/001-multi-format-books/performance/profiles-v2.json',
+          ),
+      },
+    ],
+  });
 });
 
 test('evaluates exact primary cardinality and promotes only after cleanup', async () => {
@@ -105,6 +145,44 @@ test('evaluates exact primary cardinality and promotes only after cleanup', asyn
   assert.deepEqual(
     JSON.parse(await readFile(outcome.outputPath, 'utf8')),
     outcome.result,
+  );
+});
+
+test('runs supplemental external-driver smoke without creating primary evidence', async () => {
+  const fixture = await qualifiedProcessFixture('omnia-packaged-smoke-');
+  const events = [];
+  fixture.launch = async () => ({
+    ...sessionFixture(),
+    runSmoke: async () => events.push('smoke'),
+  });
+  fixture.recapture = async ({ phase }) => {
+    events.push(`recapture:${phase}`);
+    return fixture.environment;
+  };
+  fixture.cleanup = async ({ session }) => {
+    events.push('cleanup');
+    await session?.cleanup();
+  };
+
+  const outcome = await runPackagedDesktopSmokeProcess(fixture);
+
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(outcome.marker, {
+    schemaVersion: 1,
+    status: 'SMOKE_PASS',
+    profileSetId: fixture.profileSet.profileSetId,
+    profileSetDigest: fixture.profileSet.profileSetDigest,
+    profileId: 'packaged-desktop-v2',
+  });
+  assert.deepEqual(events, [
+    'recapture:before-smoke',
+    'smoke',
+    'recapture:after-smoke',
+    'cleanup',
+  ]);
+  await assert.rejects(
+    readFile(join(fixture.resultsRoot, fixture.outputName)),
+    { code: 'ENOENT' },
   );
 });
 
@@ -239,4 +317,37 @@ async function temporaryDirectory(prefix) {
   const directory = await mkdtemp(join(tmpdir(), prefix));
   ownedDirectories.add(directory);
   return directory;
+}
+
+function runCli(arguments_) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(
+      process.execPath,
+      [
+        fileURLToPath(new URL('./run-packaged-desktop.mjs', import.meta.url)),
+        ...arguments_,
+      ],
+      {
+        cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../../..'),
+        env: {
+          ...process.env,
+          OMNIA_PACKAGED_DESKTOP_ARTIFACT: '',
+          OMNIA_PACKAGED_DESKTOP_PROVENANCE: '',
+          OMNIA_TAURI_DRIVER: '',
+          OMNIA_WEBKIT_WEBDRIVER: '',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => (stdout += chunk));
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.once('error', rejectPromise);
+    child.once('exit', (code) =>
+      resolvePromise({ code, stdout: stdout.trim(), stderr: stderr.trim() }),
+    );
+  });
 }

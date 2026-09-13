@@ -150,6 +150,28 @@ steps:
   );
 });
 
+test('desktop CI uploads only intended packages and Linux provenance', async () => {
+  const workflow = await readFile(
+    new URL('../../.github/workflows/verify.yml', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(workflow, /src-tauri\/target\/release\/bundle\/\*\*/);
+  assert.match(
+    workflow,
+    /write-native-provenance\.mjs[\s\S]*Omnia Reader_0\.1\.0_amd64\.AppImage/,
+  );
+  for (const intended of [
+    'appimage/*.AppImage',
+    'dist/native-provenance/*.provenance.json',
+    'dist/native-provenance/SHA256SUMS',
+    'msi/*.msi',
+    'nsis/*.exe',
+    'dmg/*.dmg',
+  ]) {
+    assert.ok(workflow.includes(intended), `missing ${intended}`);
+  }
+});
+
 test('the HTTP CSP preserves the application HTML fallback policy', async () => {
   const indexHtml = await readFile(
     new URL('../../apps/omnia-reader/src/index.html', import.meta.url),

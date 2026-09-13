@@ -48,7 +48,7 @@ test('writes deterministic exact AppImage provenance and checksums', async () =>
   );
   assert.equal(
     provenance.source.cargoLockSha256,
-    digest(await readFile(join(first.root, 'Cargo.lock'))),
+    digest(await readFile(join(first.root, 'src-tauri/Cargo.lock'))),
   );
   assert.equal(provenance.toolchain.node, 'v26.5.0');
   assert.equal(provenance.toolchain.rust, '1.89.0');
@@ -202,7 +202,7 @@ async function workspaceFixture(prefix, options = {}) {
       },
     }),
   );
-  await writeFile(join(root, 'Cargo.lock'), 'cargo lock\n');
+  await writeFile(join(root, 'src-tauri/Cargo.lock'), 'cargo lock\n');
   await mkdir(join(root, 'src-tauri'), { recursive: true });
   await writeFile(
     join(root, 'src-tauri/tauri.conf.json'),

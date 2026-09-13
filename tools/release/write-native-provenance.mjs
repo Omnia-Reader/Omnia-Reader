@@ -83,7 +83,10 @@ export async function writeNativeProvenance({
         join(root, 'src-tauri/tauri.conf.json'),
         'src-tauri/tauri.conf.json',
       ),
-      readBoundedFile(join(root, 'Cargo.lock'), 'Cargo.lock'),
+      readBoundedFile(
+        join(root, 'src-tauri/Cargo.lock'),
+        'src-tauri/Cargo.lock',
+      ),
     ]);
   const packageJson = parseJson(packageJsonBytes, 'package.json');
   const packageLock = parseJson(packageLockBytes, 'package-lock.json');
