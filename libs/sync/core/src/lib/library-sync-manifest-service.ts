@@ -8,6 +8,7 @@ import {
   createLibrarySyncManifest,
   isLegacyLibrarySyncManifest,
   isLibrarySyncManifest,
+  supportsReaderPreferenceSync,
   SYNC_MANIFEST_PATH,
 } from './library-sync-manifest';
 
@@ -65,6 +66,28 @@ export class LibrarySyncManifestService implements SyncWorker {
         const schema = parseManifest(current);
         if (schema === 'current') {
           return { pulled: 0, pushed: 0, conflicts, rejected: 0 };
+        }
+        if (schema === 'compatible-current') {
+          try {
+            const upgraded = await this.remote.write({
+              path: SYNC_MANIFEST_PATH,
+              content: serializeManifest(),
+              expectedRevision: current.revision,
+              message: 'Advertise Omnia Reader preference synchronization',
+            });
+            assertCompatibleManifest(upgraded);
+            return { pulled: 0, pushed: 1, conflicts, rejected: 0 };
+          } catch (error) {
+            if (
+              !(error instanceof SyncConflictError) ||
+              attempt >= this.maxConflictRetries
+            ) {
+              throw error;
+            }
+            conflicts += 1;
+            await this.wait(this.retryDelayMs * 2 ** attempt);
+            continue;
+          }
         }
         if (!this.prepareLegacyUpgrade) {
           throw new LibrarySyncManifestCompatibilityError(
@@ -132,7 +155,9 @@ function assertCompatibleManifest(document: RemoteDocument): void {
   }
 }
 
-function parseManifest(document: RemoteDocument): 'current' | 'legacy' {
+function parseManifest(
+  document: RemoteDocument,
+): 'current' | 'compatible-current' | 'legacy' {
   if (document.path !== SYNC_MANIFEST_PATH) {
     throw new LibrarySyncManifestCompatibilityError(
       'The sync provider returned the root schema from an unexpected path',
@@ -144,7 +169,11 @@ function parseManifest(document: RemoteDocument): 'current' | 'legacy' {
   } catch {
     throw new LibrarySyncManifestCompatibilityError();
   }
-  if (isLibrarySyncManifest(value)) return 'current';
+  if (isLibrarySyncManifest(value)) {
+    return supportsReaderPreferenceSync(value)
+      ? 'current'
+      : 'compatible-current';
+  }
   if (isLegacyLibrarySyncManifest(value)) return 'legacy';
   throw new LibrarySyncManifestCompatibilityError();
 }

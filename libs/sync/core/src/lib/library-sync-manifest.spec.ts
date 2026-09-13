@@ -25,6 +25,17 @@ describe('library sync manifest', () => {
     ).toBe(true);
   });
 
+  it('accepts a schema 2 manifest created before reader preference sync', () => {
+    expect(
+      isLibrarySyncManifest({
+        ...createLibrarySyncManifest(),
+        features: LIBRARY_SYNC_FEATURES.filter(
+          (feature) => feature !== 'reader-preferences',
+        ),
+      }),
+    ).toBe(true);
+  });
+
   it.each([
     { ...createLibrarySyncManifest(), schemaVersion: 3 },
     { ...createLibrarySyncManifest(), application: 'another-reader' },

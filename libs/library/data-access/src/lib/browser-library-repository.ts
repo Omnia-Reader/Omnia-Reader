@@ -1918,6 +1918,33 @@ export class BrowserLibraryRepository
     return this.write(READER_PREFERENCE_SYNC_METADATA_STORE, metadata);
   }
 
+  saveSynchronizedReaderPreferences(
+    preferences: readonly ReaderPreferences[],
+    metadata: ReaderPreferenceSyncMetadata,
+  ): Promise<void> {
+    if (
+      preferences.length > 2 ||
+      new Set(preferences.map((value) => value.format)).size !==
+        preferences.length ||
+      !preferences.every(isReaderPreferences) ||
+      !isReaderPreferenceSyncMetadata(metadata)
+    ) {
+      return Promise.reject(
+        new TypeError('Synchronized reader preferences are invalid'),
+      );
+    }
+    return this.writeTransaction(
+      [PREFERENCES_STORE, READER_PREFERENCE_SYNC_METADATA_STORE],
+      (transaction) => {
+        const preferenceStore = transaction.objectStore(PREFERENCES_STORE);
+        for (const value of preferences) preferenceStore.put(value);
+        transaction
+          .objectStore(READER_PREFERENCE_SYNC_METADATA_STORE)
+          .put(metadata);
+      },
+    );
+  }
+
   async listQuarantinedRecords(): Promise<readonly QuarantinedLibraryRecord[]> {
     const records =
       await this.readAll<QuarantinedLibraryRecord>(QUARANTINE_STORE);

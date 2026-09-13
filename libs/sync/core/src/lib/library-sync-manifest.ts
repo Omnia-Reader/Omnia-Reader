@@ -8,7 +8,12 @@ export const LIBRARY_SYNC_FEATURES = [
   'books',
   'progress',
   'logical-books',
+  'reader-preferences',
 ] as const;
+
+const REQUIRED_LIBRARY_SYNC_FEATURES = LIBRARY_SYNC_FEATURES.filter(
+  (feature) => feature !== 'reader-preferences',
+);
 
 export type LibrarySyncFeature = (typeof LIBRARY_SYNC_FEATURES)[number];
 
@@ -46,8 +51,14 @@ export function isLibrarySyncManifest(
   const features = new Set(value['features']);
   return (
     features.size === value['features'].length &&
-    LIBRARY_SYNC_FEATURES.every((feature) => features.has(feature))
+    REQUIRED_LIBRARY_SYNC_FEATURES.every((feature) => features.has(feature))
   );
+}
+
+export function supportsReaderPreferenceSync(
+  manifest: LibrarySyncManifest,
+): boolean {
+  return manifest.features.includes('reader-preferences');
 }
 
 export function isLegacyLibrarySyncManifest(value: unknown): boolean {

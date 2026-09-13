@@ -226,6 +226,41 @@ describe('BrowserLibraryRepository reader preferences', () => {
       repository.getReaderPreferenceSyncMetadata(metadata.destinationId),
     ).resolves.toEqual(metadata);
   });
+
+  it('applies incoming preferences and synchronization metadata atomically', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'incoming-preference-atomic',
+    );
+    const original = {
+      ...DEFAULT_EPUB_READER_PREFERENCES,
+      theme: 'sepia' as const,
+    };
+    await repository.saveReaderPreferences(original);
+    const metadata: ReaderPreferenceSyncMetadata = {
+      schemaVersion: 1,
+      destinationId: 'git:destination-a',
+      baseline: 'remote',
+      state: { schemaVersion: 1, epub: {}, pdf: {} },
+    };
+    const failure = abortNextStorePut('readerPreferenceSyncMetadata');
+
+    await expect(
+      repository.saveSynchronizedReaderPreferences(
+        [{ ...DEFAULT_EPUB_READER_PREFERENCES, theme: 'dark' }],
+        metadata,
+      ),
+    ).rejects.toBeDefined();
+    failure.mockRestore();
+
+    await expect(repository.getReaderPreferences('epub')).resolves.toEqual(
+      original,
+    );
+    await expect(
+      repository.getReaderPreferenceSyncMetadata(metadata.destinationId),
+    ).resolves.toBeNull();
+  });
 });
 
 describe('BrowserLibraryRepository atomic backup restore', () => {

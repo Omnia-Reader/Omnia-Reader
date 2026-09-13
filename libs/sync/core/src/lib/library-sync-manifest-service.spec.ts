@@ -60,6 +60,27 @@ describe('LibrarySyncManifestService', () => {
     expect(remote.writeRequests).toEqual([]);
   });
 
+  it('adds the reader preference capability to a compatible schema 2 manifest', async () => {
+    const remote = new MemoryTransport();
+    remote.documents.set(
+      SYNC_MANIFEST_PATH,
+      document({
+        ...createLibrarySyncManifest(),
+        features: createLibrarySyncManifest().features.filter(
+          (feature) => feature !== 'reader-preferences',
+        ),
+      }),
+    );
+
+    await expect(
+      new LibrarySyncManifestService(remote).synchronize(),
+    ).resolves.toMatchObject({ pushed: 1 });
+    expect(remote.writeRequests[0]).toMatchObject({
+      expectedRevision: 'root-1',
+      message: 'Advertise Omnia Reader preference synchronization',
+    });
+  });
+
   it('compare-and-swaps a compatible schema-1 root to schema 2', async () => {
     const remote = new MemoryTransport();
     const prepareLegacyUpgrade = vi.fn(async () => undefined);

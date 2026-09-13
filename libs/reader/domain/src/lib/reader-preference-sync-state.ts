@@ -2,6 +2,10 @@ import type {
   EpubReaderPreferences,
   PdfReaderPreferences,
 } from './reader-preferences';
+import {
+  DEFAULT_EPUB_READER_PREFERENCES,
+  DEFAULT_PDF_READER_PREFERENCES,
+} from './reader-preferences';
 
 const MAX_DOCUMENT_BYTES = 64 * 1024;
 const MAX_ID_LENGTH = 256;
@@ -99,6 +103,10 @@ export interface ReaderPreferenceSyncPersistence
   saveReaderPreferenceSyncMetadata(
     metadata: ReaderPreferenceSyncMetadata,
   ): Promise<void>;
+  saveSynchronizedReaderPreferences(
+    preferences: readonly (EpubReaderPreferences | PdfReaderPreferences)[],
+    metadata: ReaderPreferenceSyncMetadata,
+  ): Promise<void>;
 }
 
 export function isReaderPreferenceChange(
@@ -144,6 +152,44 @@ export function readerPreferenceChangeMatches(
     (preferences as unknown as Record<string, unknown>)[change.field] ===
       change.register.value
   );
+}
+
+export function readerPreferencesFromSyncState(
+  format: 'epub' | 'pdf',
+  state: ReaderPreferenceSyncState,
+): EpubReaderPreferences | PdfReaderPreferences {
+  if (!isReaderPreferenceSyncState(state)) {
+    throw new TypeError('Reader preference synchronization state is invalid');
+  }
+  if (format === 'epub') {
+    const preferences: EpubReaderPreferences = {
+      ...DEFAULT_EPUB_READER_PREFERENCES,
+    };
+    for (const field of EPUB_READER_PREFERENCE_FIELDS) {
+      const register = state.epub[field];
+      if (register) {
+        setPreferenceValue(preferences, field, register.value);
+      }
+    }
+    return preferences;
+  }
+  const preferences: PdfReaderPreferences = {
+    ...DEFAULT_PDF_READER_PREFERENCES,
+  };
+  for (const field of PDF_READER_PREFERENCE_FIELDS) {
+    const register = state.pdf[field];
+    if (register) {
+      setPreferenceValue(preferences, field, register.value);
+    }
+  }
+  return preferences;
+}
+
+function setPreferenceValue<
+  Preferences extends EpubReaderPreferences | PdfReaderPreferences,
+  Field extends Exclude<keyof Preferences, 'format'>,
+>(preferences: Preferences, field: Field, value: Preferences[Field]): void {
+  preferences[field] = value;
 }
 
 export function isReaderPreferenceSyncState(
