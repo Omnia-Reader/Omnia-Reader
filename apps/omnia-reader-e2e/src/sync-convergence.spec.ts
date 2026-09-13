@@ -4,6 +4,7 @@ import {
   test,
   type Browser,
   type BrowserContext,
+  type Locator,
   type Page,
 } from '@playwright/test';
 import {
@@ -320,6 +321,9 @@ async function synchronizeBetweenTwoDevices(
     expect(
       gateway.documentPaths().some((path) => path.includes('/annotations/')),
     ).toBe(true);
+    expect(gateway.documentPaths()).toContain(
+      '.omnia-reader/preferences/state.json',
+    );
     expect(
       gateway
         .objectPaths()
@@ -598,6 +602,7 @@ async function createReaderState(
   scenario: SyncScenario,
 ): Promise<void> {
   await expectReaderRoute(page);
+  await setInitialReaderPreferences(page, scenario);
   await addBookmark(page);
   await scenario.createHighlight(page);
   await expectAnnotations(page, [
@@ -611,6 +616,7 @@ async function createSecondDeviceReaderState(
   scenario: SyncScenario,
 ): Promise<void> {
   await expectReaderRoute(page);
+  await setSecondDeviceReaderPreferences(page, scenario);
   await addBookmark(page);
   await scenario.createSecondDeviceHighlight(page);
   await expectAnnotations(page, [
@@ -656,6 +662,7 @@ async function expectRestoredReaderState(
   scenario: SyncScenario,
 ): Promise<void> {
   await expectReaderRoute(page);
+  await expectInitialReaderPreferences(page, scenario);
   await expectBookmarkCount(page, 1);
   await expectAnnotations(page, [
     scenario.highlightText,
@@ -668,6 +675,7 @@ async function expectConvergedReaderState(
   scenario: SyncScenario,
 ): Promise<void> {
   await expectReaderRoute(page);
+  await expectConvergedReaderPreferences(page, scenario);
   await expectBookmarkCount(page, 2);
   await expectAnnotations(page, [
     scenario.highlightText,
@@ -675,6 +683,101 @@ async function expectConvergedReaderState(
     scenario.secondDeviceHighlightText,
     scenario.secondDeviceAnnotationNote,
   ]);
+}
+
+async function setInitialReaderPreferences(
+  page: Page,
+  scenario: SyncScenario,
+): Promise<void> {
+  const settings = await openReaderSettings(page);
+  if (scenario.mimeType === 'application/epub+zip') {
+    await settings.getByLabel('Theme').selectOption('dark');
+    await settings.getByLabel('Font family').selectOption('sans-serif');
+    await settings.getByRole('slider', { name: 'Font size' }).fill('125');
+  } else {
+    await settings.getByRole('button', { name: 'Custom' }).click();
+    await settings.getByRole('slider', { name: 'Custom zoom' }).fill('125');
+    await settings.getByRole('button', { name: 'Rotate right' }).click();
+  }
+  await closeReaderSettings(settings);
+}
+
+async function setSecondDeviceReaderPreferences(
+  page: Page,
+  scenario: SyncScenario,
+): Promise<void> {
+  const settings = await openReaderSettings(page);
+  if (scenario.mimeType === 'application/epub+zip') {
+    await settings.getByRole('slider', { name: 'Line height' }).fill('1.8');
+    await settings.getByLabel('Page presentation').selectOption('none');
+  } else {
+    await settings.getByRole('button', { name: 'Rotate right' }).click();
+  }
+  await closeReaderSettings(settings);
+}
+
+async function expectInitialReaderPreferences(
+  page: Page,
+  scenario: SyncScenario,
+): Promise<void> {
+  const settings = await openReaderSettings(page);
+  if (scenario.mimeType === 'application/epub+zip') {
+    await expect(settings.getByLabel('Theme')).toHaveValue('dark');
+    await expect(settings.getByLabel('Font family')).toHaveValue('sans-serif');
+    await expect(
+      settings.getByRole('slider', { name: 'Font size' }),
+    ).toHaveValue('125');
+  } else {
+    await expect(
+      settings.getByRole('button', { name: 'Custom' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await expect(
+      settings.getByRole('slider', { name: 'Custom zoom' }),
+    ).toHaveValue('125');
+    await expect(settings.getByText('Current rotation: 90°')).toBeVisible();
+  }
+  await closeReaderSettings(settings);
+}
+
+async function expectConvergedReaderPreferences(
+  page: Page,
+  scenario: SyncScenario,
+): Promise<void> {
+  const settings = await openReaderSettings(page);
+  if (scenario.mimeType === 'application/epub+zip') {
+    await expect(settings.getByLabel('Theme')).toHaveValue('dark');
+    await expect(settings.getByLabel('Font family')).toHaveValue('sans-serif');
+    await expect(
+      settings.getByRole('slider', { name: 'Font size' }),
+    ).toHaveValue('125');
+    await expect(
+      settings.getByRole('slider', { name: 'Line height' }),
+    ).toHaveValue('1.8');
+    await expect(settings.getByLabel('Page presentation')).toHaveValue('none');
+  } else {
+    await expect(
+      settings.getByRole('button', { name: 'Custom' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await expect(
+      settings.getByRole('slider', { name: 'Custom zoom' }),
+    ).toHaveValue('125');
+    await expect(settings.getByText('Current rotation: 180°')).toBeVisible();
+  }
+  await closeReaderSettings(settings);
+}
+
+async function openReaderSettings(page: Page) {
+  await page.getByRole('button', { name: 'Open reader settings' }).click();
+  const settings = page.getByRole('complementary', {
+    name: 'Reader settings',
+  });
+  await expect(settings).toBeVisible();
+  return settings;
+}
+
+async function closeReaderSettings(settings: Locator): Promise<void> {
+  await settings.getByRole('button', { name: 'Close reader settings' }).click();
+  await expect(settings).toBeHidden();
 }
 
 async function expectBookmarkCount(page: Page, count: number): Promise<void> {

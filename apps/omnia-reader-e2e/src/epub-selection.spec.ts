@@ -1,3 +1,4 @@
+/* eslint-disable playwright/no-conditional-expect, playwright/no-conditional-in-test -- WebKit exercises equivalent accessible panel actions where cross-frame pointer synthesis is unavailable. */
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createEpubFixture } from './publication-fixtures';

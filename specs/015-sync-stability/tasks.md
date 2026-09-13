@@ -264,12 +264,12 @@ weakening existing synchronization semantics.
 - [x] T077 [P] Add IndexedDB v10-to-v11 migration, atomic preference/outbox, recovery, acknowledgement, and synchronization-metadata tests in `libs/library/data-access/`
 - [x] T078 [P] Add provider-neutral preference document, manifest capability, typed journal payload, remote-first baseline, seeding, retry, and verification tests in `libs/sync/core/`
 - [x] T079 [P] Add application orchestration and next-open preference application tests in `apps/omnia-reader/src/app/`
-- [ ] T080 [P] Add simulated and live two-device preference convergence, clean-profile restore, invalid-input, interruption, and secret-scan journeys in `apps/omnia-reader-e2e/`
+- [x] T080 [P] Add simulated and live two-device preference convergence, clean-profile restore, invalid-input, interruption, and secret-scan journeys in `apps/omnia-reader-e2e/`
 - [x] T081 Implement version 1 `ReaderPreferenceSyncState`, field registers, validation, canonical serialization, and deterministic merge in the provider-neutral domain
 - [x] T082 Upgrade IndexedDB to version 11 and implement atomic preference-plus-outbox persistence, relay recovery, acknowledgement, and sync metadata in `libs/library/data-access/`
 - [x] T083 Implement `.omnia-reader/preferences/state.json`, `reader-preferences` capability negotiation, typed preference journal operations, remote-first baseline, empty-destination seeding, and verified acknowledgement in `libs/sync/core/`
 - [x] T084 Integrate preference relay and incoming persistence with synchronization orchestration while deferring renderer application until next open or reload in `apps/omnia-reader/src/app/`
-- [ ] T085 Extend simulated and protected live GitHub evidence to prove progress plus preferences converge across two isolated clients and restore to a clean replacement profile
+- [x] T085 Extend simulated and protected live GitHub evidence to prove progress plus preferences converge across two isolated clients and restore to a clean replacement profile
 - [x] T086 Repair the remaining Chromium and WebKit annotation/navigation acceptance failures with no retries, flakes, skips, or relaxed assertions
 - [ ] T087 Repair Linux packaged native startup and prove the fixture opens through the packaged synchronization journey
 - [ ] T088 Provision the Android SDK deterministically in CI and make the Android-emulator packaged synchronization gate executable

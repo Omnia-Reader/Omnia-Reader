@@ -50,6 +50,7 @@ export async function writeLiveGitHubEvidence({
     completedAt: observation.completedAt,
     durationMs: observation.durationMs,
     canary: { id: 'live-github-secret', present: false },
+    readerPreferences: observation.readerPreferences,
     throttle: observation.throttle,
   };
   const evidence = validateSyncEvidence({
@@ -160,6 +161,16 @@ export function liveGitHubObservation(report, scan) {
       annotation.description ===
         'UNAVAILABLE: staging does not expose a safe throttle',
   );
+  const readerPreferencesVerified = annotations.some(
+    (annotation) =>
+      isRecord(annotation) &&
+      annotation.type === 'live-github-reader-preferences' &&
+      annotation.description === 'verified',
+  );
+  assert(
+    result.status !== 'passed' || readerPreferencesVerified,
+    'Live GitHub reader preference evidence is missing.',
+  );
 
   assertRecord(scan, 'Canary scan');
   assert(Array.isArray(scan.canaries), 'Canary scan entries are invalid.');
@@ -182,6 +193,7 @@ export function liveGitHubObservation(report, scan) {
         : 'passed'
       : 'failed',
     throttle: throttleUnavailable ? 'unavailable' : 'observed',
+    readerPreferences: readerPreferencesVerified ? 'verified' : 'failed',
     startedAt,
     completedAt,
     durationMs,

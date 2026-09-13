@@ -5,6 +5,7 @@ import {
   type Browser,
   type BrowserContext,
   type BrowserContextOptions,
+  type Locator,
   type Page,
 } from '@playwright/test';
 import {
@@ -177,6 +178,11 @@ test('proves real GitHub synchronization and recovery through the public applica
       expect(
         replacementState(await canonicalRecoveryInventory(replacement)),
       ).toEqual(authoritative);
+      await expectConvergedPreferences(replacement);
+    });
+    test.info().annotations.push({
+      type: 'live-github-reader-preferences',
+      description: 'verified',
     });
 
     await test.step('sanitize provider failures and recover repository permission', async () => {
@@ -409,11 +415,13 @@ async function synchronize(page: Page, sample: string): Promise<void> {
 
 async function createInitialReadingState(page: Page): Promise<void> {
   await openLibraryPublication(page, 'Omnia PDF Fixture');
+  await setInitialPdfPreferences(page);
   await page.keyboard.press('ArrowDown');
   await addBookmark(page);
   await createPdfHighlight(page, 2, 'Page Two', 'Live GitHub PDF note.');
 
   await openLibraryPublication(page, 'Omnia Large EPUB Fixture');
+  await setInitialEpubPreferences(page);
   await addBookmark(page);
   await createEpubHighlight(
     page,
@@ -424,9 +432,11 @@ async function createInitialReadingState(page: Page): Promise<void> {
 
 async function createSecondClientContributions(page: Page): Promise<void> {
   await openLibraryPublication(page, 'Omnia PDF Fixture');
+  await rotatePdfRight(page);
   await addBookmark(page);
   await createPdfHighlight(page, 2, 'Page Two', 'Second GitHub PDF note.');
   await openLibraryPublication(page, 'Omnia Large EPUB Fixture');
+  await setSecondEpubPreferences(page);
   await addBookmark(page);
   await createEpubHighlight(
     page,
@@ -437,18 +447,143 @@ async function createSecondClientContributions(page: Page): Promise<void> {
 
 async function expectInitialReadingState(page: Page): Promise<void> {
   await openLibraryPublication(page, 'Omnia PDF Fixture');
+  await expectPdfPreferences(page, 90);
   await expectReaderContribution(page, 'Live GitHub PDF note.');
   await openLibraryPublication(page, 'Omnia Large EPUB Fixture');
+  await expectEpubPreferences(page, false);
   await expectReaderContribution(page, 'Live GitHub EPUB note.');
 }
 
 async function expectConvergedContributions(page: Page): Promise<void> {
   await openLibraryPublication(page, 'Omnia PDF Fixture');
+  await expectPdfPreferences(page, 180);
   await expectReaderContribution(page, 'Live GitHub PDF note.');
   await expectReaderContribution(page, 'Second GitHub PDF note.');
   await openLibraryPublication(page, 'Omnia Large EPUB Fixture');
+  await expectEpubPreferences(page, true);
   await expectReaderContribution(page, 'Live GitHub EPUB note.');
   await expectReaderContribution(page, 'Second GitHub EPUB note.');
+}
+
+async function expectConvergedPreferences(page: Page): Promise<void> {
+  await expect
+    .poll(() => storedPreference(page, 'pdf', 'zoomMode'))
+    .toBe('custom');
+  await expect
+    .poll(() => storedPreference(page, 'pdf', 'zoomPercent'))
+    .toBe(125);
+  await expect.poll(() => storedPreference(page, 'pdf', 'rotation')).toBe(180);
+  await expect.poll(() => storedPreference(page, 'epub', 'theme')).toBe('dark');
+  await expect
+    .poll(() => storedPreference(page, 'epub', 'fontSizePercent'))
+    .toBe(125);
+  await expect
+    .poll(() => storedPreference(page, 'epub', 'lineHeight'))
+    .toBe(1.8);
+}
+
+async function setInitialPdfPreferences(page: Page): Promise<void> {
+  const settings = await openReaderSettings(page);
+  await settings.getByRole('button', { name: 'Custom' }).click();
+  await settings.getByRole('slider', { name: 'Custom zoom' }).fill('125');
+  await settings.getByRole('button', { name: 'Rotate right' }).click();
+  await closeReaderSettings(settings);
+}
+
+async function setInitialEpubPreferences(page: Page): Promise<void> {
+  const settings = await openReaderSettings(page);
+  await settings.getByLabel('Theme').selectOption('dark');
+  await settings.getByRole('slider', { name: 'Font size' }).fill('125');
+  await closeReaderSettings(settings);
+}
+
+async function rotatePdfRight(page: Page): Promise<void> {
+  const settings = await openReaderSettings(page);
+  await settings.getByRole('button', { name: 'Rotate right' }).click();
+  await closeReaderSettings(settings);
+}
+
+async function setSecondEpubPreferences(page: Page): Promise<void> {
+  const settings = await openReaderSettings(page);
+  await settings.getByRole('slider', { name: 'Line height' }).fill('1.8');
+  await closeReaderSettings(settings);
+}
+
+async function expectPdfPreferences(
+  page: Page,
+  rotation: 90 | 180,
+): Promise<void> {
+  const settings = await openReaderSettings(page);
+  await expect(
+    settings.getByRole('button', { name: 'Custom' }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    settings.getByRole('slider', { name: 'Custom zoom' }),
+  ).toHaveValue('125');
+  await expect(
+    settings.getByText(`Current rotation: ${rotation}°`),
+  ).toBeVisible();
+  await closeReaderSettings(settings);
+}
+
+async function expectEpubPreferences(
+  page: Page,
+  converged: boolean,
+): Promise<void> {
+  const settings = await openReaderSettings(page);
+  await expect(settings.getByLabel('Theme')).toHaveValue('dark');
+  await expect(settings.getByRole('slider', { name: 'Font size' })).toHaveValue(
+    '125',
+  );
+  await expect(
+    settings.getByRole('slider', { name: 'Line height' }),
+  ).toHaveValue(converged ? '1.8' : '1.6');
+  await closeReaderSettings(settings);
+}
+
+async function openReaderSettings(page: Page): Promise<Locator> {
+  await page.getByRole('button', { name: 'Open reader settings' }).click();
+  const settings = page.getByRole('complementary', {
+    name: 'Reader settings',
+  });
+  await expect(settings).toBeVisible();
+  return settings;
+}
+
+async function closeReaderSettings(settings: Locator): Promise<void> {
+  await settings.getByRole('button', { name: 'Close reader settings' }).click();
+  await expect(settings).toBeHidden();
+}
+
+async function storedPreference(
+  page: Page,
+  format: 'epub' | 'pdf',
+  property: string,
+): Promise<unknown> {
+  return page.evaluate(
+    async ({ publicationFormat, preferenceProperty }) => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('omnia-reader');
+        request.addEventListener('success', () => resolve(request.result));
+        request.addEventListener('error', () => reject(request.error));
+      });
+      const preferences = await new Promise<Record<string, unknown> | null>(
+        (resolve, reject) => {
+          const request = database
+            .transaction('preferences', 'readonly')
+            .objectStore('preferences')
+            .get(publicationFormat);
+          request.addEventListener('success', () =>
+            resolve(request.result ?? null),
+          );
+          request.addEventListener('error', () => reject(request.error));
+        },
+      );
+      database.close();
+      return preferences?.[preferenceProperty] ?? null;
+    },
+    { publicationFormat: format, preferenceProperty: property },
+  );
 }
 
 async function expectReaderContribution(page: Page, note: string) {

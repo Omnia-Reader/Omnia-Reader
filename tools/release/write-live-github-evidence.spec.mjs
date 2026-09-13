@@ -20,6 +20,7 @@ test('writes a sanitized passing live GitHub gate for the exact candidate', asyn
 
   assert.equal(result.summary.result, 'passed');
   assert.equal(result.summary.throttle, 'observed');
+  assert.equal(result.summary.readerPreferences, 'verified');
   assert.equal(result.evidence.runs[0].gateId, 'live-github-conformance');
   assert.equal(result.evidence.runs[0].result, 'passed');
   assert.deepEqual(result.evidence.unavailableGates, []);
@@ -31,6 +32,10 @@ test('writes a sanitized passing live GitHub gate for the exact candidate', asyn
 
 test('records safe throttle absence as unavailable instead of passed', () => {
   const report = playwrightReport('passed', [
+    {
+      type: 'live-github-reader-preferences',
+      description: 'verified',
+    },
     {
       type: 'live-github-throttling',
       description: 'UNAVAILABLE: staging does not expose a safe throttle',
@@ -62,6 +67,10 @@ test('rejects skipped, retried, malformed, and canary-positive reports', () => {
   assert.throws(
     () => liveGitHubObservation(playwrightReport('skipped'), passingScan()),
     /may not skip/,
+  );
+  assert.throws(
+    () => liveGitHubObservation(playwrightReport('passed', []), passingScan()),
+    /preference evidence is missing/,
   );
   const retried = playwrightReport('passed');
   retried.suites[0].specs[0].tests[0].results.push({
@@ -120,7 +129,15 @@ async function evidenceFixture(context) {
   };
 }
 
-function playwrightReport(status, annotations = []) {
+function playwrightReport(
+  status,
+  annotations = [
+    {
+      type: 'live-github-reader-preferences',
+      description: 'verified',
+    },
+  ],
+) {
   return {
     stats: {
       startTime: '2026-09-12T20:00:00.000Z',
