@@ -49,6 +49,103 @@ export interface ReaderPreferenceSyncState {
   readonly pdf: ReaderPreferenceRegisters<PdfPreferenceValues>;
 }
 
+type EpubReaderPreferenceChange = {
+  [Field in EpubReaderPreferenceField]: {
+    readonly schemaVersion: 1;
+    readonly format: 'epub';
+    readonly field: Field;
+    readonly register: ReaderPreferenceRegister<EpubPreferenceValues[Field]>;
+  };
+}[EpubReaderPreferenceField];
+
+type PdfReaderPreferenceChange = {
+  [Field in PdfReaderPreferenceField]: {
+    readonly schemaVersion: 1;
+    readonly format: 'pdf';
+    readonly field: Field;
+    readonly register: ReaderPreferenceRegister<PdfPreferenceValues[Field]>;
+  };
+}[PdfReaderPreferenceField];
+
+export type ReaderPreferenceChange =
+  | EpubReaderPreferenceChange
+  | PdfReaderPreferenceChange;
+
+export interface ReaderPreferenceSyncMetadata {
+  readonly schemaVersion: 1;
+  readonly destinationId: string;
+  readonly baseline: 'remote' | 'seeded';
+  readonly state: ReaderPreferenceSyncState;
+}
+
+export interface ReaderPreferenceChangeOutbox {
+  listPendingReaderPreferenceChanges(): Promise<
+    readonly ReaderPreferenceChange[]
+  >;
+  acknowledgePendingReaderPreferenceChanges(
+    changeIds: readonly string[],
+  ): Promise<void>;
+}
+
+export interface ReaderPreferenceSyncPersistence
+  extends ReaderPreferenceChangeOutbox {
+  saveReaderPreferencesWithChange(
+    preferences: EpubReaderPreferences | PdfReaderPreferences,
+    change: ReaderPreferenceChange,
+  ): Promise<void>;
+  getReaderPreferenceSyncMetadata(
+    destinationId: string,
+  ): Promise<ReaderPreferenceSyncMetadata | null>;
+  saveReaderPreferenceSyncMetadata(
+    metadata: ReaderPreferenceSyncMetadata,
+  ): Promise<void>;
+}
+
+export function isReaderPreferenceChange(
+  value: unknown,
+): value is ReaderPreferenceChange {
+  return (
+    isExactRecord(value, ['schemaVersion', 'format', 'field', 'register']) &&
+    value['schemaVersion'] === 1 &&
+    (value['format'] === 'epub' || value['format'] === 'pdf') &&
+    typeof value['field'] === 'string' &&
+    isPreferenceRegister(value['register']) &&
+    isPreferenceValue(
+      value['format'],
+      value['field'],
+      value['register']['value'],
+    )
+  );
+}
+
+export function isReaderPreferenceSyncMetadata(
+  value: unknown,
+): value is ReaderPreferenceSyncMetadata {
+  return (
+    isExactRecord(value, [
+      'schemaVersion',
+      'destinationId',
+      'baseline',
+      'state',
+    ]) &&
+    value['schemaVersion'] === 1 &&
+    isBoundedId(value['destinationId']) &&
+    (value['baseline'] === 'remote' || value['baseline'] === 'seeded') &&
+    isReaderPreferenceSyncState(value['state'])
+  );
+}
+
+export function readerPreferenceChangeMatches(
+  preferences: EpubReaderPreferences | PdfReaderPreferences,
+  change: ReaderPreferenceChange,
+): boolean {
+  return (
+    preferences.format === change.format &&
+    (preferences as unknown as Record<string, unknown>)[change.field] ===
+      change.register.value
+  );
+}
+
 export function isReaderPreferenceSyncState(
   value: unknown,
 ): value is ReaderPreferenceSyncState {

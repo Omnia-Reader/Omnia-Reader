@@ -84,9 +84,15 @@ describe('BrowserLibraryRepository schema migration', () => {
     ).resolves.toEqual(expect.any(Blob));
     await expect(repository.listQuarantinedRecords()).resolves.toEqual([]);
     const migrated = await openDatabase(databaseName);
-    expect(migrated.version).toBe(10);
+    expect(migrated.version).toBe(11);
     expect([...migrated.objectStoreNames]).toContain('quarantine');
     expect([...migrated.objectStoreNames]).toContain('progressDocuments');
+    expect([...migrated.objectStoreNames]).toContain(
+      'readerPreferenceChangeOutbox',
+    );
+    expect([...migrated.objectStoreNames]).toContain(
+      'readerPreferenceSyncMetadata',
+    );
     expect([...migrated.objectStoreNames]).toContain('logicalBookChangeOutbox');
     expect([...migrated.objectStoreNames]).toEqual(
       expect.arrayContaining([
@@ -166,7 +172,7 @@ describe('BrowserLibraryRepository schema migration', () => {
         );
       }
       const migrated = await openDatabase(databaseName);
-      expect(migrated.version).toBe(10);
+      expect(migrated.version).toBe(11);
       migrated.close();
     },
   );
@@ -244,7 +250,7 @@ describe('BrowserLibraryRepository schema migration', () => {
     ]);
   });
 
-  it('migrates v9 logical state to the durable v10 change outbox without rewriting it', async () => {
+  it('migrates v9 logical state through v11 without rewriting the v10 outbox', async () => {
     const databaseName = 'omnia-reader-v9-outbox';
     const logicalBook = {
       schemaVersion: 1 as const,
@@ -291,7 +297,7 @@ describe('BrowserLibraryRepository schema migration', () => {
       [],
     );
     const migrated = await openDatabase(databaseName);
-    expect(migrated.version).toBe(10);
+    expect(migrated.version).toBe(11);
     expect([...migrated.objectStoreNames]).toContain('logicalBookChangeOutbox');
     migrated.close();
   });

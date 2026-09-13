@@ -6,6 +6,8 @@ import {
   PublicationAnnotation,
   PublicationBookmark,
   ReadingProgress,
+  type ReaderPreferenceChange,
+  type ReaderPreferenceSyncMetadata,
 } from '@omnia-reader/reader/domain';
 import { BrowserLibraryRepository } from './browser-library-repository';
 import { publicationFingerprint } from './browser-library-repository';
@@ -39,6 +41,190 @@ describe('BrowserLibraryRepository reader preferences', () => {
     await expect(
       new BrowserLibraryRepository().getReaderPreferences('pdf'),
     ).resolves.toBeNull();
+  });
+
+  it('commits a preference and its outbox entry atomically', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-outbox-atomic',
+    );
+    const preferences = {
+      ...DEFAULT_EPUB_READER_PREFERENCES,
+      theme: 'dark' as const,
+    };
+    const change: ReaderPreferenceChange = {
+      schemaVersion: 1,
+      format: 'epub',
+      field: 'theme',
+      register: {
+        value: 'dark',
+        revision: 1,
+        deviceId: 'device-a',
+        changeId: 'preference-change-a',
+      },
+    };
+
+    await repository.saveReaderPreferencesWithChange(preferences, change);
+
+    await expect(repository.getReaderPreferences('epub')).resolves.toEqual(
+      preferences,
+    );
+    await expect(
+      new BrowserLibraryRepository(
+        undefined,
+        undefined,
+        'preference-outbox-atomic',
+      ).listPendingReaderPreferenceChanges(),
+    ).resolves.toEqual([change]);
+  });
+
+  it('rolls back the preference when its outbox write aborts', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-outbox-rollback',
+    );
+    const original = {
+      ...DEFAULT_EPUB_READER_PREFERENCES,
+      theme: 'sepia' as const,
+    };
+    await repository.saveReaderPreferences(original);
+    const failure = abortNextStorePut('readerPreferenceChangeOutbox');
+
+    await expect(
+      repository.saveReaderPreferencesWithChange(
+        { ...original, theme: 'dark' },
+        {
+          schemaVersion: 1,
+          format: 'epub',
+          field: 'theme',
+          register: {
+            value: 'dark',
+            revision: 2,
+            deviceId: 'device-a',
+            changeId: 'preference-change-b',
+          },
+        },
+      ),
+    ).rejects.toBeDefined();
+    failure.mockRestore();
+
+    await expect(repository.getReaderPreferences('epub')).resolves.toEqual(
+      original,
+    );
+    await expect(
+      repository.listPendingReaderPreferenceChanges(),
+    ).resolves.toEqual([]);
+  });
+
+  it('rejects a change whose value does not match the atomic preference', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-outbox-mismatch',
+    );
+
+    await expect(
+      repository.saveReaderPreferencesWithChange(
+        { ...DEFAULT_EPUB_READER_PREFERENCES, theme: 'dark' },
+        {
+          schemaVersion: 1,
+          format: 'epub',
+          field: 'theme',
+          register: {
+            value: 'sepia',
+            revision: 1,
+            deviceId: 'device-a',
+            changeId: 'mismatched-change',
+          },
+        },
+      ),
+    ).rejects.toThrow('Reader preference change is invalid');
+    await expect(repository.getReaderPreferences('epub')).resolves.toBeNull();
+  });
+
+  it('acknowledges only the specified preference changes', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-outbox-acknowledgement',
+    );
+    const changes: ReaderPreferenceChange[] = [
+      {
+        schemaVersion: 1,
+        format: 'epub',
+        field: 'theme',
+        register: {
+          value: 'dark',
+          revision: 1,
+          deviceId: 'device-a',
+          changeId: 'change-theme',
+        },
+      },
+      {
+        schemaVersion: 1,
+        format: 'epub',
+        field: 'fontSizePercent',
+        register: {
+          value: 125,
+          revision: 1,
+          deviceId: 'device-a',
+          changeId: 'change-font-size',
+        },
+      },
+    ];
+    await repository.saveReaderPreferencesWithChange(
+      { ...DEFAULT_EPUB_READER_PREFERENCES, theme: 'dark' },
+      changes[0],
+    );
+    await repository.saveReaderPreferencesWithChange(
+      {
+        ...DEFAULT_EPUB_READER_PREFERENCES,
+        theme: 'dark',
+        fontSizePercent: 125,
+      },
+      changes[1],
+    );
+
+    await repository.acknowledgePendingReaderPreferenceChanges([
+      'change-theme',
+    ]);
+
+    await expect(
+      repository.listPendingReaderPreferenceChanges(),
+    ).resolves.toEqual([changes[1]]);
+  });
+
+  it('preserves version 10 preferences and adds synchronization metadata', async () => {
+    const databaseName = 'preference-version-11-migration';
+    const preferences = {
+      ...DEFAULT_EPUB_READER_PREFERENCES,
+      fontSizePercent: 135,
+    };
+    await createVersion10PreferenceDatabase(databaseName, preferences);
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      databaseName,
+    );
+    const metadata: ReaderPreferenceSyncMetadata = {
+      schemaVersion: 1,
+      destinationId: 'git:destination-a',
+      baseline: 'remote',
+      state: { schemaVersion: 1, epub: {}, pdf: {} },
+    };
+
+    await expect(repository.getReaderPreferences('epub')).resolves.toEqual(
+      preferences,
+    );
+    await expect(
+      repository.listPendingReaderPreferenceChanges(),
+    ).resolves.toEqual([]);
+    await repository.saveReaderPreferenceSyncMetadata(metadata);
+    await expect(
+      repository.getReaderPreferenceSyncMetadata(metadata.destinationId),
+    ).resolves.toEqual(metadata);
   });
 });
 
@@ -1989,6 +2175,30 @@ async function deleteRawLibraryRecord(
   });
   const transaction = database.transaction(storeName, 'readwrite');
   transaction.objectStore(storeName).delete(key);
+  await new Promise<void>((resolve, reject) => {
+    transaction.addEventListener('complete', () => resolve());
+    transaction.addEventListener('abort', () => reject(transaction.error));
+    transaction.addEventListener('error', () => reject(transaction.error));
+  });
+  database.close();
+}
+
+async function createVersion10PreferenceDatabase(
+  databaseName: string,
+  preferences: typeof DEFAULT_EPUB_READER_PREFERENCES & {
+    fontSizePercent: number;
+  },
+): Promise<void> {
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(databaseName, 10);
+    request.addEventListener('upgradeneeded', () => {
+      request.result.createObjectStore('preferences', { keyPath: 'format' });
+    });
+    request.addEventListener('success', () => resolve(request.result));
+    request.addEventListener('error', () => reject(request.error));
+  });
+  const transaction = database.transaction('preferences', 'readwrite');
+  transaction.objectStore('preferences').put(preferences);
   await new Promise<void>((resolve, reject) => {
     transaction.addEventListener('complete', () => resolve());
     transaction.addEventListener('abort', () => reject(transaction.error));

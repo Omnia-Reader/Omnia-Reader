@@ -31,6 +31,12 @@ import {
   PublicationMetadata,
   PublicationFormat,
   ReaderPreferences,
+  ReaderPreferenceChange,
+  ReaderPreferenceSyncMetadata,
+  ReaderPreferenceSyncPersistence,
+  isReaderPreferenceChange,
+  isReaderPreferenceSyncMetadata,
+  readerPreferenceChangeMatches,
   ReadingProgress,
   VariantAvailability,
 } from '@omnia-reader/reader/domain';
@@ -50,7 +56,7 @@ import {
 export { publicationFingerprint } from './publication-fingerprint';
 
 const DATABASE_NAME = 'omnia-reader';
-const DATABASE_VERSION = 10;
+const DATABASE_VERSION = 11;
 const BOOKS_STORE = 'books';
 const BINARIES_STORE = 'binaries';
 const COVERS_STORE = 'covers';
@@ -58,6 +64,8 @@ const PROGRESS_STORE = 'progress';
 const PROGRESS_DOCUMENTS_STORE = 'progressDocuments';
 const PROGRESS_DOCUMENT_BOOK_ID_INDEX = 'bookId';
 const PREFERENCES_STORE = 'preferences';
+const READER_PREFERENCE_CHANGE_OUTBOX_STORE = 'readerPreferenceChangeOutbox';
+const READER_PREFERENCE_SYNC_METADATA_STORE = 'readerPreferenceSyncMetadata';
 const BOOKMARKS_STORE = 'bookmarks';
 const BOOKMARK_BOOK_ID_INDEX = 'bookId';
 const ANNOTATIONS_STORE = 'annotations';
@@ -78,6 +86,8 @@ type ActiveLibraryStore =
   | typeof PROGRESS_STORE
   | typeof PROGRESS_DOCUMENTS_STORE
   | typeof PREFERENCES_STORE
+  | typeof READER_PREFERENCE_CHANGE_OUTBOX_STORE
+  | typeof READER_PREFERENCE_SYNC_METADATA_STORE
   | typeof BOOKMARKS_STORE
   | typeof ANNOTATIONS_STORE
   | typeof LOGICAL_BOOKS_STORE
@@ -149,7 +159,8 @@ export class BrowserLibraryRepository
   implements
     LibraryRepository,
     LibraryQuarantineRepository,
-    LogicalBookChangeOutbox
+    LogicalBookChangeOutbox,
+    ReaderPreferenceSyncPersistence
 {
   private databasePromise: Promise<IDBDatabase> | null = null;
 
@@ -1823,6 +1834,90 @@ export class BrowserLibraryRepository
     return this.write(PREFERENCES_STORE, preferences);
   }
 
+  saveReaderPreferencesWithChange(
+    preferences: ReaderPreferences,
+    change: ReaderPreferenceChange,
+  ): Promise<void> {
+    if (
+      !isReaderPreferences(preferences) ||
+      !isReaderPreferenceChange(change) ||
+      !readerPreferenceChangeMatches(preferences, change)
+    ) {
+      return Promise.reject(
+        new TypeError('Reader preference change is invalid'),
+      );
+    }
+    return this.writeTransaction(
+      [PREFERENCES_STORE, READER_PREFERENCE_CHANGE_OUTBOX_STORE],
+      (transaction) => {
+        transaction.objectStore(PREFERENCES_STORE).put(preferences);
+        transaction
+          .objectStore(READER_PREFERENCE_CHANGE_OUTBOX_STORE)
+          .put(change);
+      },
+    );
+  }
+
+  async listPendingReaderPreferenceChanges(): Promise<
+    readonly ReaderPreferenceChange[]
+  > {
+    const values = await this.readAll<unknown>(
+      READER_PREFERENCE_CHANGE_OUTBOX_STORE,
+    );
+    if (!values.every(isReaderPreferenceChange)) {
+      throw new TypeError('Pending reader preference change is invalid');
+    }
+    return values;
+  }
+
+  acknowledgePendingReaderPreferenceChanges(
+    changeIds: readonly string[],
+  ): Promise<void> {
+    if (
+      !changeIds.every(
+        (changeId) =>
+          typeof changeId === 'string' &&
+          changeId.length > 0 &&
+          changeId.length <= 256,
+      )
+    ) {
+      return Promise.reject(new TypeError('Preference change ID is invalid'));
+    }
+    return this.writeTransaction(
+      [READER_PREFERENCE_CHANGE_OUTBOX_STORE],
+      (transaction) => {
+        const store = transaction.objectStore(
+          READER_PREFERENCE_CHANGE_OUTBOX_STORE,
+        );
+        for (const changeId of new Set(changeIds)) {
+          store.delete(changeId);
+        }
+      },
+    );
+  }
+
+  getReaderPreferenceSyncMetadata(
+    destinationId: string,
+  ): Promise<ReaderPreferenceSyncMetadata | null> {
+    return this.readValidated(
+      READER_PREFERENCE_SYNC_METADATA_STORE,
+      destinationId,
+      isReaderPreferenceSyncMetadata,
+      'Reader preference synchronization metadata is invalid',
+    );
+  }
+
+  saveReaderPreferenceSyncMetadata(
+    metadata: ReaderPreferenceSyncMetadata,
+  ): Promise<void> {
+    if (!isReaderPreferenceSyncMetadata(metadata)) {
+      return Promise.reject(
+        new TypeError('Reader preference synchronization metadata is invalid'),
+      );
+    }
+    return this.write(READER_PREFERENCE_SYNC_METADATA_STORE, metadata);
+  }
+
   async listQuarantinedRecords(): Promise<readonly QuarantinedLibraryRecord[]> {
     const records =
       await this.readAll<QuarantinedLibraryRecord>(QUARANTINE_STORE);
@@ -1861,6 +1956,24 @@ export class BrowserLibraryRepository
           if (!database.objectStoreNames.contains(PREFERENCES_STORE)) {
             database.createObjectStore(PREFERENCES_STORE, {
               keyPath: 'format',
+            });
+          }
+          if (
+            !database.objectStoreNames.contains(
+              READER_PREFERENCE_CHANGE_OUTBOX_STORE,
+            )
+          ) {
+            database.createObjectStore(READER_PREFERENCE_CHANGE_OUTBOX_STORE, {
+              keyPath: 'register.changeId',
+            });
+          }
+          if (
+            !database.objectStoreNames.contains(
+              READER_PREFERENCE_SYNC_METADATA_STORE,
+            )
+          ) {
+            database.createObjectStore(READER_PREFERENCE_SYNC_METADATA_STORE, {
+              keyPath: 'destinationId',
             });
           }
           if (!database.objectStoreNames.contains(BOOKMARKS_STORE)) {
