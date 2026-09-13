@@ -124,6 +124,22 @@ describe('SettingsPageComponent', () => {
     ).toContain('Manage library sync');
   });
 
+  it('links to the Omnia Reader project repository safely', () => {
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+    fixture.detectChanges();
+
+    const link = fixture.nativeElement.querySelector(
+      'a[href="https://github.com/Omnia-Reader/Omnia-Reader"]',
+    ) as HTMLAnchorElement;
+    expect(link).toBeTruthy();
+    expect(link.textContent).toContain('Open GitHub repository');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener noreferrer');
+    expect(link.getAttribute('aria-label')).toBe(
+      'Open the Omnia Reader repository on GitHub in a new tab',
+    );
+  });
+
   it('shows the completed setup and the precise next action', async () => {
     syncConnection.set({
       state: 'destination-required',
