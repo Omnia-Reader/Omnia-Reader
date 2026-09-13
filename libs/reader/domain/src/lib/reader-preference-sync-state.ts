@@ -32,6 +32,9 @@ export type EpubReaderPreferenceField =
   (typeof EPUB_READER_PREFERENCE_FIELDS)[number];
 export type PdfReaderPreferenceField =
   (typeof PDF_READER_PREFERENCE_FIELDS)[number];
+export type ReaderPreferenceField =
+  | EpubReaderPreferenceField
+  | PdfReaderPreferenceField;
 
 type EpubPreferenceValues = Omit<EpubReaderPreferences, 'format'>;
 type PdfPreferenceValues = Omit<PdfReaderPreferences, 'format'>;
@@ -97,6 +100,12 @@ export interface ReaderPreferenceSyncPersistence
     preferences: EpubReaderPreferences | PdfReaderPreferences,
     change: ReaderPreferenceChange,
   ): Promise<void>;
+  commitReaderPreferenceUpdate(
+    preferences: EpubReaderPreferences | PdfReaderPreferences,
+    fields: readonly ReaderPreferenceField[],
+    deviceId: string,
+    createChangeId: () => string,
+  ): Promise<readonly ReaderPreferenceChange[]>;
   getReaderPreferenceSyncMetadata(
     destinationId: string,
   ): Promise<ReaderPreferenceSyncMetadata | null>;

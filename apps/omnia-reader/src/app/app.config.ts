@@ -20,6 +20,7 @@ import {
   LibraryRepository,
   LogicalBookChangeOutbox,
   PlatformPort,
+  ReaderPreferenceSyncPersistence,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import {
@@ -44,6 +45,7 @@ import {
   NotifyingSyncOperationJournal,
   ProgressDocumentRepository,
   ProgressSyncService,
+  ReaderPreferenceSyncService,
   ReadingStateSyncCoordinator,
   REMOTE_BOOK_BACKUP_SERVICE,
   REMOTE_VARIANT_RECOVERY,
@@ -86,6 +88,7 @@ import {
   PublicationImportService,
 } from './features/library/publication-import.service';
 import { ReaderRouteReuseStrategy } from './reader-route-reuse-strategy';
+import { createOpaqueId, DEVICE_ID } from './device-identity';
 
 function createReaderEngineRegistry(): ReaderEngineRegistry {
   const registry = new ReaderEngineRegistry();
@@ -105,9 +108,13 @@ function createLibrarySyncService(
   journal: SyncOperationJournal,
   repository: LibraryRepository &
     ProgressDocumentRepository &
-    LogicalBookStateRepository,
+    LogicalBookStateRepository &
+    ReaderPreferenceSyncPersistence,
   exclusions: BookSyncExclusions,
   selection: SyncProviderSelection,
+  git: GitHubGateway,
+  mega: MegaGateway,
+  deviceId: string,
 ): SyncWorker {
   const progress = new ProgressSyncService(remote, journal, repository);
   const bookmarks = new BookmarkSyncService(remote, journal, repository);
@@ -118,6 +125,17 @@ function createLibrarySyncService(
     journal,
     repository,
     exclusions,
+  );
+  const preferences = new ReaderPreferenceSyncService(
+    remote,
+    journal,
+    repository,
+    {
+      destinationId: () =>
+        selectedPreferenceDestinationId(selection, git, mega),
+      deviceId,
+      createChangeId: () => createOpaqueId(),
+    },
   );
   const coordinator = new LibrarySyncCoordinator({
     preflight: {
@@ -133,6 +151,7 @@ function createLibrarySyncService(
     progress,
     bookmarks,
     annotations,
+    preferences,
     cleanup: { synchronize: (options) => rootReconciliation.cleanup(options) },
   });
   return new ChangeAwareSyncWorker(
@@ -143,6 +162,26 @@ function createLibrarySyncService(
     undefined,
     new ReadingStateSyncCoordinator({ progress, bookmarks, annotations }),
   );
+}
+
+export async function selectedPreferenceDestinationId(
+  selection: SyncProviderSelection,
+  git: GitHubGateway,
+  mega: MegaGateway,
+): Promise<string> {
+  const provider = selection.current();
+  if (provider === 'git') {
+    const session = await git.session();
+    if (session.authenticated && session.repository) {
+      return `git:${session.repository.id}`;
+    }
+  } else if (provider === 'mega') {
+    const session = await mega.session();
+    if (session.authenticated && session.folder) {
+      return `mega:${session.folder.handle}`;
+    }
+  }
+  throw new Error('Choose a writable synchronization destination first');
 }
 
 function createRemoteBookBackupService(
@@ -371,6 +410,9 @@ export const appConfig: ApplicationConfig = {
               LIBRARY_REPOSITORY,
               BOOK_SYNC_EXCLUSIONS,
               SYNC_PROVIDER_SELECTION,
+              GITHUB_GATEWAY,
+              MEGA_GATEWAY,
+              DEVICE_ID,
             ],
           },
           {

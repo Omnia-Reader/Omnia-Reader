@@ -229,6 +229,12 @@ class MemoryRepository implements ReaderPreferenceSyncRepository {
   async saveReaderPreferencesWithChange(): Promise<void> {
     throw new Error('Not used by synchronization service tests');
   }
+
+  async commitReaderPreferenceUpdate(): Promise<
+    readonly ReaderPreferenceChange[]
+  > {
+    throw new Error('Not used by synchronization service tests');
+  }
 }
 
 class MemoryJournal implements SyncOperationJournal {

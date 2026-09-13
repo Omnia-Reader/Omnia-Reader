@@ -261,6 +261,57 @@ describe('BrowserLibraryRepository reader preferences', () => {
       repository.getReaderPreferenceSyncMetadata(metadata.destinationId),
     ).resolves.toBeNull();
   });
+
+  it('assigns monotonic per-field revisions in the atomic local update', async () => {
+    const repository = new BrowserLibraryRepository(
+      undefined,
+      undefined,
+      'preference-revision-registers',
+    );
+    await repository.saveReaderPreferenceSyncMetadata({
+      schemaVersion: 1,
+      destinationId: 'git:destination-a',
+      baseline: 'remote',
+      state: {
+        schemaVersion: 1,
+        epub: {
+          theme: {
+            value: 'sepia',
+            revision: 5,
+            deviceId: 'remote-device',
+            changeId: 'remote-theme',
+          },
+        },
+        pdf: {},
+      },
+    });
+    const ids = ['local-theme', 'local-font-size'];
+
+    const changes = await repository.commitReaderPreferenceUpdate(
+      {
+        ...DEFAULT_EPUB_READER_PREFERENCES,
+        theme: 'dark',
+        fontSizePercent: 125,
+      },
+      ['theme', 'fontSizePercent'],
+      'device-a',
+      () => ids.shift() ?? 'unexpected',
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({
+        field: 'theme',
+        register: expect.objectContaining({ revision: 6 }),
+      }),
+      expect.objectContaining({
+        field: 'fontSizePercent',
+        register: expect.objectContaining({ revision: 1 }),
+      }),
+    ]);
+    const pending = await repository.listPendingReaderPreferenceChanges();
+    expect(pending).toHaveLength(2);
+    expect(pending).toEqual(expect.arrayContaining([...changes]));
+  });
 });
 
 describe('BrowserLibraryRepository atomic backup restore', () => {

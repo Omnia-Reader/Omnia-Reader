@@ -33,7 +33,7 @@ export type ReaderPreferenceSyncRepository = Pick<
   ReaderPreferenceSyncPersistence;
 
 export interface ReaderPreferenceSyncOptions {
-  destinationId: string;
+  destinationId: string | (() => string | Promise<string>);
   deviceId: string;
   createChangeId: (format: 'epub' | 'pdf', field: string) => string;
   maxConflictRetries?: number;
@@ -75,15 +75,17 @@ export class ReaderPreferenceSyncService {
 
   private async runSynchronization(): Promise<SyncWorkerResult> {
     await this.relayOutbox();
+    const destinationId = await resolveDestinationId(
+      this.options.destinationId,
+    );
     const pending = await this.journal.pending();
     const accepted = pending.filter(isPreferenceOperation);
     const rejectedOperations =
       pending.filter((operation) => operation.entity === 'preference').length -
       accepted.length;
     const changes = uniqueChanges(accepted);
-    const metadata = await this.repository.getReaderPreferenceSyncMetadata(
-      this.options.destinationId,
-    );
+    const metadata =
+      await this.repository.getReaderPreferenceSyncMetadata(destinationId);
     let conflicts = 0;
 
     for (let attempt = 0; ; attempt += 1) {
@@ -146,7 +148,7 @@ export class ReaderPreferenceSyncService {
           ],
           {
             schemaVersion: 1,
-            destinationId: this.options.destinationId,
+            destinationId,
             baseline,
             state,
           },
@@ -316,4 +318,14 @@ function stateForSeed(
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function resolveDestinationId(
+  value: string | (() => string | Promise<string>),
+): Promise<string> {
+  const destinationId = typeof value === 'function' ? await value() : value;
+  if (!destinationId || destinationId.length > 256) {
+    throw new TypeError('Reader preference sync destination is invalid');
+  }
+  return destinationId;
 }

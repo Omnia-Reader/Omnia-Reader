@@ -32,6 +32,8 @@ import {
   PublicationFormat,
   ReaderPreferences,
   ReaderPreferenceChange,
+  ReaderPreferenceField,
+  ReaderPreferenceRegister,
   ReaderPreferenceSyncMetadata,
   ReaderPreferenceSyncPersistence,
   isReaderPreferenceChange,
@@ -1858,6 +1860,115 @@ export class BrowserLibraryRepository
     );
   }
 
+  async commitReaderPreferenceUpdate(
+    preferences: ReaderPreferences,
+    fields: readonly ReaderPreferenceField[],
+    deviceId: string,
+    createChangeId: () => string,
+  ): Promise<readonly ReaderPreferenceChange[]> {
+    const uniqueFields = [...new Set(fields)];
+    if (
+      !isReaderPreferences(preferences) ||
+      uniqueFields.length === 0 ||
+      uniqueFields.length !== fields.length ||
+      typeof deviceId !== 'string' ||
+      deviceId.length === 0 ||
+      deviceId.length > 256
+    ) {
+      throw new TypeError('Reader preference update is invalid');
+    }
+    const database = await this.database();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(
+        [
+          PREFERENCES_STORE,
+          READER_PREFERENCE_CHANGE_OUTBOX_STORE,
+          READER_PREFERENCE_SYNC_METADATA_STORE,
+        ],
+        'readwrite',
+      );
+      const outboxStore = transaction.objectStore(
+        READER_PREFERENCE_CHANGE_OUTBOX_STORE,
+      );
+      const metadataStore = transaction.objectStore(
+        READER_PREFERENCE_SYNC_METADATA_STORE,
+      );
+      const outboxRequest = outboxStore.getAll();
+      const metadataRequest = metadataStore.getAll();
+      let outboxReady = false;
+      let metadataReady = false;
+      let result: ReaderPreferenceChange[] = [];
+      let validationError: Error | null = null;
+
+      const persist = () => {
+        if (!outboxReady || !metadataReady) return;
+        try {
+          const outbox = outboxRequest.result as unknown[];
+          const metadata = metadataRequest.result as unknown[];
+          if (
+            !outbox.every(isReaderPreferenceChange) ||
+            !metadata.every(isReaderPreferenceSyncMetadata)
+          ) {
+            throw new TypeError('Reader preference sync metadata is invalid');
+          }
+          result = uniqueFields.map((field) => {
+            const value = (preferences as unknown as Record<string, unknown>)[
+              field
+            ];
+            const revision = nextPreferenceRevision(
+              preferences.format,
+              field,
+              outbox,
+              metadata,
+            );
+            const change = {
+              schemaVersion: 1,
+              format: preferences.format,
+              field,
+              register: {
+                value,
+                revision,
+                deviceId,
+                changeId: createChangeId(),
+              },
+            };
+            if (!isReaderPreferenceChange(change)) {
+              throw new TypeError('Reader preference update is invalid');
+            }
+            return change;
+          });
+          transaction.objectStore(PREFERENCES_STORE).put(preferences);
+          for (const change of result) outboxStore.put(change);
+        } catch (error) {
+          validationError =
+            error instanceof Error
+              ? error
+              : new TypeError('Reader preference update is invalid');
+          transaction.abort();
+        }
+      };
+      outboxRequest.addEventListener('success', () => {
+        outboxReady = true;
+        persist();
+      });
+      metadataRequest.addEventListener('success', () => {
+        metadataReady = true;
+        persist();
+      });
+      transaction.addEventListener('complete', () => resolve(result));
+      transaction.addEventListener('error', () =>
+        reject(transaction.error ?? new Error('Library update failed')),
+      );
+      transaction.addEventListener('abort', () =>
+        reject(
+          validationError ??
+            transaction.error ??
+            new Error('Library update was aborted'),
+        ),
+      );
+    });
+  }
+
   async listPendingReaderPreferenceChanges(): Promise<
     readonly ReaderPreferenceChange[]
   > {
@@ -2378,6 +2489,30 @@ export class BrowserLibraryRepository
       );
     });
   }
+}
+
+function nextPreferenceRevision(
+  format: PublicationFormat,
+  field: ReaderPreferenceField,
+  outbox: readonly ReaderPreferenceChange[],
+  metadata: readonly ReaderPreferenceSyncMetadata[],
+): number {
+  let revision = 0;
+  for (const change of outbox) {
+    if (change.format === format && change.field === field) {
+      revision = Math.max(revision, change.register.revision);
+    }
+  }
+  for (const record of metadata) {
+    const section = record.state[format] as Readonly<
+      Record<string, ReaderPreferenceRegister<unknown> | undefined>
+    >;
+    revision = Math.max(revision, section[field]?.revision ?? 0);
+  }
+  if (revision >= Number.MAX_SAFE_INTEGER) {
+    throw new RangeError('Reader preference revision is exhausted');
+  }
+  return revision + 1;
 }
 
 async function detectPublicationBlobFormat(

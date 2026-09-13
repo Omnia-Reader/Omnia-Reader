@@ -51,13 +51,19 @@ describe('LibrarySyncCoordinator', () => {
         conflicts: 3,
         rejected: 4,
       }),
+      preferences: worker('preferences', {
+        pulled: 9,
+        pushed: 10,
+        conflicts: 4,
+        rejected: 5,
+      }),
     });
 
     await expect(coordinator.synchronize()).resolves.toEqual({
-      pulled: 18,
-      pushed: 22,
-      conflicts: 7,
-      rejected: 8,
+      pulled: 27,
+      pushed: 32,
+      conflicts: 11,
+      rejected: 13,
       schemaPulled: 0,
       schemaPushed: 1,
       booksPulled: 1,
@@ -70,6 +76,8 @@ describe('LibrarySyncCoordinator', () => {
       bookmarksPushed: 6,
       annotationsPulled: 7,
       annotationsPushed: 8,
+      preferencesPulled: 9,
+      preferencesPushed: 10,
     });
     expect(order).toEqual([
       'schema',
@@ -78,6 +86,7 @@ describe('LibrarySyncCoordinator', () => {
       'progress',
       'bookmarks',
       'annotations',
+      'preferences',
     ]);
   });
 
@@ -99,7 +108,7 @@ describe('LibrarySyncCoordinator', () => {
     expect(child).not.toHaveBeenCalled();
   });
 
-  it('runs independent progress, bookmark, and annotation workers concurrently', async () => {
+  it('runs independent reading-state and preference workers concurrently', async () => {
     const started: string[] = [];
     let release = (): void => undefined;
     const wait = new Promise<void>((resolve) => {
@@ -127,11 +136,17 @@ describe('LibrarySyncCoordinator', () => {
       progress: trailing('progress'),
       bookmarks: trailing('bookmarks'),
       annotations: trailing('annotations'),
+      preferences: trailing('preferences'),
     });
 
     const synchronization = coordinator.synchronize();
     await vi.waitFor(() => {
-      expect(started).toEqual(['progress', 'bookmarks', 'annotations']);
+      expect(started).toEqual([
+        'progress',
+        'bookmarks',
+        'annotations',
+        'preferences',
+      ]);
     });
     release();
 

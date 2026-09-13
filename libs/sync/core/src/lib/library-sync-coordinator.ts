@@ -56,6 +56,8 @@ export interface LibrarySyncResult extends SyncWorkerResult {
   bookmarksPushed: number;
   annotationsPulled: number;
   annotationsPushed: number;
+  preferencesPulled: number;
+  preferencesPushed: number;
 }
 
 export interface LibrarySyncWorkers {
@@ -66,6 +68,7 @@ export interface LibrarySyncWorkers {
   progress: SyncWorker;
   bookmarks?: SyncWorker;
   annotations?: SyncWorker;
+  preferences?: SyncWorker;
   cleanup?: SyncWorker;
 }
 
@@ -99,13 +102,16 @@ export class LibrarySyncCoordinator implements SyncWorker {
       ? await this.workers.logicalBooks.synchronize(options)
       : EMPTY_SYNC_RESULT;
     throwIfSyncAborted(options.signal);
-    const [progress, bookmarks, annotations] = await Promise.all([
+    const [progress, bookmarks, annotations, preferences] = await Promise.all([
       this.workers.progress.synchronize(options),
       this.workers.bookmarks
         ? this.workers.bookmarks.synchronize(options)
         : EMPTY_SYNC_RESULT,
       this.workers.annotations
         ? this.workers.annotations.synchronize(options)
+        : EMPTY_SYNC_RESULT,
+      this.workers.preferences
+        ? this.workers.preferences.synchronize(options)
         : EMPTY_SYNC_RESULT,
     ]);
     throwIfSyncAborted(options.signal);
@@ -122,6 +128,7 @@ export class LibrarySyncCoordinator implements SyncWorker {
         progress.pulled +
         bookmarks.pulled +
         annotations.pulled +
+        preferences.pulled +
         cleanup.pulled,
       pushed:
         preflight.pushed +
@@ -131,6 +138,7 @@ export class LibrarySyncCoordinator implements SyncWorker {
         progress.pushed +
         bookmarks.pushed +
         annotations.pushed +
+        preferences.pushed +
         cleanup.pushed,
       conflicts:
         preflight.conflicts +
@@ -140,6 +148,7 @@ export class LibrarySyncCoordinator implements SyncWorker {
         progress.conflicts +
         bookmarks.conflicts +
         annotations.conflicts +
+        preferences.conflicts +
         cleanup.conflicts,
       rejected:
         preflight.rejected +
@@ -149,6 +158,7 @@ export class LibrarySyncCoordinator implements SyncWorker {
         progress.rejected +
         bookmarks.rejected +
         annotations.rejected +
+        preferences.rejected +
         cleanup.rejected,
       schemaPulled: schema.pulled,
       schemaPushed: schema.pushed,
@@ -162,6 +172,8 @@ export class LibrarySyncCoordinator implements SyncWorker {
       bookmarksPushed: bookmarks.pushed,
       annotationsPulled: annotations.pulled,
       annotationsPushed: annotations.pushed,
+      preferencesPulled: preferences.pulled,
+      preferencesPushed: preferences.pushed,
     };
   }
 }

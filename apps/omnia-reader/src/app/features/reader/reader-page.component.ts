@@ -27,12 +27,15 @@ import {
   BookRecord,
   DEFAULT_EPUB_READER_PREFERENCES,
   DEFAULT_PDF_READER_PREFERENCES,
+  EPUB_READER_PREFERENCE_FIELDS,
   EpubReaderPreferences,
   keyboardNavigationDirection,
   keyboardReaderCommand,
   isPublicationAnnotationColor,
   LogicalBookRecord,
   LogicalMutationIdentity,
+  LibraryRepository,
+  PDF_READER_PREFERENCE_FIELDS,
   PdfReaderPreferences,
   PdfRotation,
   PageNavigation,
@@ -53,6 +56,8 @@ import {
   ReaderNavigationDirection,
   ReaderPageStatus,
   ReaderPreferences,
+  ReaderPreferenceField,
+  ReaderPreferenceSyncPersistence,
   ReaderZoomDirection,
   ReadingProgress,
   SearchResult,
@@ -2720,15 +2725,23 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
   async updateEpubPreferences(
     patch: Partial<EpubReaderPreferences>,
   ): Promise<void> {
-    this.epubPreferences = { ...this.epubPreferences, ...patch };
-    await this.persistPreferences(this.epubPreferences);
+    const previous = this.epubPreferences;
+    this.epubPreferences = { ...previous, ...patch };
+    await this.persistPreferences(
+      this.epubPreferences,
+      changedPreferenceFields(previous, this.epubPreferences, patch),
+    );
   }
 
   async updatePdfPreferences(
     patch: Partial<PdfReaderPreferences>,
   ): Promise<void> {
-    this.pdfPreferences = { ...this.pdfPreferences, ...patch };
-    await this.persistPreferences(this.pdfPreferences);
+    const previous = this.pdfPreferences;
+    this.pdfPreferences = { ...previous, ...patch };
+    await this.persistPreferences(
+      this.pdfPreferences,
+      changedPreferenceFields(previous, this.pdfPreferences, patch),
+    );
   }
 
   private requestZoom(direction: ReaderZoomDirection): void {
@@ -3289,12 +3302,42 @@ export class ReaderPageComponent implements AfterViewInit, OnDestroy {
 
   private async persistPreferences(
     preferences: ReaderPreferences,
+    fields: readonly ReaderPreferenceField[],
   ): Promise<void> {
     await this.engine?.applyPreferences(preferences);
     // Persist only after the renderer has completed its preference lifecycle.
     // This keeps rapid reader inputs from observing saved state while an EPUB
     // iframe is still being replaced and its interaction handlers restored.
-    await this.repository.saveReaderPreferences(preferences);
+    const syncRepository = this.repository as LibraryRepository &
+      Partial<ReaderPreferenceSyncPersistence>;
+    if (
+      fields.length === 0 ||
+      typeof syncRepository.commitReaderPreferenceUpdate !== 'function'
+    ) {
+      await this.repository.saveReaderPreferences(preferences);
+      return;
+    }
+    const changes = await syncRepository.commitReaderPreferenceUpdate(
+      preferences,
+      fields,
+      this.deviceId,
+      createOpaqueId,
+    );
+    for (const change of changes) {
+      try {
+        await this.syncJournal.append({
+          entity: 'preference',
+          entityId: change.register.changeId,
+          operation: 'upsert',
+          payload: change,
+        });
+        await syncRepository.acknowledgePendingReaderPreferenceChanges?.([
+          change.register.changeId,
+        ]);
+      } catch {
+        // The atomic outbox remains authoritative and will relay after restart.
+      }
+    }
   }
 
   private async saveProgress(
@@ -3744,6 +3787,24 @@ function timestampAfter(value: string): string {
   return new Date(
     Math.max(Date.now(), Number.isFinite(previous) ? previous + 1 : 0),
   ).toISOString();
+}
+
+function changedPreferenceFields(
+  previous: ReaderPreferences,
+  next: ReaderPreferences,
+  patch: Partial<ReaderPreferences>,
+): ReaderPreferenceField[] {
+  const fields =
+    next.format === 'epub'
+      ? EPUB_READER_PREFERENCE_FIELDS
+      : PDF_READER_PREFERENCE_FIELDS;
+  const previousValues = previous as unknown as Record<string, unknown>;
+  const nextValues = next as unknown as Record<string, unknown>;
+  return fields.filter(
+    (field) =>
+      Object.prototype.hasOwnProperty.call(patch, field) &&
+      previousValues[field] !== nextValues[field],
+  );
 }
 
 export function hasBookSyncMetadataChanged(

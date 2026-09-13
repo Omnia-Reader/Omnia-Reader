@@ -9,8 +9,12 @@ import {
   SYNC_PROVIDER_SELECTION,
   SyncProviderSelection,
 } from '@omnia-reader/sync/core';
-import { GitHubGateway, SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
-import { MegaGateway } from '@omnia-reader/sync/mega';
+import {
+  GITHUB_GATEWAY,
+  GitHubGateway,
+  SYNC_OPERATION_JOURNAL,
+} from '@omnia-reader/sync/git';
+import { MEGA_GATEWAY, MegaGateway } from '@omnia-reader/sync/mega';
 import {
   NativeGitHubGateway,
   NativeMegaGateway,
@@ -20,9 +24,54 @@ import {
   createGitHubGateway,
   createMegaGateway,
   createSelectedSyncTransport,
+  selectedPreferenceDestinationId,
 } from './app.config';
+import { DEVICE_ID } from './device-identity';
 
 describe('appConfig synchronization composition', () => {
+  it('scopes preference metadata to the selected provider destination', async () => {
+    await expect(
+      selectedPreferenceDestinationId(
+        providerSelection('git'),
+        {
+          session: vi.fn().mockResolvedValue({
+            configured: true,
+            authenticated: true,
+            installationUrl: 'https://example.test/install',
+            user: { id: 1, login: 'reader', avatarUrl: '' },
+            repository: {
+              id: 42,
+              fullName: 'reader/private-library',
+              private: true,
+              defaultBranch: 'main',
+              canPush: true,
+            },
+          }),
+        } as unknown as GitHubGateway,
+        {} as MegaGateway,
+      ),
+    ).resolves.toBe('git:42');
+
+    await expect(
+      selectedPreferenceDestinationId(
+        providerSelection('mega'),
+        {} as GitHubGateway,
+        {
+          session: vi.fn().mockResolvedValue({
+            authenticated: true,
+            account: 'reader',
+            folder: {
+              handle: 'folder-handle',
+              name: 'Reader',
+              path: '/Reader',
+              canWrite: true,
+            },
+          }),
+        } as unknown as MegaGateway,
+      ),
+    ).resolves.toBe('mega:folder-handle');
+  });
+
   it('uses one change-aware worker for shared manual and automatic synchronization', () => {
     const provider = (appConfig.providers as Provider[]).find(
       (candidate) =>
@@ -39,6 +88,9 @@ describe('appConfig synchronization composition', () => {
         expect.anything(),
         BOOK_SYNC_EXCLUSIONS,
         SYNC_PROVIDER_SELECTION,
+        GITHUB_GATEWAY,
+        MEGA_GATEWAY,
+        DEVICE_ID,
       ],
     });
 
@@ -72,6 +124,9 @@ describe('appConfig synchronization composition', () => {
         repository as never,
         exclusions as never,
         selection as never,
+        { session: vi.fn() } as never,
+        { session: vi.fn() } as never,
+        'device-a' as never,
       ),
     ).toBeInstanceOf(ChangeAwareSyncWorker);
   });

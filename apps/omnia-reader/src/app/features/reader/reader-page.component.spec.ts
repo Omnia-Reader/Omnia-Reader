@@ -15,6 +15,7 @@ import {
   ReaderCommand,
   ReaderEngine,
   ReaderPageStatus,
+  ReaderPreferences,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
 import { SYNC_OPERATION_JOURNAL } from '@omnia-reader/sync/git';
@@ -241,13 +242,37 @@ describe('ReaderPageComponent annotations', () => {
       source: healthySource,
     });
     const saveLogicalBookFormatPreference = vi.fn().mockResolvedValue(null);
+    const getReaderPreferences = vi.fn().mockResolvedValue(null);
+    const acknowledgePendingReaderPreferenceChanges = vi
+      .fn()
+      .mockResolvedValue(undefined);
+    const commitReaderPreferenceUpdate = vi
+      .fn()
+      .mockImplementation(
+        async (
+          preferences: ReaderPreferences,
+          fields: readonly string[],
+          deviceId: string,
+        ) =>
+          fields.map((field, index) => ({
+            schemaVersion: 1,
+            format: preferences.format,
+            field,
+            register: {
+              value: (preferences as unknown as Record<string, unknown>)[field],
+              revision: 1,
+              deviceId,
+              changeId: `preference-change-${index + 1}`,
+            },
+          })),
+      );
     const repository = {
       getBook: vi.fn().mockResolvedValue(BOOK),
       getBookSource: vi.fn().mockResolvedValue(healthySource),
       getProgress: vi.fn().mockResolvedValue(null),
       listBookmarks: vi.fn().mockResolvedValue([]),
       listAnnotations: vi.fn().mockResolvedValue([]),
-      getReaderPreferences: vi.fn().mockResolvedValue(null),
+      getReaderPreferences,
       findLogicalBookByVariant: vi.fn().mockResolvedValue({
         ...logicalBookFromVariant(BOOK),
         variants: {
@@ -260,6 +285,8 @@ describe('ReaderPageComponent annotations', () => {
       saveAnnotation,
       saveProgress: vi.fn().mockResolvedValue(undefined),
       saveReaderPreferences: vi.fn().mockResolvedValue(undefined),
+      commitReaderPreferenceUpdate,
+      acknowledgePendingReaderPreferenceChanges,
       saveLogicalBookFormatPreference,
     } as unknown as LibraryRepository;
     const journal = {
@@ -1173,6 +1200,27 @@ describe('ReaderPageComponent annotations', () => {
         zoomPercent: 105,
       }),
     );
+    await vi.waitFor(() =>
+      expect(commitReaderPreferenceUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          format: 'pdf',
+          zoomMode: 'custom',
+          zoomPercent: 105,
+        }),
+        ['zoomMode', 'zoomPercent'],
+        'shared-test-device',
+        expect.any(Function),
+      ),
+    );
+    expect(journal.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: 'preference',
+        entityId: 'preference-change-1',
+      }),
+    );
+    expect(acknowledgePendingReaderPreferenceChanges).toHaveBeenCalledWith([
+      'preference-change-1',
+    ]);
     fixture.detectChanges();
     expect(
       fixture.nativeElement.querySelector(
@@ -1819,7 +1867,30 @@ describe('ReaderPageComponent annotations', () => {
     Reflect.deleteProperty(readerRoot, 'requestFullscreen');
     Reflect.deleteProperty(document, 'fullscreenElement');
     Reflect.deleteProperty(document, 'exitFullscreen');
+    getReaderPreferences.mockResolvedValue({
+      format: 'pdf',
+      zoomMode: 'fit-page',
+      zoomPercent: 100,
+      rotation: 90,
+    });
+    expect(fixture.componentInstance.pdfPreferences).toMatchObject({
+      zoomMode: 'custom',
+      zoomPercent: 105,
+      rotation: 0,
+    });
     fixture.destroy();
+    const reopened = TestBed.createComponent(ReaderPageComponent);
+    reopened.detectChanges();
+    await reopened.whenStable();
+    await vi.waitFor(() =>
+      expect(reopened.componentInstance.pdfPreferences).toEqual({
+        format: 'pdf',
+        zoomMode: 'fit-page',
+        zoomPercent: 100,
+        rotation: 90,
+      }),
+    );
+    reopened.destroy();
     expect(callbacks.command).toBeUndefined();
     vi.unstubAllGlobals();
   }, 15_000);
