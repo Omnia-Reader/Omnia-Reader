@@ -106,6 +106,67 @@ describe('AutoSyncScheduler', () => {
     expect(synchronize).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ['progress', 1000, 0],
+    ['progress', 500, 250],
+    ['annotation', 100, 0],
+    ['bookmark', 20, 30],
+  ] as const)(
+    'waits only the remaining quiet time for queued %s after %i ms',
+    async (kind, elapsed, remaining) => {
+      const environment = new FakeEnvironment();
+      const activity = new SyncActivityNotifier();
+      let release = (): void => undefined;
+      const active = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const synchronize = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          await active;
+          return EMPTY_RESULT;
+        })
+        .mockResolvedValue(EMPTY_RESULT);
+      const scheduler = createScheduler(environment, activity, synchronize);
+      scheduler.start();
+      environment.advance(0);
+      await flushPromises();
+      activity.notify({ kind, entityId: 'book' });
+      environment.advance(elapsed);
+      expect(synchronize).toHaveBeenCalledTimes(1);
+      release();
+      await flushPromises();
+      if (remaining > 0) {
+        environment.advance(remaining - 1);
+        await flushPromises();
+        expect(synchronize).toHaveBeenCalledTimes(1);
+        environment.advance(1);
+      } else {
+        environment.advance(0);
+      }
+      await flushPromises();
+      expect(synchronize).toHaveBeenCalledTimes(2);
+      scheduler.stop();
+    },
+  );
+
+  it('does not let page turns postpone an immediate book synchronization', async () => {
+    const environment = new FakeEnvironment();
+    const activity = new SyncActivityNotifier();
+    const synchronize = vi.fn().mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(environment, activity, synchronize);
+    scheduler.start();
+    environment.advance(0);
+    await flushPromises();
+    activity.notify({ kind: 'book', entityId: 'book' });
+    activity.notify({ kind: 'progress', entityId: 'book' });
+    environment.advance(0);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    expect(scheduler.status().reason).toBe('book-change');
+    scheduler.stop();
+  });
+
   it('schedules interactive annotation work after a short trailing quiet period', async () => {
     const environment = new FakeEnvironment();
     const activity = new SyncActivityNotifier();

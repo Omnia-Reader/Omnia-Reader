@@ -570,3 +570,33 @@ Toolbar validation (Node v26.5.0):
   and rerun with `--grep='cancels an automatic publication' --workers=1`.
 - `git diff --check`: passed. No live-provider or native behavior is changed or
   claimed by this UI validation.
+
+### Reading bursts do not restart an elapsed sync delay (2026-09-14)
+
+Keep the 750ms trailing debounce for reading progress and the 50ms debounce for
+annotations/bookmarks. When local changes arrive during an active synchronization,
+measure the trailing deadline from the latest activity, rather than waiting a new
+750ms after the network request completes. Start one coalesced follow-up once both
+the active request and remaining quiet period have finished. Provider Retry-After,
+offline, cancellation, and stop remain authoritative. A reading event must not
+postpone an already scheduled immediate startup/book/lifecycle synchronization.
+No progress records or journal entries are dropped by scheduling.
+
+Verification: deterministic clock tests for elapsed/partially elapsed quiet periods,
+interactive changes, repeated paging, immediate work and existing cancellation,
+offline and provider backoff coverage. Actual provider network latency is a separate
+measurement and is not claimed to be eliminated by this scheduling fix.
+
+Reading-burst validation (Node v26.5.0):
+
+- `npx nx test sync-core --include='**/auto-sync-scheduler.spec.ts'` before
+  implementation: five new timing/priority tests failed, 21 existing tests passed.
+- `npx nx test sync-core` after implementation: 228 tests passed in 25 files.
+- `npx nx lint sync-core`: passed.
+- `npx nx build omnia-reader --configuration production`: passed, initial
+  bundle 434.51 kB within budgets.
+- `npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts sync.spec.ts --project=chromium --grep='stable repeated Git sync|backs off safely|cancels an automatic publication' --workers=1`:
+  three passed against the simulated gateway.
+- `git diff --check`: passed. Review confirmed serialization, cancellation,
+  offline recovery and provider backoff remain intact. Firefox/WebKit, live
+  GitHub timing and native/device scheduling were not exercised for this change.

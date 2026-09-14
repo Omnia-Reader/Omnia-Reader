@@ -105,6 +105,7 @@ export class AutoSyncScheduler {
   private revisionCheckTimer: unknown;
   private scheduledReason: AutoSyncReason | null = null;
   private queuedReason: AutoSyncReason | null = null;
+  private queuedQuietUntil: number | null = null;
   private activeSync: Promise<SyncWorkerResult> | null = null;
   private activeSyncController: AbortController | null = null;
   private unsubscribeActivity: (() => void) | null = null;
@@ -227,6 +228,7 @@ export class AutoSyncScheduler {
     this.clearScheduledTimer();
     this.clearRevisionCheckTimer();
     this.queuedReason = null;
+    this.queuedQuietUntil = null;
     this.activeSyncController?.abort(
       new DOMException('Automatic synchronization stopped', 'AbortError'),
     );
@@ -256,6 +258,7 @@ export class AutoSyncScheduler {
     }
 
     this.queuedReason = null;
+    this.queuedQuietUntil = null;
     controller.abort(
       new DOMException('Automatic synchronization was cancelled', 'AbortError'),
     );
@@ -344,6 +347,11 @@ export class AutoSyncScheduler {
     }
     if (this.activeSync) {
       this.queuedReason = mergeReasons(this.queuedReason, 'reading-quiet');
+      this.queuedQuietUntil = this.environment.now() + delay;
+      return;
+    }
+    // Quiet activity is already included in a pending immediate/lifecycle pass.
+    if (this.scheduledReason && this.scheduledReason !== 'reading-quiet') {
       return;
     }
 
@@ -474,6 +482,8 @@ export class AutoSyncScheduler {
         }
       }
     } finally {
+      const quietUntil = this.queuedQuietUntil;
+      this.queuedQuietUntil = null;
       if (this.activeSync === activeSync) {
         this.activeSync = null;
       }
@@ -499,7 +509,11 @@ export class AutoSyncScheduler {
         this.queuedReason = null;
         if (queuedReason) {
           if (queuedReason === 'reading-quiet') {
-            this.requestQuiet();
+            this.requestQuiet(
+              quietUntil === null
+                ? this.quietIntervalMs
+                : Math.max(0, quietUntil - this.environment.now()),
+            );
           } else {
             this.requestImmediate(queuedReason);
           }
