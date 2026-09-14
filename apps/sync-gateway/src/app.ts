@@ -1,4 +1,5 @@
 import cookie from '@fastify/cookie';
+import { DEFAULT_SESSION_TTL_MS } from './session-store.js';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import {
   GatewayHttpError,
@@ -21,6 +22,7 @@ export interface SyncGatewayOptions {
   mega: SyncGatewayAdapter;
   logger?: boolean;
   secureCookies?: boolean;
+  sessionTtlMs?: number;
   maxPublicationBytes?: number;
   readiness?: () => Promise<void>;
   nativeHandoffs?: NativeAuthorizationHandoffs;
@@ -32,6 +34,14 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
     logger: options.logger ?? false,
     bodyLimit: 2 * 1024 * 1024,
   });
+  const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+  if (
+    !Number.isSafeInteger(sessionTtlMs) ||
+    sessionTtlMs <= 0 ||
+    sessionTtlMs > DEFAULT_SESSION_TTL_MS
+  ) {
+    throw new TypeError('The synchronization session TTL is invalid');
+  }
   const secureCookies = options.secureCookies ?? true;
   const maxPublicationBytes =
     options.maxPublicationBytes ?? 2 * 1024 * 1024 * 1024;
@@ -103,6 +113,7 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
         kind: 'github',
         adapter: options.github,
         secureCookies,
+        sessionTtlMs,
         maxPublicationBytes,
         ...(options.nativeHandoffs
           ? { nativeHandoffs: options.nativeHandoffs }
@@ -116,6 +127,7 @@ export function buildSyncGateway(options: SyncGatewayOptions): FastifyInstance {
         kind: 'mega',
         adapter: options.mega,
         secureCookies,
+        sessionTtlMs,
         maxPublicationBytes,
         ...(options.nativeHandoffs
           ? { nativeHandoffs: options.nativeHandoffs }

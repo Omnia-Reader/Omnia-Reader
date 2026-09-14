@@ -55,6 +55,9 @@ async function start(): Promise<void> {
       ...(activeStores.nativeHandoffs
         ? { nativeHandoffs: activeStores.nativeHandoffs }
         : {}),
+      ...(activeStores.sessionTtlMs !== undefined
+        ? { sessionTtlMs: activeStores.sessionTtlMs }
+        : {}),
       readiness: () => activeStores.ready(),
       observability,
       logger: true,

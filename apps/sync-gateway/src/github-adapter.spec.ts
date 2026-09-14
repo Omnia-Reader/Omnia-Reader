@@ -108,6 +108,20 @@ describe('GitHubSyncGatewayAdapter', () => {
     });
   });
 
+  it('refreshes authorization after an overnight absence and retains the repository', async () => {
+    let now = NOW;
+    const provider = new FakeGitHub();
+    const { adapter } = testAdapter(provider, { now: () => now });
+    await authorize(adapter);
+    await adapter.selectDestination('session', { repositoryId: 99 });
+    now += 24 * 60 * 60 * 1000;
+    await expect(adapter.session('session')).resolves.toMatchObject({
+      authenticated: true,
+      repository: { id: 99, fullName: 'reader/library' },
+    });
+    expect(provider.refreshRequests).toEqual(['refresh-token']);
+  });
+
   it('does not restore a session disconnected during token refresh', async () => {
     let now = NOW;
     let releaseRefresh = (): void => undefined;
@@ -1179,7 +1193,7 @@ function testAdapter(
 } {
   const sessions = new EncryptedMemorySessionStore<GitHubSessionState>(
     Buffer.alloc(32, 7),
-    { now: () => NOW },
+    { now: options.now ?? (() => NOW) },
   );
   const revocations =
     options.revocations ??

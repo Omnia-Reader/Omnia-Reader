@@ -9,6 +9,14 @@ import {
 } from './shared-session-stores.js';
 
 describe('gatewaySessionStoresFromEnvironment', () => {
+  it('exposes the configured lifetime for browser cookies', async () => {
+    const stores = await gatewaySessionStoresFromEnvironment(
+      environment({ OMNIA_SYNC_SESSION_TTL_MS: '120000' }),
+    );
+    expect(stores.sessionTtlMs).toBe(120000);
+    await stores.close();
+  });
+
   it('requires Redis for configured production providers without affecting disabled providers', async () => {
     await expect(
       gatewaySessionStoresFromEnvironment(
@@ -35,6 +43,7 @@ describe('gatewaySessionStoresFromEnvironment', () => {
 
   it('uses isolated encrypted memory stores for a single replica', async () => {
     const stores = await gatewaySessionStoresFromEnvironment(environment());
+    expect(stores.sessionTtlMs).toBe(2592000000);
 
     await stores.github?.set('session-a', {
       authorizationState: 'github-state',

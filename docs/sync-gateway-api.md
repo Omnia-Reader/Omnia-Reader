@@ -157,8 +157,14 @@ OMNIA_SYNC_NATIVE_REDIRECT_SCHEME=omnia-reader
 
 Generate a session key with `openssl rand -base64 32`. The application stores
 user, refresh, and installation tokens only inside AES-256-GCM encrypted,
-12-hour server sessions. Without a configured persistent store, the checked-in
+30-day server sessions by default. Without a configured persistent store, the checked-in
 store is process-local and deliberately ephemeral.
+
+Provider cookies use the same configured session lifetime (at most 30 days),
+and authenticated session checks renew them. Token refresh can renew the encrypted
+server record; reads alone do not extend its expiry. Revocation and disconnect
+still invalidate authorization immediately. Already expired sessions require one
+reconnection; upgrading cannot recover discarded cookies or encrypted records.
 
 `OMNIA_GITHUB_REQUEST_TIMEOUT_MS` is optional and bounds OAuth, GitHub API,
 Git LFS batch, and LFS verification requests; it defaults to 60 seconds and may
@@ -379,7 +385,7 @@ gateway will not downgrade to its process-local or file store:
 ```text
 OMNIA_SYNC_REDIS_URL=rediss://user:password@redis.example:6379/0
 OMNIA_SYNC_REDIS_PREFIX=omnia:sync:v1
-OMNIA_SYNC_SESSION_TTL_MS=43200000
+OMNIA_SYNC_SESSION_TTL_MS=2592000000
 OMNIA_SYNC_SESSION_PREVIOUS_KEYS=<previous base64 key>[,<older base64 key>]
 ```
 

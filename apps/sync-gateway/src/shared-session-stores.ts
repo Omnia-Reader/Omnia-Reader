@@ -12,6 +12,7 @@ import {
   type NativeHandoffRecord,
 } from './native-handoff.js';
 import {
+  DEFAULT_SESSION_TTL_MS,
   EncryptedFileSessionStore,
   EncryptedMemorySessionStore,
   EncryptedRedisSessionStore,
@@ -21,6 +22,7 @@ import {
 } from './session-store.js';
 
 export interface GatewaySessionStores {
+  sessionTtlMs?: number;
   github?: GatewaySessionStore<GitHubSessionState>;
   githubRevocations?: GitHubAuthorizationRevocationStore;
   mega?: GatewaySessionStore<MegaSessionState>;
@@ -111,6 +113,7 @@ export async function gatewaySessionStoresFromEnvironment(
         })
       : undefined;
     return {
+      sessionTtlMs: ttlMs,
       github: new EncryptedFileSessionStore(keys, {
         filePath: resolve(directory, 'github-sessions.json'),
         ttlMs,
@@ -135,6 +138,7 @@ export async function gatewaySessionStoresFromEnvironment(
         })
       : undefined;
     return {
+      sessionTtlMs: ttlMs,
       github: new EncryptedMemorySessionStore(keys, { ttlMs }),
       githubRevocations: new MemoryGitHubAuthorizationRevocationStore(),
       mega: new EncryptedMemorySessionStore(keys, { ttlMs }),
@@ -188,6 +192,7 @@ export async function gatewaySessionStoresFromEnvironment(
       })
     : undefined;
   return {
+    sessionTtlMs: ttlMs,
     github: new EncryptedRedisSessionStore(client, keys, {
       prefix: `${prefix}:github`,
       ttlMs,
@@ -214,13 +219,13 @@ export async function gatewaySessionStoresFromEnvironment(
 
 function sessionTtlFromEnvironment(value: string | undefined): number {
   if (value === undefined) {
-    return 12 * 60 * 60 * 1000;
+    return DEFAULT_SESSION_TTL_MS;
   }
   if (!/^[0-9]+$/.test(value)) {
     throw new TypeError('OMNIA_SYNC_SESSION_TTL_MS is invalid');
   }
   const ttl = Number(value);
-  if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 7 * 24 * 60 * 60 * 1000) {
+  if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > DEFAULT_SESSION_TTL_MS) {
     throw new TypeError('OMNIA_SYNC_SESSION_TTL_MS is invalid');
   }
   return ttl;

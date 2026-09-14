@@ -261,10 +261,55 @@ describe('sync gateway', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ authenticated: true });
+    expect(response.headers['set-cookie']).toContain('Max-Age=2592000');
     expect(response.headers['set-cookie']).toContain('HttpOnly');
     expect(response.headers['set-cookie']).toContain('SameSite=Lax');
     expect(response.headers['set-cookie']).toContain('Path=/api/sync/github');
     await app.close();
+  });
+
+  it('renews an existing authenticated cookie with the configured lifetime', async () => {
+    const app = buildSyncGateway({
+      github: new MemoryGatewayAdapter('github'),
+      mega: new MemoryGatewayAdapter('mega'),
+      sessionTtlMs: 120000,
+    });
+    try {
+      const first = await app.inject({
+        method: 'GET',
+        url: '/api/sync/github/session',
+      });
+      const cookie = first.cookies[0];
+      const restored = await app.inject({
+        method: 'GET',
+        url: '/api/sync/github/session',
+        cookies: { [cookie.name]: cookie.value },
+      });
+      expect(restored.json()).toMatchObject({ authenticated: true });
+      expect(restored.cookies[0].value).toBe(cookie.value);
+      expect(restored.headers['set-cookie']).toContain('Max-Age=120');
+      expect(restored.headers['set-cookie']).toContain('Secure');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('does not renew an unauthenticated existing cookie', async () => {
+    const app = buildSyncGateway({
+      github: new UnconfiguredSyncGatewayAdapter('github'),
+      mega: new MemoryGatewayAdapter('mega'),
+    });
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/sync/github/session',
+        cookies: { omnia_sync_github: '01234567-0123-4123-8123-012345678901' },
+      });
+      expect(response.json()).toMatchObject({ authenticated: false });
+      expect(response.headers['set-cookie']).toBeUndefined();
+    } finally {
+      await app.close();
+    }
   });
 
   it('exposes a no-store selected-destination revision for capable providers', async () => {

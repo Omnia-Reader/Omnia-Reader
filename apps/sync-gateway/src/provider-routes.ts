@@ -24,6 +24,7 @@ interface ProviderRouteOptions {
   kind: SyncProviderKind;
   adapter: SyncGatewayAdapter;
   secureCookies: boolean;
+  sessionTtlMs: number;
   maxPublicationBytes: number;
   nativeHandoffs?: NativeAuthorizationHandoffs;
 }
@@ -75,7 +76,11 @@ export async function registerProviderRoutes(
 
   app.get('/session', async (request, reply) => {
     const sessionId = session(request, reply, cookieName, options);
-    return options.adapter.session(sessionId);
+    const state = await options.adapter.session(sessionId);
+    if (isRecord(state) && state['authenticated'] === true) {
+      setSessionCookie(reply, cookieName, sessionId, options);
+    }
+    return state;
   });
 
   if (options.nativeHandoffs) {
@@ -799,7 +804,7 @@ function setSessionCookie(
     httpOnly: true,
     secure: options.secureCookies,
     sameSite: 'lax',
-    maxAge: 60 * 60 * 12,
+    maxAge: Math.floor(options.sessionTtlMs / 1000),
   });
 }
 

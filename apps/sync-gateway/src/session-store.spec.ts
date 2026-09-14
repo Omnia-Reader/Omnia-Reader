@@ -110,6 +110,31 @@ describe('EncryptedRedisSessionStore', () => {
 });
 
 describe('EncryptedFileSessionStore', () => {
+  it('preserves authorization and selection across an overnight restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'omnia-sync-overnight-'));
+    const filePath = join(directory, 'github.json');
+    const key = Buffer.alloc(32, 7);
+    let now = 1000;
+    const state = { token: 'secret', repository: { id: 42 } };
+    try {
+      const first = new EncryptedFileSessionStore(key, {
+        filePath,
+        now: () => now,
+      });
+      await first.set('session-a', state);
+      now += 24 * 60 * 60 * 1000;
+      const restarted = new EncryptedFileSessionStore(key, {
+        filePath,
+        now: () => now,
+      });
+      await expect(restarted.get('session-a')).resolves.toEqual(state);
+      now += 30 * 24 * 60 * 60 * 1000;
+      await expect(restarted.get('session-a')).resolves.toBeNull();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('restores encrypted sessions after the gateway store is recreated', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'omnia-sync-session-'));
     const filePath = join(directory, 'github-sessions.json');

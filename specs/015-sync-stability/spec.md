@@ -496,3 +496,44 @@ experimental until the final candidate evidence is accepted.
 - Provider outages and platform gates that cannot be exercised during a local
   run remain unverified; deterministic substitutes support development but do
   not satisfy the corresponding production gate.
+
+### Regression: authorization survives overnight restart (2026-09-14)
+
+A browser/PC restart must preserve an existing GitHub authorization and selected
+repository when its bounded session remains valid. The default encrypted session
+and persistent HttpOnly cookie lifetime is 30 days instead of 12 hours; an
+explicit `OMNIA_SYNC_SESSION_TTL_MS` applies to both. Successful session checks
+renew the cookie so a refreshed server token is not stranded behind the original
+cookie expiry. Existing expired/deleted sessions cannot be recovered without
+reconnecting; GitHub revocation, token expiry, and explicit disconnect remain
+authoritative. Persistent server storage and a stable encryption key are required
+across gateway restarts. No credentials enter JavaScript storage.
+
+Regression verification: first reproduce overnight encrypted-store loss and
+12-hour cookie expiry; then test recreated persistent stores, configured cookie
+lifetime, cookie renewal, and existing token-refresh/revocation/disconnect paths.
+
+Validation on 2026-09-14 with Node v26.5.0:
+
+- Before the fix, focused Vitest reported two failures: the overnight file-store
+  record was null and the cookie advertised `Max-Age=43200`.
+- `npx vitest run --config apps/sync-gateway/vitest.config.ts`: 141 passed;
+  two Redis integration cases unavailable, three opt-in browser cases run below.
+- `OMNIA_SESSION_BROWSER_TEST=1 npx vitest run --config apps/sync-gateway/vitest.config.ts apps/sync-gateway/src/session-browser.spec.ts`:
+  3 passed (Chromium, Firefox, WebKit persistent-profile restart, encrypted-store
+  recreation after simulated overnight time, cookie identity and HttpOnly checks).
+- `npx nx lint sync-gateway`: passed.
+- `npx nx build sync-gateway --configuration production`: passed.
+- Review: default and explicit TTL wiring cover memory/file/Redis construction;
+  existing refresh, disconnect, revocation, and key-rotation tests pass. Cookie
+  renewal does not rewrite server state or restore revoked authorization.
+- Live GitHub, deployed Redis restart/HA, packaged native, and physical PC reboot
+  remain unverified. No deployment or GitHub App configuration was changed.
+
+Additional test type-check limitation: `npx tsc --noEmit -p
+apps/sync-gateway/tsconfig.spec.json` finds no inputs because the existing app
+configuration excludes the same spec files it includes. A temporary configuration
+with that exclusion removed exposed existing test-fixture type errors (including
+`MemoryGatewayAdapter`, generic Vitest assertions, and the revocation Redis fake).
+This optional check is not green; executable Vitest, lint, and production build
+results above are separate evidence.

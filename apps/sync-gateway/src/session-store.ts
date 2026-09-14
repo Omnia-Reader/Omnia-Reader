@@ -58,7 +58,7 @@ export interface EncryptedFileSessionStoreOptions
   filePath: string;
 }
 
-const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
+export const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_SESSION_BYTES = 1024 * 1024;
 const MAX_SESSION_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_SESSION_ID_BYTES = 512;
@@ -646,8 +646,8 @@ function assertSessionId(sessionId: string): void {
 }
 
 function sessionTtl(value: number | undefined): number {
-  const ttl = value ?? DEFAULT_TTL_MS;
-  if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > 7 * 24 * 60 * 60 * 1000) {
+  const ttl = value ?? DEFAULT_SESSION_TTL_MS;
+  if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > DEFAULT_SESSION_TTL_MS) {
     throw new TypeError('The synchronization session TTL is invalid');
   }
   return ttl;
