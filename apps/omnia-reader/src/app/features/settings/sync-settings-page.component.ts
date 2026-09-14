@@ -62,6 +62,7 @@ export class SyncSettingsPageComponent implements OnInit {
   private readonly syncConnection = inject(SyncConnectionStatusService);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 
+  showConnectionSettings = false;
   pendingChanges = 0;
   loading = true;
   busy = false;

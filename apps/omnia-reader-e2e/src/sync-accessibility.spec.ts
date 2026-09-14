@@ -25,7 +25,7 @@ test('keeps provider maturity accessible across touch, keyboard, and restart', a
   const git = page.getByTestId('sync-provider-git');
   const mega = page.getByTestId('sync-provider-mega');
   await expect(git).toContainText('Git + LFS');
-  await expect(git).toContainText('Experimental');
+  await expect(git).not.toContainText('Experimental');
   await expect(git).toContainText('keep another backup');
   await expect(mega).toContainText('MEGA');
   await expect(mega).toContainText('Experimental');
@@ -55,7 +55,7 @@ test('keeps provider maturity accessible across touch, keyboard, and restart', a
 
   await page.reload();
   await expect(git).toHaveClass(/border-violet-600/);
-  await expect(git).toContainText('Experimental');
+  await expect(git).not.toContainText('Experimental');
   await page.goto('/library');
   const toolbar = page.getByTestId('global-sync-status');
   await expect(toolbar).not.toContainText('Experimental');

@@ -307,8 +307,8 @@ async function synchronizeBetweenTwoDevices(
     );
     await scenario.expectSuccessfulSync(firstDevice.page);
     await expect(
-      firstDevice.page.getByText(/0 local changes are waiting to sync/),
-    ).toBeVisible();
+      firstDevice.page.getByText(/\d+ changes? waiting to sync\./),
+    ).toHaveCount(0);
     expect(
       gateway.documentPaths().some((path) => path.endsWith('/book.json')),
     ).toBe(true);
@@ -799,9 +799,7 @@ async function synchronizeConfiguredDevice(
   await expect(page.getByRole('status')).toContainText('Sync complete:', {
     timeout: 30_000,
   });
-  await expect(
-    page.getByText(/0 local changes are waiting to sync/),
-  ).toBeVisible();
+  await expect(page.getByText(/\d+ changes? waiting to sync\./)).toHaveCount(0);
 }
 
 async function verifyInterruptedGitUpload(

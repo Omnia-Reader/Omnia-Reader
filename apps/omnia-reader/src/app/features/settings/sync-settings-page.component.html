@@ -3,9 +3,6 @@
     <mat-icon>arrow_back</mat-icon>
     Settings
   </a>
-  <p class="mb-0 text-xs font-bold tracking-[0.12em] text-violet-700 uppercase">
-    Cross-device library
-  </p>
   <h1
     class="mt-1 text-4xl font-semibold"
     tabindex="-1"
@@ -14,15 +11,42 @@
     Library sync
   </h1>
   <p class="max-w-2xl text-stone-600">
-    Restore both publication files and exact reading positions on every device.
-    Provider credentials stay in the server gateway; this app uses only a secure
-    session cookie.
+    Your books and reading progress, automatically synced across devices.
   </p>
-  <p class="my-6 rounded-xl bg-violet-50 p-4 text-violet-950">
-    <strong>{{ pendingChanges }}</strong>
-    {{ pendingChanges === 1 ? 'local change is' : 'local changes are' }}
-    waiting to sync.
-  </p>
+  @if (configuredDestination) {
+    <div class="my-6 flex flex-wrap items-center justify-between gap-3">
+      <div class="min-w-0">
+        <p class="m-0 font-semibold">
+          {{ selectedProvider === 'git' ? 'GitHub' : 'MEGA' }}
+        </p>
+        <p class="m-0 break-all text-sm text-stone-600">
+          {{
+            selectedProvider === 'git'
+              ? selectedGitRepository?.fullName
+              : megaSession.authenticated
+                ? megaSession.folder?.path
+                : ''
+          }}
+        </p>
+      </div>
+      <button
+        mat-stroked-button
+        type="button"
+        [disabled]="busy || automaticSyncBusy"
+        (click)="syncNow()"
+      >
+        {{
+          manualSyncController ? 'Synchronizing…' : 'Sync books and progress'
+        }}
+      </button>
+    </div>
+  }
+  @if (pendingChanges > 0) {
+    <p class="my-3 text-sm text-stone-600">
+      {{ pendingChanges }}
+      {{ pendingChanges === 1 ? 'change' : 'changes' }} waiting to sync.
+    </p>
+  }
   <div
     class="mb-6 rounded-xl border border-stone-200 bg-white p-4 text-sm"
     aria-live="polite"
@@ -108,7 +132,7 @@
       @default {
         @if (automaticSyncStatus.lastSuccessAt) {
           <p class="mb-0 text-stone-600">
-            Last automatic sync completed
+            Last synced
             {{ automaticSyncStatus.lastSuccessAt | date: 'medium' }}.
           </p>
         } @else {
@@ -122,14 +146,17 @@
       automaticSyncStatus.lastSuccessAt && automaticSyncStatus.lastResult;
       as lastResult
     ) {
-      <section
+      <details
         class="mt-3 border-t border-stone-200 pt-3"
         aria-labelledby="last-sync-result-heading"
         data-testid="last-sync-result"
       >
-        <p id="last-sync-result-heading" class="m-0 text-xs font-semibold">
-          Last successful result
-        </p>
+        <summary
+          id="last-sync-result-heading"
+          class="cursor-pointer py-2 text-sm font-medium"
+        >
+          Sync details
+        </summary>
         <dl class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div class="rounded-lg bg-stone-50 p-2">
             <dt class="text-xs text-stone-500">Received</dt>
@@ -152,82 +179,103 @@
             </dd>
           </div>
         </dl>
-      </section>
+      </details>
     }
   </div>
 
-  <fieldset class="mb-6">
-    <legend class="mb-3 text-sm font-semibold">Sync provider</legend>
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <button
-        class="min-h-24 rounded-xl border p-4 text-left transition"
-        [class.border-violet-600]="selectedProvider === 'git'"
-        [class.bg-violet-50]="selectedProvider === 'git'"
-        [class.border-stone-300]="selectedProvider !== 'git'"
-        type="button"
-        aria-describedby="git-provider-description git-provider-maturity-consequence"
-        data-testid="sync-provider-git"
-        [disabled]="busy || loading || automaticSyncBusy"
-        (click)="chooseProvider('git')"
-      >
-        <span class="flex flex-wrap items-center justify-between gap-2">
-          <span class="font-semibold">{{ gitPresentation.name }}</span>
-          <span class="flex flex-wrap gap-2">
-            <span
-              class="rounded-full bg-violet-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-violet-800 uppercase"
-            >
-              Recommended
+  @if (configuredDestination) {
+    <button
+      mat-button
+      type="button"
+      class="mb-4"
+      data-testid="connection-settings-toggle"
+      [attr.aria-expanded]="showConnectionSettings"
+      aria-controls="sync-provider-settings sync-destination-settings"
+      (click)="showConnectionSettings = !showConnectionSettings"
+    >
+      Connection settings
+      <mat-icon>{{
+        showConnectionSettings ? 'expand_less' : 'expand_more'
+      }}</mat-icon>
+    </button>
+  }
+  <div
+    id="sync-provider-settings"
+    [hidden]="configuredDestination && !showConnectionSettings"
+  >
+    <fieldset class="mb-6">
+      <legend class="mb-3 text-sm font-semibold">Sync provider</legend>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <button
+          class="min-h-24 rounded-xl border p-4 text-left transition"
+          [class.border-violet-600]="selectedProvider === 'git'"
+          [class.bg-violet-50]="selectedProvider === 'git'"
+          [class.border-stone-300]="selectedProvider !== 'git'"
+          type="button"
+          aria-describedby="git-provider-description git-provider-maturity-consequence"
+          data-testid="sync-provider-git"
+          [disabled]="busy || loading || automaticSyncBusy"
+          (click)="chooseProvider('git')"
+        >
+          <span class="flex flex-wrap items-center justify-between gap-2">
+            <span class="font-semibold">{{ gitPresentation.name }}</span>
+            <span class="flex flex-wrap gap-2">
+              <span
+                class="rounded-full bg-violet-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-violet-800 uppercase"
+              >
+                Recommended
+              </span>
             </span>
           </span>
-        </span>
-        <span
-          id="git-provider-description"
-          class="mt-1 block text-sm text-stone-600"
-        >
-          JSON history in Git; EPUB and PDF files in Git LFS.
-        </span>
-        <span
-          id="git-provider-maturity-consequence"
-          class="mt-2 block text-sm font-medium text-stone-800"
-        >
-          {{ gitPresentation.consequence }}
-        </span>
-      </button>
-      <button
-        class="min-h-24 rounded-xl border p-4 text-left transition"
-        [class.border-violet-600]="selectedProvider === 'mega'"
-        [class.bg-violet-50]="selectedProvider === 'mega'"
-        [class.border-stone-300]="selectedProvider !== 'mega'"
-        type="button"
-        aria-describedby="mega-provider-description mega-provider-maturity-consequence"
-        data-testid="sync-provider-mega"
-        [disabled]="busy || loading || automaticSyncBusy"
-        (click)="chooseProvider('mega')"
-      >
-        <span class="flex flex-wrap items-center justify-between gap-2">
-          <span class="font-semibold">{{ megaPresentation.name }}</span>
           <span
-            class="rounded-full border border-stone-500 bg-stone-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-stone-900 uppercase"
-            data-testid="sync-provider-mega-maturity"
+            id="git-provider-description"
+            class="mt-1 block text-sm text-stone-600"
           >
-            {{ megaPresentation.maturityLabel }}
+            JSON history in Git; EPUB and PDF files in Git LFS.
           </span>
-        </span>
-        <span
-          id="mega-provider-description"
-          class="mt-1 block text-sm text-stone-600"
+          <span
+            id="git-provider-maturity-consequence"
+            class="mt-2 block text-sm font-medium text-stone-800"
+          >
+            {{ gitPresentation.consequence }}
+          </span>
+        </button>
+        <button
+          class="min-h-24 rounded-xl border p-4 text-left transition"
+          [class.border-violet-600]="selectedProvider === 'mega'"
+          [class.bg-violet-50]="selectedProvider === 'mega'"
+          [class.border-stone-300]="selectedProvider !== 'mega'"
+          type="button"
+          aria-describedby="mega-provider-description mega-provider-maturity-consequence"
+          data-testid="sync-provider-mega"
+          [disabled]="busy || loading || automaticSyncBusy"
+          (click)="chooseProvider('mega')"
         >
-          Encrypted publication and progress files in a MEGA folder.
-        </span>
-        <span
-          id="mega-provider-maturity-consequence"
-          class="mt-2 block text-sm font-medium text-stone-800"
-        >
-          {{ megaPresentation.consequence }}
-        </span>
-      </button>
-    </div>
-  </fieldset>
+          <span class="flex flex-wrap items-center justify-between gap-2">
+            <span class="font-semibold">{{ megaPresentation.name }}</span>
+            <span
+              class="rounded-full border border-stone-500 bg-stone-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-stone-900 uppercase"
+              data-testid="sync-provider-mega-maturity"
+            >
+              {{ megaPresentation.maturityLabel }}
+            </span>
+          </span>
+          <span
+            id="mega-provider-description"
+            class="mt-1 block text-sm text-stone-600"
+          >
+            Encrypted publication and progress files in a MEGA folder.
+          </span>
+          <span
+            id="mega-provider-maturity-consequence"
+            class="mt-2 block text-sm font-medium text-stone-800"
+          >
+            {{ megaPresentation.consequence }}
+          </span>
+        </button>
+      </div>
+    </fieldset>
+  </div>
 
   @if (loading) {
     <p class="text-stone-600" role="status">Checking sync connection…</p>
@@ -312,458 +360,448 @@
       </section>
     }
 
-    @if (selectedProvider === 'git') {
-      @if (!gatewayAvailable.git) {
-        <p class="mb-4 text-sm text-stone-600">
-          GitHub connection details will reappear when the sync gateway is
-          available.
-        </p>
-      } @else if (!gitSession.configured) {
-        <section
-          class="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
-          aria-labelledby="github-sync-unconfigured-heading"
-          data-testid="github-sync-unconfigured"
-        >
-          <h2
-            id="github-sync-unconfigured-heading"
-            class="m-0 text-base font-semibold"
-          >
-            GitHub App setup required
-          </h2>
-          <p class="mb-0 text-sm">
-            This gateway does not have GitHub App credentials yet. For local
-            development, configure the GitHub variables and run
-            <code>npm run start:full</code>. Your local books remain available
-            while sync is disconnected.
+    <div
+      id="sync-destination-settings"
+      [hidden]="configuredDestination && !showConnectionSettings"
+    >
+      @if (selectedProvider === 'git') {
+        @if (!gatewayAvailable.git) {
+          <p class="mb-4 text-sm text-stone-600">
+            GitHub connection details will reappear when the sync gateway is
+            available.
           </p>
-        </section>
-      } @else if (!gitSession.authenticated) {
-        <section
-          class="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-5"
-          aria-labelledby="github-setup-progress-heading"
-          data-testid="github-setup-progress"
-        >
-          <h2
-            id="github-setup-progress-heading"
-            class="m-0 text-lg font-semibold text-violet-950"
+        } @else if (!gitSession.configured) {
+          <section
+            class="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
+            aria-labelledby="github-sync-unconfigured-heading"
+            data-testid="github-sync-unconfigured"
           >
-            GitHub sync setup
-          </h2>
-          <ol
-            class="mt-4 grid list-none gap-3 p-0 text-sm sm:grid-cols-3"
-            aria-label="GitHub synchronization setup progress"
-          >
-            <li
-              class="rounded-xl border border-violet-400 bg-white p-3"
-              aria-current="step"
-            >
-              <span class="block font-bold text-violet-800">1 · Account</span>
-              <span class="mt-1 block text-stone-700">Connect GitHub</span>
-            </li>
-            <li class="rounded-xl border border-stone-200 bg-white/70 p-3">
-              <span class="block font-bold text-stone-500">2 · Repository</span>
-              <span class="mt-1 block text-stone-600"
-                >Choose a destination</span
-              >
-            </li>
-            <li class="rounded-xl border border-stone-200 bg-white/70 p-3">
-              <span class="block font-bold text-stone-500">3 · Library</span>
-              <span class="mt-1 block text-stone-600">Run the first sync</span>
-            </li>
-          </ol>
-        </section>
-        <section
-          class="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
-          aria-labelledby="github-onboarding-heading"
-          data-testid="github-onboarding"
-        >
-          <div>
             <h2
-              id="github-onboarding-heading"
+              id="github-sync-unconfigured-heading"
               class="m-0 text-base font-semibold"
             >
-              Connect your GitHub library
+              GitHub App setup required
             </h2>
-            <p class="mb-0 mt-1 text-sm text-stone-600">
-              First grant the GitHub App access to one or more private
-              repositories. Then authorize Omnia Reader to identify your
-              account. GitHub credentials remain in the sync gateway.
+            <p class="mb-0 text-sm">
+              This gateway does not have GitHub App credentials yet. For local
+              development, configure the GitHub variables and run
+              <code>npm run start:full</code>. Your local books remain available
+              while sync is disconnected.
             </p>
-          </div>
-          <div class="flex flex-wrap gap-3">
-            <a mat-stroked-button [href]="gitSession.installationUrl">
-              1. Install or manage GitHub App
-            </a>
-            <button
-              mat-flat-button
-              type="button"
-              data-testid="sync-connect"
-              [disabled]="busy || automaticSyncBusy || !gatewayAvailable.git"
-              (click)="connect()"
+          </section>
+        } @else if (!gitSession.authenticated) {
+          <section
+            class="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-5"
+            aria-labelledby="github-setup-progress-heading"
+            data-testid="github-setup-progress"
+          >
+            <h2
+              id="github-setup-progress-heading"
+              class="m-0 text-lg font-semibold text-violet-950"
             >
-              2. Authorize GitHub account
-            </button>
-          </div>
-        </section>
-      } @else {
-        <section
-          class="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-5"
-          aria-labelledby="github-setup-progress-heading"
-          data-testid="github-setup-progress"
-        >
-          <div
-            class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+              GitHub sync setup
+            </h2>
+            <ol
+              class="mt-4 grid list-none gap-3 p-0 text-sm sm:grid-cols-3"
+              aria-label="GitHub synchronization setup progress"
+            >
+              <li
+                class="rounded-xl border border-violet-400 bg-white p-3"
+                aria-current="step"
+              >
+                <span class="block font-bold text-violet-800">1 · Account</span>
+                <span class="mt-1 block text-stone-700">Connect GitHub</span>
+              </li>
+              <li class="rounded-xl border border-stone-200 bg-white/70 p-3">
+                <span class="block font-bold text-stone-500"
+                  >2 · Repository</span
+                >
+                <span class="mt-1 block text-stone-600"
+                  >Choose a destination</span
+                >
+              </li>
+              <li class="rounded-xl border border-stone-200 bg-white/70 p-3">
+                <span class="block font-bold text-stone-500">3 · Library</span>
+                <span class="mt-1 block text-stone-600"
+                  >Run the first sync</span
+                >
+              </li>
+            </ol>
+          </section>
+          <section
+            class="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
+            aria-labelledby="github-onboarding-heading"
+            data-testid="github-onboarding"
           >
             <div>
               <h2
-                id="github-setup-progress-heading"
-                class="m-0 text-lg font-semibold text-violet-950"
-              >
-                GitHub sync setup
-              </h2>
-              <p
-                class="mb-0 mt-1 text-sm font-medium text-violet-900"
-                aria-live="polite"
-                data-testid="github-library-status"
-              >
-                {{ gitLibraryStatus }}
-              </p>
-            </div>
-            @if (gitRepositoryUrl) {
-              <a
-                mat-stroked-button
-                [href]="gitRepositoryUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open repository
-                <mat-icon>open_in_new</mat-icon>
-              </a>
-            }
-          </div>
-          <ol
-            class="mt-4 grid list-none gap-3 p-0 text-sm sm:grid-cols-3"
-            aria-label="GitHub synchronization setup progress"
-          >
-            <li class="rounded-xl border border-emerald-300 bg-white p-3">
-              <span class="block font-bold text-emerald-800"
-                >✓ 1 · Account</span
-              >
-              <span class="mt-1 block truncate text-stone-700">
-                {{ gitSession.user.login }}
-              </span>
-            </li>
-            <li
-              class="rounded-xl border bg-white p-3"
-              [class.border-emerald-300]="selectedGitRepository"
-              [class.border-violet-400]="!selectedGitRepository"
-              [attr.aria-current]="selectedGitRepository ? null : 'step'"
-            >
-              <span
-                class="block font-bold"
-                [class.text-emerald-800]="selectedGitRepository"
-                [class.text-violet-800]="!selectedGitRepository"
-              >
-                {{ selectedGitRepository ? '✓' : '2' }} · Repository
-              </span>
-              <span class="mt-1 block truncate text-stone-700">
-                {{ selectedGitRepository?.fullName ?? 'Choose a destination' }}
-              </span>
-            </li>
-            <li
-              class="rounded-xl border bg-white p-3"
-              [class.border-emerald-300]="gitLibraryStepComplete"
-              [class.border-violet-400]="gitLibraryStepActive"
-              [class.border-stone-200]="!selectedGitRepository"
-              [attr.aria-current]="gitLibraryStepActive ? 'step' : null"
-            >
-              <span
-                class="block font-bold"
-                [class.text-emerald-800]="gitLibraryStepComplete"
-                [class.text-violet-800]="gitLibraryStepActive"
-                [class.text-stone-500]="!selectedGitRepository"
-              >
-                {{ gitLibraryStepComplete ? '✓' : '3' }}
-                · Library
-              </span>
-              <span class="mt-1 block text-stone-700">
-                {{ gitLibraryStepLabel }}
-              </span>
-            </li>
-          </ol>
-          @if (lastCompletedSyncAt) {
-            <p class="mb-0 mt-3 text-xs text-violet-900">
-              Last synchronized
-              <time [attr.datetime]="lastCompletedSyncAt">
-                {{ lastCompletedSyncAt | date: 'medium' }}
-              </time>
-            </p>
-          }
-        </section>
-        <section
-          class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
-        >
-          <div class="flex items-center gap-3">
-            @if (gitSession.user.avatarUrl) {
-              <img
-                class="size-10 rounded-full"
-                [src]="gitSession.user.avatarUrl"
-                alt=""
-                referrerpolicy="no-referrer"
-              />
-            }
-            <div>
-              <p class="m-0 text-sm text-stone-500">Connected to GitHub as</p>
-              <p class="m-0 font-semibold">{{ gitSession.user.login }}</p>
-            </div>
-          </div>
-
-          @if (repositories.length === 0) {
-            <section
-              class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
-              aria-labelledby="github-no-repositories-heading"
-              data-testid="github-no-repositories"
-            >
-              <h2
-                id="github-no-repositories-heading"
+                id="github-onboarding-heading"
                 class="m-0 text-base font-semibold"
               >
-                No repositories are available
+                Connect your GitHub library
               </h2>
-              <p class="mb-3 mt-1 text-sm">
-                Install the GitHub App or grant it access to a repository, then
-                return here and refresh the list.
+              <p class="mb-0 mt-1 text-sm text-stone-600">
+                First grant the GitHub App access to one or more private
+                repositories. Then authorize Omnia Reader to identify your
+                account. GitHub credentials remain in the sync gateway.
               </p>
+            </div>
+            <div class="flex flex-wrap gap-3">
               <a mat-stroked-button [href]="gitSession.installationUrl">
-                Install or update repository access
+                1. Install or manage GitHub App
               </a>
-            </section>
-          }
-
-          @if (repositories.length > 5) {
-            <label class="block">
-              <span class="mb-1 block text-sm font-semibold">
-                Filter repositories
-              </span>
-              <input
-                class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
-                type="search"
-                autocomplete="off"
-                placeholder="Search owner or repository name"
-                [value]="repositoryQuery"
-                [disabled]="busy || automaticSyncBusy"
-                (input)="updateRepositoryQuery($event)"
-                data-testid="github-repository-filter"
-              />
-              <span
-                class="mt-1 block text-xs text-stone-500"
-                aria-live="polite"
+              <button
+                mat-flat-button
+                type="button"
+                data-testid="sync-connect"
+                [disabled]="busy || automaticSyncBusy || !gatewayAvailable.git"
+                (click)="connect()"
               >
-                Showing {{ filteredRepositories.length }} of
-                {{ repositories.length }} repositories. The selected repository
-                stays visible.
-              </span>
-            </label>
-          }
-
-          <label class="block">
-            <span class="mb-2 block text-sm font-semibold">
-              Git/LFS repository
-            </span>
-            <select
-              class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
-              [disabled]="busy || automaticSyncBusy"
-              (change)="selectRepository($event)"
+                2. Authorize GitHub account
+              </button>
+            </div>
+          </section>
+        } @else {
+          <section
+            class="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-5"
+            aria-labelledby="github-setup-progress-heading"
+            data-testid="github-setup-progress"
+          >
+            <div
+              class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
             >
-              <option value="" [selected]="!gitSession.repository">
-                Choose a repository
-              </option>
-              @for (repository of filteredRepositories; track repository.id) {
-                <option
-                  [value]="repository.id"
-                  [selected]="gitSession.repository?.id === repository.id"
-                  [disabled]="!repository.canPush"
+              <div>
+                <h2
+                  id="github-setup-progress-heading"
+                  class="m-0 text-lg font-semibold text-violet-950"
                 >
-                  {{ repository.fullName
-                  }}{{ repository.canPush ? '' : ' (read-only)' }}
-                </option>
-              }
-            </select>
-          </label>
-
-          @if (!selectedGitRepository) {
-            <section
-              class="rounded-xl border border-stone-200 bg-stone-50 p-4"
-              aria-labelledby="create-github-repository-heading"
-              data-testid="create-github-repository"
-            >
-              <h2
-                id="create-github-repository-heading"
-                class="m-0 text-base font-semibold"
-              >
-                Create a sync repository
-              </h2>
-              <p
-                id="create-github-repository-help"
-                class="mt-1 text-sm text-stone-600"
-              >
-                Omnia Reader creates a private repository initialized for Git
-                LFS. It never exposes a personal access token to this browser.
-              </p>
-              <form
-                class="flex flex-col gap-3 sm:flex-row sm:items-end"
-                (submit)="
-                  createRepository(newRepositoryName.value);
-                  $event.preventDefault()
-                "
-              >
-                <label class="min-w-0 flex-1">
-                  <span class="mb-1 block text-sm font-semibold">
-                    Repository name
-                  </span>
-                  <input
-                    #newRepositoryName
-                    class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
-                    name="repositoryName"
-                    value="omnia-reader-library"
-                    maxlength="100"
-                    pattern="(?:[A-Za-z0-9._]|-)+"
-                    aria-describedby="create-github-repository-help"
-                    [disabled]="busy || automaticSyncBusy"
-                    required
-                  />
-                </label>
-                <button
+                  GitHub sync setup
+                </h2>
+                <p
+                  class="mb-0 mt-1 text-sm font-medium text-violet-900"
+                  aria-live="polite"
+                  data-testid="github-library-status"
+                >
+                  {{ gitLibraryStatus }}
+                </p>
+              </div>
+              @if (gitRepositoryUrl) {
+                <a
                   mat-stroked-button
-                  type="submit"
+                  [href]="gitRepositoryUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open repository
+                  <mat-icon>open_in_new</mat-icon>
+                </a>
+              }
+            </div>
+            <ol
+              class="mt-4 grid list-none gap-3 p-0 text-sm sm:grid-cols-3"
+              aria-label="GitHub synchronization setup progress"
+            >
+              <li class="rounded-xl border border-emerald-300 bg-white p-3">
+                <span class="block font-bold text-emerald-800"
+                  >✓ 1 · Account</span
+                >
+                <span class="mt-1 block truncate text-stone-700">
+                  {{ gitSession.user.login }}
+                </span>
+              </li>
+              <li
+                class="rounded-xl border bg-white p-3"
+                [class.border-emerald-300]="selectedGitRepository"
+                [class.border-violet-400]="!selectedGitRepository"
+                [attr.aria-current]="selectedGitRepository ? null : 'step'"
+              >
+                <span
+                  class="block font-bold"
+                  [class.text-emerald-800]="selectedGitRepository"
+                  [class.text-violet-800]="!selectedGitRepository"
+                >
+                  {{ selectedGitRepository ? '✓' : '2' }} · Repository
+                </span>
+                <span class="mt-1 block truncate text-stone-700">
+                  {{
+                    selectedGitRepository?.fullName ?? 'Choose a destination'
+                  }}
+                </span>
+              </li>
+              <li
+                class="rounded-xl border bg-white p-3"
+                [class.border-emerald-300]="gitLibraryStepComplete"
+                [class.border-violet-400]="gitLibraryStepActive"
+                [class.border-stone-200]="!selectedGitRepository"
+                [attr.aria-current]="gitLibraryStepActive ? 'step' : null"
+              >
+                <span
+                  class="block font-bold"
+                  [class.text-emerald-800]="gitLibraryStepComplete"
+                  [class.text-violet-800]="gitLibraryStepActive"
+                  [class.text-stone-500]="!selectedGitRepository"
+                >
+                  {{ gitLibraryStepComplete ? '✓' : '3' }}
+                  · Library
+                </span>
+                <span class="mt-1 block text-stone-700">
+                  {{ gitLibraryStepLabel }}
+                </span>
+              </li>
+            </ol>
+            @if (lastCompletedSyncAt) {
+              <p class="mb-0 mt-3 text-xs text-violet-900">
+                Last synchronized
+                <time [attr.datetime]="lastCompletedSyncAt">
+                  {{ lastCompletedSyncAt | date: 'medium' }}
+                </time>
+              </p>
+            }
+          </section>
+          <section
+            class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
+          >
+            <div class="flex items-center gap-3">
+              @if (gitSession.user.avatarUrl) {
+                <img
+                  class="size-10 rounded-full"
+                  [src]="gitSession.user.avatarUrl"
+                  alt=""
+                  referrerpolicy="no-referrer"
+                />
+              }
+              <div>
+                <p class="m-0 text-sm text-stone-500">Connected to GitHub as</p>
+                <p class="m-0 font-semibold">{{ gitSession.user.login }}</p>
+              </div>
+            </div>
+
+            @if (repositories.length === 0) {
+              <section
+                class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
+                aria-labelledby="github-no-repositories-heading"
+                data-testid="github-no-repositories"
+              >
+                <h2
+                  id="github-no-repositories-heading"
+                  class="m-0 text-base font-semibold"
+                >
+                  No repositories are available
+                </h2>
+                <p class="mb-3 mt-1 text-sm">
+                  Install the GitHub App or grant it access to a repository,
+                  then return here and refresh the list.
+                </p>
+                <a mat-stroked-button [href]="gitSession.installationUrl">
+                  Install or update repository access
+                </a>
+              </section>
+            }
+
+            @if (repositories.length > 5) {
+              <label class="block">
+                <span class="mb-1 block text-sm font-semibold">
+                  Filter repositories
+                </span>
+                <input
+                  class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="Search owner or repository name"
+                  [value]="repositoryQuery"
                   [disabled]="busy || automaticSyncBusy"
+                  (input)="updateRepositoryQuery($event)"
+                  data-testid="github-repository-filter"
+                />
+                <span
+                  class="mt-1 block text-xs text-stone-500"
+                  aria-live="polite"
                 >
-                  Create private repository
-                </button>
-              </form>
-              @if (repositoryInstallationSettingsUrl) {
-                <div class="mt-3">
-                  <a mat-flat-button [href]="repositoryInstallationSettingsUrl">
-                    Grant repository access
-                  </a>
-                </div>
-              }
-            </section>
-          }
+                  Showing {{ filteredRepositories.length }} of
+                  {{ repositories.length }} repositories. The selected
+                  repository stays visible.
+                </span>
+              </label>
+            }
 
-          <div class="flex flex-wrap gap-3">
-            <a mat-button [href]="gitSession.installationUrl">
-              Manage repository access
-            </a>
-            <button
-              mat-button
-              type="button"
-              [disabled]="busy || automaticSyncBusy"
-              (click)="refreshRepositories()"
-            >
-              Refresh repositories
-            </button>
-          </div>
-
-          <div class="flex flex-wrap gap-3">
-            <button
-              mat-flat-button
-              type="button"
-              [disabled]="busy || automaticSyncBusy || !gitSession.repository"
-              (click)="syncNow()"
-            >
-              {{
-                manualSyncController
-                  ? 'Synchronizing…'
-                  : 'Sync books and progress'
-              }}
-            </button>
-            <button
-              mat-button
-              type="button"
-              [disabled]="busy || automaticSyncBusy"
-              (click)="disconnect()"
-            >
-              Disconnect
-            </button>
-          </div>
-        </section>
-      }
-    } @else if (selectedProvider === 'mega') {
-      @if (!megaSession.authenticated) {
-        <button
-          mat-flat-button
-          type="button"
-          data-testid="sync-connect"
-          [disabled]="busy || automaticSyncBusy || !gatewayAvailable.mega"
-          (click)="connect()"
-        >
-          Connect MEGA
-        </button>
-      } @else {
-        <section
-          class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
-        >
-          <div>
-            <p class="m-0 text-sm text-stone-500">Connected to MEGA as</p>
-            <p class="m-0 font-semibold">{{ megaSession.account }}</p>
-          </div>
-
-          <label class="block">
-            <span class="mb-2 block text-sm font-semibold">
-              MEGA application folder
-            </span>
-            <select
-              class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
-              [disabled]="busy || automaticSyncBusy"
-              (change)="selectFolder($event)"
-            >
-              <option value="" [selected]="!megaSession.folder">
-                Choose a folder
-              </option>
-              @for (folder of folders; track folder.handle) {
-                <option
-                  [value]="folder.handle"
-                  [selected]="megaSession.folder?.handle === folder.handle"
-                  [disabled]="!folder.canWrite"
-                >
-                  {{ folder.path }}{{ folder.canWrite ? '' : ' (read-only)' }}
+            <label class="block">
+              <span class="mb-2 block text-sm font-semibold">
+                Git/LFS repository
+              </span>
+              <select
+                class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+                [disabled]="busy || automaticSyncBusy"
+                (change)="selectRepository($event)"
+              >
+                <option value="" [selected]="!gitSession.repository">
+                  Choose a repository
                 </option>
-              }
-            </select>
-          </label>
+                @for (repository of filteredRepositories; track repository.id) {
+                  <option
+                    [value]="repository.id"
+                    [selected]="gitSession.repository?.id === repository.id"
+                    [disabled]="!repository.canPush"
+                  >
+                    {{ repository.fullName
+                    }}{{ repository.canPush ? '' : ' (read-only)' }}
+                  </option>
+                }
+              </select>
+            </label>
 
-          <div class="flex flex-wrap gap-3">
-            <button
-              mat-flat-button
-              type="button"
-              [disabled]="busy || automaticSyncBusy || !megaSession.folder"
-              (click)="syncNow()"
-            >
-              {{
-                manualSyncController
-                  ? 'Synchronizing…'
-                  : 'Sync books and progress'
-              }}
-            </button>
-            <button
-              mat-button
-              type="button"
-              [disabled]="busy || automaticSyncBusy"
-              (click)="disconnect()"
-            >
-              Disconnect
-            </button>
-          </div>
-        </section>
+            @if (!selectedGitRepository) {
+              <section
+                class="rounded-xl border border-stone-200 bg-stone-50 p-4"
+                aria-labelledby="create-github-repository-heading"
+                data-testid="create-github-repository"
+              >
+                <h2
+                  id="create-github-repository-heading"
+                  class="m-0 text-base font-semibold"
+                >
+                  Create a sync repository
+                </h2>
+                <p
+                  id="create-github-repository-help"
+                  class="mt-1 text-sm text-stone-600"
+                >
+                  Omnia Reader creates a private repository initialized for Git
+                  LFS. It never exposes a personal access token to this browser.
+                </p>
+                <form
+                  class="flex flex-col gap-3 sm:flex-row sm:items-end"
+                  (submit)="
+                    createRepository(newRepositoryName.value);
+                    $event.preventDefault()
+                  "
+                >
+                  <label class="min-w-0 flex-1">
+                    <span class="mb-1 block text-sm font-semibold">
+                      Repository name
+                    </span>
+                    <input
+                      #newRepositoryName
+                      class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+                      name="repositoryName"
+                      value="omnia-reader-library"
+                      maxlength="100"
+                      pattern="(?:[A-Za-z0-9._]|-)+"
+                      aria-describedby="create-github-repository-help"
+                      [disabled]="busy || automaticSyncBusy"
+                      required
+                    />
+                  </label>
+                  <button
+                    mat-stroked-button
+                    type="submit"
+                    [disabled]="busy || automaticSyncBusy"
+                  >
+                    Create private repository
+                  </button>
+                </form>
+                @if (repositoryInstallationSettingsUrl) {
+                  <div class="mt-3">
+                    <a
+                      mat-flat-button
+                      [href]="repositoryInstallationSettingsUrl"
+                    >
+                      Grant repository access
+                    </a>
+                  </div>
+                }
+              </section>
+            }
+
+            <div class="flex flex-wrap gap-3">
+              <a mat-button [href]="gitSession.installationUrl">
+                Manage repository access
+              </a>
+              <button
+                mat-button
+                type="button"
+                [disabled]="busy || automaticSyncBusy"
+                (click)="refreshRepositories()"
+              >
+                Refresh repositories
+              </button>
+            </div>
+
+            <div class="flex flex-wrap gap-3">
+              <button
+                mat-button
+                type="button"
+                [disabled]="busy || automaticSyncBusy"
+                (click)="disconnect()"
+              >
+                Disconnect
+              </button>
+            </div>
+          </section>
+        }
+      } @else if (selectedProvider === 'mega') {
+        @if (!megaSession.authenticated) {
+          <button
+            mat-flat-button
+            type="button"
+            data-testid="sync-connect"
+            [disabled]="busy || automaticSyncBusy || !gatewayAvailable.mega"
+            (click)="connect()"
+          >
+            Connect MEGA
+          </button>
+        } @else {
+          <section
+            class="space-y-5 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
+          >
+            <div>
+              <p class="m-0 text-sm text-stone-500">Connected to MEGA as</p>
+              <p class="m-0 font-semibold">{{ megaSession.account }}</p>
+            </div>
+
+            <label class="block">
+              <span class="mb-2 block text-sm font-semibold">
+                MEGA application folder
+              </span>
+              <select
+                class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2"
+                [disabled]="busy || automaticSyncBusy"
+                (change)="selectFolder($event)"
+              >
+                <option value="" [selected]="!megaSession.folder">
+                  Choose a folder
+                </option>
+                @for (folder of folders; track folder.handle) {
+                  <option
+                    [value]="folder.handle"
+                    [selected]="megaSession.folder?.handle === folder.handle"
+                    [disabled]="!folder.canWrite"
+                  >
+                    {{ folder.path }}{{ folder.canWrite ? '' : ' (read-only)' }}
+                  </option>
+                }
+              </select>
+            </label>
+
+            <div class="flex flex-wrap gap-3">
+              <button
+                mat-button
+                type="button"
+                [disabled]="busy || automaticSyncBusy"
+                (click)="disconnect()"
+              >
+                Disconnect
+              </button>
+            </div>
+          </section>
+        }
+      } @else {
+        <p
+          class="rounded-xl border border-dashed border-stone-300 p-5 text-stone-600"
+        >
+          Choose Git + LFS or MEGA to configure library synchronization.
+        </p>
       }
-    } @else {
-      <p
-        class="rounded-xl border border-dashed border-stone-300 p-5 text-stone-600"
-      >
-        Choose Git + LFS or MEGA to configure library synchronization.
-      </p>
-    }
+    </div>
 
     @if (openReconciliations.length > 0) {
       <section

@@ -666,3 +666,37 @@ Final validation (Node v26.5.0):
 - `git diff --check`: passed. Chromium uses simulated providers; live account
   cleanup, Firefox/WebKit, and native runtime are not claimed. The user's MEGA
   backend remains intentionally unconfigured.
+
+### Minimal sync settings (2026-09-14)
+
+Connected users see the destination, automatic sync status, last sync time, and
+manual sync action. Hide provider selection and destination/account management
+behind an explicitly expanded Connection settings control; show setup immediately
+when no destination exists. Keep errors, retry, cancellation, transfer progress,
+and membership conflicts visible independently of that control. Put previous
+transfer counters in a native Sync details disclosure. Remove zero-change clutter
+and developer-oriented introductory copy. Preserve provider behavior and sessions.
+
+Implementation plan: presentation-only changes in the settings component, with
+colocated disclosure tests and Chromium keyboard/setup coverage. No storage,
+network, dependency, or sync algorithm changes. Reuse this feature amendment for
+this bounded follow-up rather than introducing a separate sync feature.
+
+Acceptance: connected setup is collapsed initially, keyboard activation reveals
+and hides configuration, unconfigured setup remains accessible, and diagnostics
+are optional. Validate settings unit tests, app/e2e lint, production build, and
+focused browser journeys.
+
+Validation: settings Vitest suite 34 passed; `npx nx lint omnia-reader` and
+`npx nx lint omnia-reader-e2e` passed; production build passed (437.79 kB initial).
+Focused Chromium runs passed eight sync/setup/reload/orphan cases and four
+keyboard/mobile/provider-accessibility/repository-setup cases (one overlapping
+minimal-view case). Desktop and 360px mobile screenshots were inspected. Commands:
+
+- `npx nx test omnia-reader --include='**/sync-settings-page.component.spec.ts'`
+- `npx nx build omnia-reader --configuration production`
+- `npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts sync.spec.ts --project=chromium --grep='keeps connected sync|offers GitHub App|preserves successful Git|runs full manual Git|does not resurrect a backup' --workers=1`
+- `npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts sync.spec.ts sync-accessibility.spec.ts --project=chromium --grep='keeps connected sync|creates and selects|restores GitHub setup|keeps provider maturity' --workers=1`
+
+Provider browser tests use simulated accounts; live provider, full convergence,
+Firefox/WebKit, and native checks were not run for this presentation change.

@@ -408,9 +408,7 @@ async function synchronize(page: Page, sample: string): Promise<void> {
     type: 'sync-staging-v1-sample',
     description: `${sample}:${Date.now() - started}ms`,
   });
-  await expect(
-    page.getByText(/0 local changes are waiting to sync/),
-  ).toBeVisible();
+  await expect(page.getByText(/\d+ changes? waiting to sync\./)).toHaveCount(0);
 }
 
 async function createInitialReadingState(page: Page): Promise<void> {

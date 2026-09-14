@@ -8,6 +8,13 @@ export async function selectSyncProvider(
   await expect(
     page.getByRole('heading', { name: 'Library sync', exact: true }),
   ).toBeVisible();
+  const settings = page.getByTestId('connection-settings-toggle');
+  if (
+    (await settings.isVisible()) &&
+    (await settings.getAttribute('aria-expanded')) === 'false'
+  ) {
+    await settings.click();
+  }
   await page.getByRole('button', { name: providerButtonName }).click();
   await expect(
     page.getByRole('button', { name: 'Sync books and progress' }),

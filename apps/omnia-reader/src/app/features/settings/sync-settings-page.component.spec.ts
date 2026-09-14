@@ -138,6 +138,34 @@ describe('SyncSettingsPageComponent', () => {
     }).compileComponents();
   });
 
+  it('keeps connected configuration collapsed until requested', async () => {
+    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.loading).toBe(false),
+    );
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const toggle = root.querySelector<HTMLButtonElement>(
+      '[data-testid="connection-settings-toggle"]',
+    )!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(
+      root.querySelector<HTMLElement>('#sync-provider-settings')?.hidden,
+    ).toBe(true);
+    toggle.click();
+    fixture.detectChanges();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      root.querySelector<HTMLElement>('#sync-provider-settings')?.hidden,
+    ).toBe(false);
+    toggle.click();
+    fixture.detectChanges();
+    expect(
+      root.querySelector<HTMLElement>('#sync-provider-settings')?.hidden,
+    ).toBe(true);
+  });
+
   it('loads the selected MEGA destination and synchronizes books with progress', async () => {
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();

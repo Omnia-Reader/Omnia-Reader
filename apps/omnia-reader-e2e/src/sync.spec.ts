@@ -23,6 +23,47 @@ import {
 // worker must not satisfy `/api/sync/**` before the simulated gateway sees it.
 test.use({ serviceWorkers: 'block' });
 
+test('keeps connected sync settings minimal and keyboard accessible', async ({
+  context,
+  page,
+}) => {
+  await new SimulatedSyncGateway('git').install(context);
+  await page.goto('/settings/sync');
+  await selectSyncProvider(page, /^Git \+ LFS/);
+  await page.reload();
+  const toggle = page.getByTestId('connection-settings-toggle');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('sync-provider-git')).toBeHidden();
+  await expect(
+    page.getByRole('button', { name: 'Sync books and progress' }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath('minimal-sync-desktop.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.reload();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.screenshot({
+    path: test.info().outputPath('minimal-sync-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('sync-provider-git')).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('sync-provider-git')).toBeHidden();
+  await expect(toggle).toBeFocused();
+  await page.getByRole('button', { name: 'Sync books and progress' }).click();
+  await expect(page.getByRole('status')).toContainText('Sync complete:');
+  const details = page.getByTestId('last-sync-result');
+  await expect(details.locator('dl')).toBeHidden();
+  await details.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(details.locator('dl')).toBeVisible();
+});
+
 test('records all interrupted-transfer recovery and logical sync compatibility rows', async () => {
   assertClosedMatrix(compatibilityMatrixRows, 14);
   const recoveryRows = rowsOwnedBy(recoveryMatrixRows, 'sync');
@@ -120,6 +161,7 @@ test('creates and selects a private GitHub synchronization repository', async ({
       { exact: false },
     ),
   ).toBeVisible();
+  await page.getByTestId('connection-settings-toggle').click();
   await expect(page.locator('select').first()).toHaveValue('2');
   await expect(
     page.getByRole('heading', { name: 'Create a sync repository' }),
@@ -141,6 +183,7 @@ test('restores GitHub setup and presents it consistently across Settings and the
   await page.goto('/settings/sync');
   await page.getByRole('button', { name: /^Git \+ LFS/ }).click();
 
+  await page.getByTestId('connection-settings-toggle').click();
   await expect(
     page.getByRole('link', { name: 'Open repository' }),
   ).toHaveAttribute('href', 'https://github.com/omnia-reader/e2e-library');
@@ -180,7 +223,7 @@ test('preserves successful Git sync details across an application reload', async
   });
 
   const result = page.getByTestId('last-sync-result');
-  await expect(result).toContainText('Last successful result');
+  await expect(result).toContainText('Sync details');
   await expect(result).toContainText('Received');
   await expect(result).toContainText('Sent');
   await expect
@@ -208,7 +251,7 @@ test('preserves successful Git sync details across an application reload', async
   await page.reload();
 
   await expect(result).toBeVisible();
-  await expect(result).toContainText('Last successful result');
+  await expect(result).toContainText('Sync details');
   await expect(page.getByTestId('github-library-status')).toContainText(
     'Library is up to date',
   );
