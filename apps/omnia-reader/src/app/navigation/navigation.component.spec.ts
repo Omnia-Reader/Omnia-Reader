@@ -143,9 +143,12 @@ describe('NavigationComponent', () => {
 
     expect(statusLink.getAttribute('href')).toBe('/settings/sync');
     expect(statusLink.textContent).toContain('Sync ready');
-    expect(statusLink.textContent).toContain('Experimental');
+    expect(statusLink.textContent).not.toContain('Experimental');
     expect(statusLink.getAttribute('title')).toContain('reader/library');
-    expect(statusLink.getAttribute('title')).toContain('keep another backup');
+    expect(statusLink.querySelector('[data-provider-icon="git"]')).toBeTruthy();
+    expect(statusLink.getAttribute('aria-label')).toBe(
+      'GitHub: Sync ready. View sync details.',
+    );
   });
 
   it('reports live transfer progress and actionable failures globally', () => {
@@ -169,7 +172,7 @@ describe('NavigationComponent', () => {
     );
     expect(statusLink.textContent).toContain('Syncing 25%');
     expect(statusLink.getAttribute('aria-label')).toBe(
-      'Syncing 25%. Experimental provider. Release validation is incomplete; keep another backup. View sync details.',
+      'GitHub: Syncing 25%. View sync details.',
     );
 
     syncStatusListener({
@@ -180,7 +183,7 @@ describe('NavigationComponent', () => {
 
     expect(statusLink.textContent).toContain('Sync needs attention');
     expect(statusLink.getAttribute('title')).toBe(
-      'Reconnect GitHub to continue synchronization. Experimental provider. Release validation is incomplete; keep another backup.',
+      'GitHub: Sync needs attention. Reconnect GitHub to continue synchronization.',
     );
 
     syncStatusListener({
@@ -189,7 +192,40 @@ describe('NavigationComponent', () => {
     });
     fixture.detectChanges();
     expect(statusLink.textContent).toContain('Synced');
-    expect(statusLink.textContent).toContain('Experimental');
+    expect(statusLink.textContent).not.toContain('Experimental');
+  });
+
+  it('uses the selected MEGA icon and an accessible offline state', () => {
+    connection.set({ state: 'ready', provider: 'mega', providerLabel: 'MEGA' });
+    syncStatusListener?.({ phase: 'offline' });
+    fixture.detectChanges();
+    const link: HTMLAnchorElement = fixture.nativeElement.querySelector(
+      '[data-testid="global-sync-status"]',
+    );
+    expect(link.querySelector('[data-provider-icon="mega"]')).toBeTruthy();
+    expect(link.querySelector('[data-provider-icon="git"]')).toBeNull();
+    expect(link.getAttribute('aria-label')).toBe(
+      'MEGA: Sync paused. View sync details.',
+    );
+  });
+
+  it('keeps a disconnected GitHub icon without displaying stale success', () => {
+    connection.set({
+      state: 'authorization-required',
+      provider: 'git',
+      providerLabel: 'GitHub',
+    });
+    syncStatusListener?.({
+      phase: 'idle',
+      lastSuccessAt: '2026-09-12T12:00:00.000Z',
+    });
+    fixture.detectChanges();
+    const link: HTMLAnchorElement = fixture.nativeElement.querySelector(
+      '[data-testid="global-sync-status"]',
+    );
+    expect(link.querySelector('[data-provider-icon="git"]')).toBeTruthy();
+    expect(link.getAttribute('aria-label')).toContain('Connect GitHub');
+    expect(link.getAttribute('aria-label')).not.toContain('Synced');
   });
 
   it('guides users to configure synchronization and releases its listener', () => {

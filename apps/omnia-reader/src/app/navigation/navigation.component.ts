@@ -50,32 +50,38 @@ export class NavigationComponent implements OnDestroy {
     return this.autoSync ? '/settings/sync' : '/settings';
   }
 
-  get syncMaturityLabel(): string | null {
-    return this.syncConnection.snapshot().providerMaturityLabel ?? null;
+  get syncProvider(): 'git' | 'mega' | null {
+    return this.autoSync ? this.syncConnection.snapshot().provider : null;
   }
 
-  get syncMaturityDescription(): string {
-    const connection = this.syncConnection.snapshot();
-    return connection.providerMaturityLabel &&
-      connection.providerMaturityConsequence
-      ? `${connection.providerMaturityLabel} provider. ${connection.providerMaturityConsequence}`
-      : '';
+  get syncProviderStatus(): string {
+    const provider =
+      this.syncProvider === 'git'
+        ? 'GitHub'
+        : this.syncProvider === 'mega'
+          ? 'MEGA'
+          : null;
+    return provider
+      ? `${provider}: ${this.syncStatusLabel}`
+      : this.syncStatusLabel;
+  }
+
+  get syncStatusBusy(): boolean {
+    const readiness = this.syncConnection.snapshot().state;
+    return (
+      readiness === 'checking' ||
+      (readiness === 'ready' &&
+        (this.automaticSyncStatus.phase === 'syncing' ||
+          this.automaticSyncStatus.phase === 'cancelling'))
+    );
   }
 
   get syncStatusAriaLabel(): string {
-    return [
-      `${this.syncStatusLabel}.`,
-      this.syncMaturityDescription,
-      'View sync details.',
-    ]
-      .filter(Boolean)
-      .join(' ');
+    return `${this.syncProviderStatus}. View sync details.`;
   }
 
   get syncStatusTitle(): string {
-    return [this.syncStatusDescription, this.syncMaturityDescription]
-      .filter(Boolean)
-      .join(' ');
+    return `${this.syncProviderStatus}. ${this.syncStatusDescription}`;
   }
 
   get syncStatusLabel(): string {
@@ -189,9 +195,7 @@ export class NavigationComponent implements OnDestroy {
       case 'cancelled':
         return 'sync_disabled';
       default:
-        return this.automaticSyncStatus.lastSuccessAt
-          ? 'cloud_done'
-          : 'cloud_sync';
+        return this.automaticSyncStatus.lastSuccessAt ? 'check' : 'cloud_sync';
     }
   }
 
@@ -201,7 +205,7 @@ export class NavigationComponent implements OnDestroy {
       return 'bg-white/10 text-white hover:bg-white/20';
     }
     if (readiness !== 'ready') {
-      return readiness === 'checking'
+      return readiness === 'checking' || readiness === 'authorization-required'
         ? 'bg-white/10 text-white hover:bg-white/20'
         : 'bg-amber-100 text-amber-950 hover:bg-amber-50';
     }

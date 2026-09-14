@@ -537,3 +537,36 @@ with that exclusion removed exposed existing test-fixture type errors (including
 `MemoryGatewayAdapter`, generic Vitest assertions, and the revocation Redis fake).
 This optional check is not green; executable Vitest, lint, and production build
 results above are separate evidence.
+
+### Compact provider status in the toolbar (2026-09-14)
+
+Replace the toolbar's visible status/maturity text with the selected provider's
+GitHub or MEGA icon and a distinct status badge. Preserve a 44px keyboard/touch
+target linking to sync details, a provider-specific accessible label, a tooltip
+with current status and last successful synchronization/recovery details, and
+polite status announcements. Busy animation respects reduced motion. Retain the
+experimental notice in provider settings. Local-only mode keeps a generic icon.
+The existing single-selected-provider contract remains unchanged; simultaneous
+provider statuses require independent scheduler state in a future feature.
+
+Verify readiness, progress, success, errors, offline, disconnected and MEGA states
+with component tests; verify toolbar navigation, focus, narrow layout and provider
+identity in Playwright. Run application lint and production bundle checks.
+
+Toolbar validation (Node v26.5.0):
+
+- `npx nx test omnia-reader --include='**/navigation.component.spec.ts'`:
+  10 passed (four new expectations failed before implementation).
+- `npx nx test omnia-reader --include='**/sync-settings-page.component.spec.ts'`:
+  35 passed.
+- `npx nx run-many -t lint -p omnia-reader omnia-reader-e2e`: passed.
+- `npx nx build omnia-reader --configuration production`: passed; initial
+  bundle 434.19 kB, within budgets.
+- `FIREFOX_E2E=1 npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts sync-accessibility.spec.ts --workers=2`:
+  3 passed, Chromium/Firefox/WebKit, including Axe, touch/keyboard navigation,
+  provider switching and the 44px target. Chromium screenshot visually inspected.
+- Focused Chromium `sync.spec.ts` toolbar setup and automatic-upload cancellation
+  journeys passed; the cancellation assertion was updated for its MEGA fixture
+  and rerun with `--grep='cancels an automatic publication' --workers=1`.
+- `git diff --check`: passed. No live-provider or native behavior is changed or
+  claimed by this UI validation.

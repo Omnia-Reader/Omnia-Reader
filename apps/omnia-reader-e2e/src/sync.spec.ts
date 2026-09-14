@@ -413,7 +413,7 @@ test('cancels an automatic publication upload without losing queued local work',
     const globalSyncStatus = page.getByTestId('global-sync-status');
     await expect(globalSyncStatus).toHaveAttribute(
       'aria-label',
-      /Syncing(?: \d+%)?\. Experimental provider\. Provider validation is incomplete; keep another backup\. View sync details\./,
+      /MEGA: Syncing(?: \d+%)?\. View sync details\./,
     );
 
     await page.getByRole('link', { name: 'Settings' }).click();
@@ -446,7 +446,7 @@ test('cancels an automatic publication upload without losing queued local work',
     );
     await expect(globalSyncStatus).toHaveAttribute(
       'aria-label',
-      'Sync cancelled. Experimental provider. Provider validation is incomplete; keep another backup. View sync details.',
+      'MEGA: Sync cancelled. View sync details.',
     );
     await expect(
       page.getByText(/local changes? (?:is|are) waiting to sync/),

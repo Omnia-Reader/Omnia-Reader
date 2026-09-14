@@ -18,7 +18,7 @@ test.use({
 
 test('keeps provider maturity accessible across touch, keyboard, and restart', async ({
   page,
-}) => {
+}, testInfo) => {
   const browserFailures = monitorBrowserFailures(page);
   await page.goto('/settings/sync');
 
@@ -56,10 +56,25 @@ test('keeps provider maturity accessible across touch, keyboard, and restart', a
   await page.reload();
   await expect(git).toHaveClass(/border-violet-600/);
   await expect(git).toContainText('Experimental');
+  await page.goto('/library');
   const toolbar = page.getByTestId('global-sync-status');
-  await expect(toolbar).toContainText('Experimental');
-  await expect(toolbar).toHaveAttribute('aria-label', /Experimental provider/);
-  await expect(toolbar).toHaveAttribute('title', /keep another backup/);
+  await expect(toolbar).not.toContainText('Experimental');
+  await expect(toolbar.locator('[data-provider-icon="git"]')).toBeVisible();
+  await expect(toolbar).toHaveAttribute(
+    'aria-label',
+    /^GitHub: .*View sync details\.$/,
+  );
+  const toolbarBounds = await toolbar.boundingBox();
+  expect(toolbarBounds?.width).toBeGreaterThanOrEqual(44);
+  expect(toolbarBounds?.height).toBeGreaterThanOrEqual(44);
+  await page.screenshot({ path: testInfo.outputPath('provider-toolbar.png') });
+  await toolbar.focus();
+  await expect(toolbar).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL('/settings/sync');
+  await mega.tap();
+  await expect(toolbar.locator('[data-provider-icon="mega"]')).toBeVisible();
+  await expect(toolbar).toHaveAttribute('aria-label', /^MEGA:/);
 
   const accessibility = await new AxeBuilder({ page })
     .withTags(wcagTags)
