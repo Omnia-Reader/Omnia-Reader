@@ -7,9 +7,12 @@ export interface SyncWorkerResult {
   conflicts: number;
   rejected: number;
   unchanged?: true;
+  maintenancePending?: true;
 }
 
 export interface SyncWorkerOptions {
+  /** Bypass revision shortcuts for an explicit repair/full synchronization. */
+  fullReconciliation?: boolean;
   signal?: AbortSignal;
   onTransferProgress?: ObjectTransferProgressListener;
 }
@@ -120,6 +123,9 @@ export class LibrarySyncCoordinator implements SyncWorker {
       : EMPTY_SYNC_RESULT;
     throwIfSyncAborted(options.signal);
     return {
+      ...(logicalBooks.maintenancePending
+        ? { maintenancePending: true as const }
+        : {}),
       pulled:
         preflight.pulled +
         schema.pulled +

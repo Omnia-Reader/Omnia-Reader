@@ -43,6 +43,61 @@ describe('ChangeAwareSyncWorker', () => {
     expect(checkpoints.write).not.toHaveBeenCalled();
   });
 
+  it('runs a full requested reconciliation despite an unchanged checkpoint', async () => {
+    const delegate = worker();
+    const sync = createWorker({
+      delegate,
+      remote: revisionTransport('repository:main:a', 'repository:main:a'),
+      checkpoints: checkpointStore('repository:main:a'),
+    });
+    await expect(
+      sync.synchronize({ fullReconciliation: true }),
+    ).resolves.toEqual(EMPTY_RESULT);
+    expect(delegate.synchronize).toHaveBeenCalledWith({
+      fullReconciliation: true,
+    });
+  });
+
+  it('does not trust checkpoints saved before orphan-backup reconciliation', async () => {
+    const storage = memoryStorage({
+      'omnia-reader.sync-checkpoint': JSON.stringify({
+        schemaVersion: 5,
+        git: 'repository:main:a',
+      }),
+    });
+    const delegate = worker();
+    const sync = createWorker({
+      delegate,
+      remote: revisionTransport('repository:main:a', 'repository:main:a'),
+      checkpoints: new BrowserSyncCheckpointStore(storage),
+    });
+    await expect(sync.synchronize()).resolves.toEqual(EMPTY_RESULT);
+    expect(delegate.synchronize).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps automatic full passes enabled while cleanup is pending', async () => {
+    const delegate = worker();
+    vi.mocked(delegate.synchronize).mockResolvedValue({
+      ...EMPTY_RESULT,
+      maintenancePending: true,
+    });
+    const checkpoints = checkpointStore(null);
+    const sync = createWorker({
+      delegate,
+      checkpoints,
+      remote: revisionTransport(
+        'repository:main:a',
+        'repository:main:a',
+        'repository:main:a',
+        'repository:main:a',
+      ),
+    });
+    await sync.synchronize();
+    expect(checkpoints.write).toHaveBeenLastCalledWith('git', null);
+    await sync.synchronize();
+    expect(delegate.synchronize).toHaveBeenCalledTimes(2);
+  });
+
   it('persists a checkpoint after a stable complete pass and reuses it after restart', async () => {
     const storage = memoryStorage();
     const checkpoints = new BrowserSyncCheckpointStore(storage);
@@ -60,7 +115,7 @@ describe('ChangeAwareSyncWorker', () => {
     await expect(first.synchronize()).resolves.toEqual(EMPTY_RESULT);
     expect(firstDelegate.synchronize).toHaveBeenCalledTimes(1);
     expect(storage.getItem('omnia-reader.sync-checkpoint')).toBe(
-      '{"schemaVersion":3,"git":"repository:main:a"}',
+      '{"schemaVersion":6,"git":"repository:main:a"}',
     );
 
     const restartedDelegate = worker();

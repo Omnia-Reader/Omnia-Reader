@@ -21,6 +21,7 @@ import {
   serializeLogicalBookChange,
 } from './logical-book-change';
 import { SYNC_ROOT } from './library-sync-manifest';
+import { RemoteBookBackupService } from './remote-book-backup-service';
 import { bookObjectPath } from './book-sync-manifest';
 import {
   BookSyncExclusions,
@@ -50,13 +51,17 @@ export interface LogicalBookStateRepository extends LibraryRepository {
 
 export class LogicalBookSyncService implements SyncWorker {
   private active: Promise<SyncWorkerResult> | null = null;
+  private readonly backups: RemoteBookBackupService;
 
   constructor(
     private readonly remote: LibrarySyncTransport,
     private readonly journal: SyncOperationJournal,
     private readonly repository: LogicalBookStateRepository,
     private readonly exclusions: BookSyncExclusions = NO_BOOK_SYNC_EXCLUSIONS,
-  ) {}
+    private readonly options: { orphanScope?: () => Promise<string> } = {},
+  ) {
+    this.backups = new RemoteBookBackupService(remote, journal, exclusions);
+  }
 
   synchronize(): Promise<SyncWorkerResult> {
     if (!this.active) {
@@ -119,15 +124,28 @@ export class LogicalBookSyncService implements SyncWorker {
       view.reconciliations,
     );
 
+    // Physical backups and logical membership share the same deletion intent.
+    // Keep the canonical markers and journal work until cleanup succeeds so a
+    // failed provider deletion is retried on the next synchronization.
+    if (state.removedVariants.length > 0) {
+      const removed = new Set(
+        state.removedVariants.map((entry) => entry.variantId),
+      );
+      await this.backups.deleteBackups([...removed]);
+    }
     await this.deleteLegacyLogicalEntries(logicalEntries);
     if (pendingOperations.length > 0) {
       await this.journal.acknowledge(
         pendingOperations.map((operation) => operation.id),
       );
     }
+    const cleanup = await this.backups.reconcileOrphaned(
+      (await this.options.orphanScope?.()) ?? 'default',
+    );
     return {
+      ...(cleanup.pending ? { maintenancePending: true as const } : {}),
       pulled: remoteChanges.length + (initialStateDocument ? 1 : 0),
-      pushed,
+      pushed: pushed + cleanup.deleted,
       conflicts: view.reconciliations.filter((item) => item.status === 'open')
         .length,
       rejected: 0,
@@ -148,6 +166,41 @@ export class LogicalBookSyncService implements SyncWorker {
     ) {
       const base = current ? parseLogicalBookState(current.content) : localSeed;
       const state = mergeLogicalBookChangesIntoState(base, changes);
+      // Older recovery code promoted unowned backups without proof that the
+      // user still wanted them. Retract only those synthetic, untouched entries;
+      // preserve any membership subsequently authored by a real user change.
+      const recoveryIds = new Set(
+        state.variants
+          .filter(
+            (entry) =>
+              entry.clock.deviceId === 'backup-recovery' &&
+              entry.clock.changeId ===
+                `change:backup-recovery:${entry.variant.id.slice(7)}`,
+          )
+          .map((entry) => entry.variant.id),
+      );
+      state.books = state.books.filter(
+        (entry) =>
+          !(
+            entry.clock.deviceId === 'backup-recovery' &&
+            Object.values(entry.book.variants).every(
+              (id) => id && recoveryIds.has(id),
+            ) &&
+            Object.values(entry.book.variants).some(
+              (id) =>
+                entry.clock.changeId ===
+                `change:backup-recovery:${id?.slice(7)}`,
+            )
+          ),
+      );
+      const retainedIds = new Set(
+        state.books.flatMap((entry) => Object.values(entry.book.variants)),
+      );
+      state.variants = state.variants.filter(
+        (entry) =>
+          !recoveryIds.has(entry.variant.id) ||
+          retainedIds.has(entry.variant.id),
+      );
       await this.reconcileActiveVariants(state, legacyVariantPaths);
       const content = serializeLogicalBookState(state);
       let pushed = 0;

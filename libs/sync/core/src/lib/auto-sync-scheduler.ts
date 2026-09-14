@@ -559,7 +559,9 @@ export class AutoSyncScheduler {
   private revisionPollingEnabled(): boolean {
     return (
       this.started &&
-      this.selection.current() === 'git' &&
+      (this.selection.current() === 'git' ||
+        (this.selection.current() === 'mega' &&
+          this.statusValue.lastResult?.maintenancePending === true)) &&
       this.environment.isOnline() &&
       !this.environment.isBackground()
     );
@@ -674,6 +676,7 @@ export class AutoSyncScheduler {
       transferProgress: undefined,
       errorMessage: undefined,
     });
+    if (provider === 'mega') this.scheduleRevisionCheck();
   }
 
   private updateStatus(status: Partial<AutoSyncStatus>): void {

@@ -125,6 +125,9 @@ function createLibrarySyncService(
     journal,
     repository,
     exclusions,
+    {
+      orphanScope: () => selectedPreferenceDestinationId(selection, git, mega),
+    },
   );
   const preferences = new ReaderPreferenceSyncService(
     remote,

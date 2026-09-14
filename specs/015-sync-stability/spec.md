@@ -600,3 +600,69 @@ Reading-burst validation (Node v26.5.0):
 - `git diff --check`: passed. Review confirmed serialization, cancellation,
   offline recovery and provider backoff remain intact. Firefox/WebKit, live
   GitHub timing and native/device scheduling were not exercised for this change.
+
+### Automatic orphan backup reconciliation (2026-09-14)
+
+The synchronized library owns publication membership. Remote backup files alone
+must never recreate missing library entries. Recorded library deletions remove
+all matching remote manifests and publication files during synchronization,
+including duplicate filename directories for one exact-edition identity. Preserve
+deletion markers and retry interrupted cleanup without losing discoverability.
+
+For old backups with no retained deletion marker, automatically clean up only
+after their complete manifest path/revision set remains unreferenced and unchanged
+for five minutes while the app is open. Recheck canonical membership, pending
+imports/association changes, and manifest revisions immediately before deletion.
+Never classify backups as orphans before valid canonical state exists. Reset the
+observation period on destination changes, changed manifests, pending membership,
+clock rollback, or application restart. This stability window is conservative;
+it is not a distributed lease proving that an arbitrarily suspended older client
+has no unfinished work. Downloaded copies remain untouched by remote cleanup.
+
+The earlier attempted recovery could promote deleted legacy backups. Retract only
+untouched book/variant entries bearing its exact synthetic backup-recovery clocks;
+preserve later user-authored membership. Then apply the same automatic orphan
+cleanup policy. Active canonical publications continue to download normally.
+
+Expose maintenancePending through the sync coordinator so Git performance
+checkpoints cannot skip deferred cleanup. MEGA schedules periodic checks only
+while maintenance is pending and stops afterward. Preserve offline/background,
+cancellation, and provider-backoff behavior. Version-6 performance checkpoints
+force one complete reconciliation after upgrade; this changes no authoritative
+library schema or authorization. Explicit manual sync bypasses both no-change
+and reading-only shortcuts; automatic reading sync remains fast after cleanup.
+
+Remove the entire Remote book backups settings section, manual cleanup controls,
+and the publication-delete dialog. Remove settings-only backup inventory calls.
+Provider setup/status, manual full sync, retries, and cancellation remain. MEGA
+need not be configured for GitHub to work; do not configure the user's MEGA
+account as part of this fix.
+
+Acceptance: automatic remote manifest/object removal on both GitHub and MEGA,
+untouched recovery-entry repair, no resurrection on later sync, grace reset on
+changed destination/manifests/imports, retry after interrupted deletion, and no
+manual backup UI. Tests inspect remote files and deletion markers directly so UI
+removal cannot hide incomplete cleanup. Live-provider and native results remain
+separate from the simulated browser/provider tests.
+
+Final validation (Node v26.5.0):
+
+- `npx nx test sync-core`: 249 passed. Coverage includes grace periods, changed
+  destinations/manifests/imports, tombstone and interruption handling, pending
+  maintenance bypassing Git checkpoints, and MEGA polling only until completion.
+- `npx nx test omnia-reader --include='**/sync-settings-page.component.spec.ts' --include='**/app.config.spec.ts'`:
+  40 passed, including absence of remote backup management UI.
+- `npx nx lint sync-core`, `npx nx lint omnia-reader`, and
+  `npx nx lint omnia-reader-e2e`: passed.
+- `npx nx build omnia-reader --configuration production`: passed; initial
+  bundle 437.75 kB within budgets.
+- After rebuilding the served production bundle,
+  `npx playwright test --config apps/omnia-reader-e2e/playwright.config.ts sync.spec.ts --project=chromium --grep='runs full manual Git|does not resurrect a backup|deletes a synchronized publication' --workers=1`:
+  six passed. Four orphan cases cover GitHub/MEGA with and without preexisting
+  synthetic membership, advance the browser clock while remaining in the same
+  app session, and assert automatic manifest/object deletion, exclusion markers,
+  no backup-management section, and no resurrection after another sync. The other
+  cases verify upgraded checkpoints/manual full sync and normal library deletion.
+- `git diff --check`: passed. Chromium uses simulated providers; live account
+  cleanup, Firefox/WebKit, and native runtime are not claimed. The user's MEGA
+  backend remains intentionally unconfigured.

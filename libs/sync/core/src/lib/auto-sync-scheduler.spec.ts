@@ -276,6 +276,33 @@ describe('AutoSyncScheduler', () => {
     expect(synchronize).toHaveBeenCalledTimes(1);
   });
 
+  it('automatically revisits MEGA while cleanup is pending and stops afterward', async () => {
+    const environment = new FakeEnvironment();
+    const synchronize = vi
+      .fn()
+      .mockResolvedValueOnce({ ...EMPTY_RESULT, maintenancePending: true })
+      .mockResolvedValue(EMPTY_RESULT);
+    const scheduler = createScheduler(
+      environment,
+      new SyncActivityNotifier(),
+      synchronize,
+      undefined,
+      undefined,
+      new FakeProviderSelection('mega'),
+    );
+    scheduler.start();
+    environment.advance(0);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(1);
+    environment.advance(10_000);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    environment.advance(60_000);
+    await flushPromises();
+    expect(synchronize).toHaveBeenCalledTimes(2);
+    scheduler.stop();
+  });
+
   it('starts revision polling only after Git becomes the selected provider', async () => {
     const environment = new FakeEnvironment();
     const selection = new FakeProviderSelection('mega');

@@ -9,7 +9,6 @@ import {
 } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
-import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { Router, RouterLink } from '@angular/router';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
@@ -19,11 +18,8 @@ import {
   AutoSyncStatus,
   LIBRARY_SYNC_SERVICE,
   ObjectTransferProgress,
-  REMOTE_BOOK_BACKUP_SERVICE,
-  RemoteBookBackup,
   SYNC_PROVIDER_SELECTION,
   SyncProviderKind,
-  SyncWorkerResult,
   syncProviderPresentation,
 } from '@omnia-reader/sync/core';
 import {
@@ -41,9 +37,7 @@ import {
   MegaGatewayError,
   MegaGatewaySession,
 } from '@omnia-reader/sync/mega';
-import { firstValueFrom } from 'rxjs';
 import { SyncConnectionStatusService } from '../../sync-connection-status.service';
-import { DeleteRemoteBookDialogComponent } from './delete-remote-book-dialog.component';
 
 @Component({
   selector: 'omnia-sync-settings-page',
@@ -61,9 +55,7 @@ export class SyncSettingsPageComponent implements OnInit {
   private readonly megaGateway = inject(MEGA_GATEWAY);
   private readonly providerSelection = inject(SYNC_PROVIDER_SELECTION);
   private readonly sync = inject(LIBRARY_SYNC_SERVICE);
-  private readonly remoteBookBackups = inject(REMOTE_BOOK_BACKUP_SERVICE);
   private readonly autoSync = inject(AUTO_SYNC_SCHEDULER);
-  private readonly dialog = inject(MatDialog);
   private readonly router = inject(Router);
   private readonly changeDetector = inject(ChangeDetectorRef);
   private readonly destroyRef = inject(DestroyRef);
@@ -87,7 +79,6 @@ export class SyncSettingsPageComponent implements OnInit {
   repositoryQuery = '';
   repositoryInstallationSettingsUrl: string | null = null;
   folders: readonly MegaFolder[] = [];
-  remoteBackups: readonly RemoteBookBackup[] = [];
   openReconciliations: readonly MembershipReconciliation[] = [];
   errorMessage: string | null = null;
   statusMessage: string | null = null;
@@ -108,7 +99,7 @@ export class SyncSettingsPageComponent implements OnInit {
         observedSuccess = nextSuccess;
         this.lastCompletedSyncAt = nextSuccess;
         if (nextSuccess && status.reason !== 'manual') {
-          void this.refreshAfterAutomaticSync(status.lastResult);
+          void this.refreshAfterAutomaticSync();
         }
       }
       this.changeDetector.markForCheck();
@@ -320,7 +311,6 @@ export class SyncSettingsPageComponent implements OnInit {
       if (destinationChanged) {
         this.autoSync.clearHistory('git');
       }
-      await this.refreshRemoteBackups();
       this.repositoryInstallationSettingsUrl = null;
       this.statusMessage =
         `Sync repository set to ${repository.fullName}. ` +
@@ -343,7 +333,6 @@ export class SyncSettingsPageComponent implements OnInit {
       if (result.selected) {
         this.providerSelection.select('git');
         this.autoSync.clearHistory('git');
-        await this.refreshRemoteBackups();
         this.statusMessage =
           `Created and selected private repository ${result.repository.fullName}. ` +
           'Initial library synchronization queued.';
@@ -384,7 +373,6 @@ export class SyncSettingsPageComponent implements OnInit {
       if (destinationChanged) {
         this.autoSync.clearHistory('mega');
       }
-      await this.refreshRemoteBackups();
       this.statusMessage =
         `MEGA sync folder set to ${folder.path}. ` +
         'Initial library synchronization queued.';
@@ -408,6 +396,7 @@ export class SyncSettingsPageComponent implements OnInit {
     await this.runBusy(async () => {
       try {
         const result = await this.sync.synchronize({
+          fullReconciliation: true,
           signal: controller.signal,
           onTransferProgress: (progress) => {
             this.transferProgress = progress;
@@ -415,9 +404,6 @@ export class SyncSettingsPageComponent implements OnInit {
           },
         });
         await this.refreshPendingCount();
-        if (!result.unchanged) {
-          await this.refreshRemoteBackups();
-        }
         this.autoSync.recordManualSuccess(result);
         this.statusMessage =
           `Sync complete: ${result.pulled} pulled, ${result.pushed} pushed` +
@@ -487,52 +473,10 @@ export class SyncSettingsPageComponent implements OnInit {
       this.repositoryQuery = '';
       this.repositoryInstallationSettingsUrl = null;
       this.folders = [];
-      this.remoteBackups = [];
       this.statusMessage =
         'Sync disconnected. Local books and reading progress are unchanged.';
       await this.syncConnection.refresh(true);
     });
-  }
-
-  async requestRemoteBackupDeletion(backup: RemoteBookBackup): Promise<void> {
-    if (
-      this.busy ||
-      this.automaticSyncBusy ||
-      !this.hasConfiguredDestination()
-    ) {
-      return;
-    }
-    const confirmed = await firstValueFrom(
-      this.dialog
-        .open<DeleteRemoteBookDialogComponent, RemoteBookBackup, boolean>(
-          DeleteRemoteBookDialogComponent,
-          {
-            data: backup,
-            autoFocus: 'first-tabbable',
-            restoreFocus: true,
-            width: 'min(34rem, calc(100vw - 2rem))',
-          },
-        )
-        .afterClosed(),
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    await this.runBusy(async () => {
-      await this.remoteBookBackups.deleteBackup(backup.manifest.bookId);
-      await Promise.all([
-        this.refreshPendingCount(),
-        this.refreshRemoteBackups(),
-      ]);
-      this.statusMessage =
-        `Remote backup for “${backup.manifest.title}” deleted. ` +
-        'Copies already stored on devices remain available.';
-    });
-  }
-
-  formatRemoteBackupSize(backup: RemoteBookBackup): string {
-    return formatBytes(backup.manifest.size);
   }
 
   private async refresh(): Promise<void> {
@@ -601,27 +545,13 @@ export class SyncSettingsPageComponent implements OnInit {
         ? await this.megaGateway.folders()
         : [];
     }
-    if (this.hasConfiguredDestination()) {
-      await this.refreshRemoteBackups();
-    } else {
-      this.remoteBackups = [];
-    }
     void this.syncConnection.refresh(true);
   }
 
-  private async refreshAfterAutomaticSync(
-    result: SyncWorkerResult | undefined,
-  ): Promise<void> {
+  private async refreshAfterAutomaticSync(): Promise<void> {
     await this.refreshPendingCount().catch(() => undefined);
     await this.refreshReconciliations().catch(() => undefined);
-    if (this.hasConfiguredDestination() && !result?.unchanged) {
-      await this.refreshRemoteBackups().catch(() => undefined);
-    }
     this.changeDetector.markForCheck();
-  }
-
-  private async refreshRemoteBackups(): Promise<void> {
-    this.remoteBackups = await this.remoteBookBackups.list();
   }
 
   private async refreshReconciliations(): Promise<void> {

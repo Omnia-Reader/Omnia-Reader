@@ -1,9 +1,10 @@
 import {
   BookRecord,
+  logicalBookFromVariant,
   SyncOperation,
   SyncOperationJournal,
 } from '@omnia-reader/reader/domain';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BookSyncManifest,
   bookDeletionPath,
@@ -21,6 +22,10 @@ import {
   RemoteObject,
   SyncConflictError,
 } from './library-sync-transport';
+import {
+  emptyLogicalBookState,
+  LOGICAL_BOOK_STATE_PATH,
+} from './logical-book-state';
 import { RemoteBookBackupService } from './remote-book-backup-service';
 
 const BOOK_ID = `sha256:${'a'.repeat(64)}`;
@@ -52,6 +57,153 @@ const MANIFEST: BookSyncManifest = {
 };
 
 describe('RemoteBookBackupService', () => {
+  it('automatically cleans stable orphans only after the grace period', async () => {
+    const remote = new MemoryRemote();
+    remote.seedDocument(LOGICAL_BOOK_STATE_PATH, emptyLogicalBookState());
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
+    remote.seedObject({
+      path: OBJECT_PATH,
+      revision: 'object-1',
+      size: BOOK.size,
+      sha256: MANIFEST.sha256,
+    });
+    let now = Date.parse('2026-09-14T12:00:00.000Z');
+    const service = new RemoteBookBackupService(
+      remote,
+      new MemoryJournal(),
+      new MemoryExclusions(),
+      { now: () => new Date(now).toISOString() },
+    );
+    await expect(service.reconcileOrphaned('repo-a')).resolves.toEqual({
+      deleted: 0,
+      pending: true,
+    });
+    now += 299_999;
+    await expect(service.reconcileOrphaned('repo-a')).resolves.toEqual({
+      deleted: 0,
+      pending: true,
+    });
+    expect(await remote.headObject(OBJECT_PATH)).not.toBeNull();
+    now += 1;
+    await expect(service.reconcileOrphaned('repo-a')).resolves.toEqual({
+      deleted: 1,
+      pending: false,
+    });
+    await expect(service.list()).resolves.toEqual([]);
+    expect(await remote.headObject(OBJECT_PATH)).toBeNull();
+    expect(await remote.read(bookDeletionPath(BOOK_ID))).not.toBeNull();
+  });
+
+  it.each(['destination', 'manifest', 'pending-import'])(
+    'restarts orphan grace when %s changes',
+    async (reason) => {
+      const remote = new MemoryRemote();
+      remote.seedDocument(LOGICAL_BOOK_STATE_PATH, emptyLogicalBookState());
+      remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
+      const journal = new MemoryJournal();
+      let now = Date.parse('2026-09-14T12:00:00.000Z');
+      const service = new RemoteBookBackupService(
+        remote,
+        journal,
+        new MemoryExclusions(),
+        { now: () => new Date(now).toISOString() },
+      );
+      await service.reconcileOrphaned('repo-a');
+      now += 300_000;
+      if (reason === 'manifest')
+        remote.seedDocument(bookManifestPath(MANIFEST), {
+          ...MANIFEST,
+          title: 'Renamed',
+        });
+      if (reason === 'pending-import')
+        vi.spyOn(journal, 'pending').mockResolvedValue([bookOperation()]);
+      expect(
+        (
+          await service.reconcileOrphaned(
+            reason === 'destination' ? 'repo-b' : 'repo-a',
+          )
+        ).deleted,
+      ).toBe(0);
+      expect(await remote.read(bookManifestPath(MANIFEST))).not.toBeNull();
+      expect(await remote.read(bookDeletionPath(BOOK_ID))).toBeNull();
+    },
+  );
+
+  it('finds and deletes confirmed orphan files with no historical deletion marker', async () => {
+    const remote = new MemoryRemote();
+    remote.seedDocument(LOGICAL_BOOK_STATE_PATH, emptyLogicalBookState());
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
+    remote.seedObject({
+      path: OBJECT_PATH,
+      revision: 'object-1',
+      size: BOOK.size,
+      sha256: MANIFEST.sha256,
+    });
+    const service = new RemoteBookBackupService(
+      remote,
+      new MemoryJournal(),
+      new MemoryExclusions(),
+    );
+    const candidates = await service.listOrphaned();
+    expect(candidates).toHaveLength(1);
+    await service.deleteOrphaned(candidates);
+    await expect(service.list()).resolves.toEqual([]);
+    await expect(remote.headObject(OBJECT_PATH)).resolves.toBeNull();
+    expect(await remote.read(bookDeletionPath(BOOK_ID))).not.toBeNull();
+  });
+
+  it('never offers remote-only files before canonical library initialization', async () => {
+    const remote = new MemoryRemote();
+    remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
+    const service = new RemoteBookBackupService(
+      remote,
+      new MemoryJournal(),
+      new MemoryExclusions(),
+    );
+    await expect(service.listOrphaned()).resolves.toEqual([]);
+  });
+
+  it.each(['changed-manifest', 'pending-import', 'active-membership'])(
+    'refuses cleanup when %s appears after review',
+    async (reason) => {
+      const remote = new MemoryRemote();
+      remote.seedDocument(LOGICAL_BOOK_STATE_PATH, emptyLogicalBookState());
+      remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
+      const journal = new MemoryJournal();
+      const service = new RemoteBookBackupService(
+        remote,
+        journal,
+        new MemoryExclusions(),
+      );
+      const candidates = await service.listOrphaned();
+      if (reason === 'changed-manifest')
+        remote.seedDocument(bookManifestPath(MANIFEST), {
+          ...MANIFEST,
+          title: 'Updated',
+        });
+      else if (reason === 'pending-import')
+        vi.spyOn(journal, 'pending').mockResolvedValue([bookOperation()]);
+      else {
+        const clock = {
+          changeId: 'change:import',
+          deviceId: 'device',
+          createdAt: BOOK.importedAt,
+        };
+        remote.seedDocument(LOGICAL_BOOK_STATE_PATH, {
+          ...emptyLogicalBookState(),
+          heads: [clock.changeId],
+          books: [{ book: logicalBookFromVariant(BOOK), clock }],
+          variants: [{ variant: BOOK, objectPath: OBJECT_PATH, clock }],
+        });
+      }
+      await expect(service.deleteOrphaned(candidates)).rejects.toBeInstanceOf(
+        SyncConflictError,
+      );
+      expect(await remote.read(bookManifestPath(MANIFEST))).not.toBeNull();
+      expect(await remote.read(bookDeletionPath(BOOK_ID))).toBeNull();
+    },
+  );
+
   it('lists only active publication manifests', async () => {
     const remote = new MemoryRemote();
     remote.seedDocument(bookManifestPath(MANIFEST), MANIFEST);
@@ -76,6 +228,37 @@ describe('RemoteBookBackupService', () => {
         revision: 'revision-1',
       },
     ]);
+  });
+
+  it('deletes all filename directories for one edition, including after an interruption', async () => {
+    const remote = new MemoryRemote();
+    const renamedBook = { ...BOOK, fileName: 'renamed.epub' };
+    const renamed = {
+      ...MANIFEST,
+      fileName: renamedBook.fileName,
+      objectPath: bookObjectPath(renamedBook),
+    };
+    for (const manifest of [MANIFEST, renamed]) {
+      remote.seedDocument(bookManifestPath(manifest), manifest);
+      remote.seedObject({
+        path: manifest.objectPath,
+        revision: 'object-1',
+        size: manifest.size,
+        sha256: manifest.sha256,
+      });
+    }
+    const service = new RemoteBookBackupService(
+      remote,
+      new MemoryJournal(),
+      new MemoryExclusions(),
+    );
+    remote.failDeletes = 1;
+    await expect(service.deleteBackup(BOOK_ID)).rejects.toThrow();
+    remote.failDeletes = 0;
+    await service.deleteBackup(BOOK_ID);
+    await expect(service.list()).resolves.toEqual([]);
+    expect(await remote.headObject(MANIFEST.objectPath)).toBeNull();
+    expect(await remote.headObject(renamed.objectPath)).toBeNull();
   });
 
   it('commits a tombstone before deleting the publication object', async () => {
@@ -110,8 +293,8 @@ describe('RemoteBookBackupService', () => {
     ]);
     expect(remote.events).toEqual([
       'write-tombstone',
-      'delete-document',
       'delete-object',
+      'delete-document',
       'write-catalog',
     ]);
   });

@@ -174,12 +174,6 @@
           <span class="font-semibold">{{ gitPresentation.name }}</span>
           <span class="flex flex-wrap gap-2">
             <span
-              class="rounded-full border border-stone-500 bg-stone-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-stone-900 uppercase"
-              data-testid="sync-provider-git-maturity"
-            >
-              {{ gitPresentation.maturityLabel }}
-            </span>
-            <span
               class="rounded-full bg-violet-100 px-2 py-0.5 text-[0.6875rem] font-bold tracking-wide text-violet-800 uppercase"
             >
               Recommended
@@ -798,60 +792,6 @@
           }
         </ul>
         <a mat-stroked-button routerLink="/library">Review in library</a>
-      </section>
-    }
-
-    @if (configuredDestination) {
-      <section
-        class="mt-6 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
-        aria-labelledby="remote-book-backups-heading"
-        data-testid="remote-book-backups"
-      >
-        <h2 id="remote-book-backups-heading" class="m-0 text-xl font-semibold">
-          Remote book backups
-        </h2>
-        <p class="mt-2 text-sm text-stone-600">
-          Deleting a remote backup stops that edition from synchronizing to
-          devices. Copies already downloaded to this device remain readable.
-        </p>
-
-        @if (remoteBackups.length === 0) {
-          <p class="mb-0 rounded-xl bg-stone-50 p-4 text-sm text-stone-600">
-            No publication files are stored in this sync destination.
-          </p>
-        } @else {
-          <ul class="m-0 list-none divide-y divide-stone-200 p-0">
-            @for (backup of remoteBackups; track backup.manifest.bookId) {
-              <li
-                class="flex flex-col gap-3 py-4 first:pt-2 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div class="min-w-0">
-                  <p class="m-0 truncate font-semibold">
-                    {{ backup.manifest.title }}
-                  </p>
-                  <p class="m-0 text-sm text-stone-600">
-                    @if (backup.manifest.authors.length > 0) {
-                      {{ backup.manifest.authors.join(', ') }} ·
-                    }
-                    {{ backup.manifest.format.toUpperCase() }} ·
-                    {{ formatRemoteBackupSize(backup) }}
-                  </p>
-                </div>
-                <button
-                  mat-stroked-button
-                  type="button"
-                  [disabled]="busy || automaticSyncBusy"
-                  [attr.aria-label]="
-                    'Delete remote backup for ' + backup.manifest.title
-                  "
-                  (click)="requestRemoteBackupDeletion(backup)"
-                >
-                  Delete remote backup
-                </button>
-              </li>
-            }
-          </ul>
-        }
       </section>
     }
   }

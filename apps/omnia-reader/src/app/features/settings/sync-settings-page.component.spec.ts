@@ -1,5 +1,4 @@
 import { TestBed } from '@angular/core/testing';
-import { MatDialog } from '@angular/material/dialog';
 import { provideRouter, Router } from '@angular/router';
 import { LIBRARY_REPOSITORY } from '@omnia-reader/library/data-access';
 import {
@@ -7,8 +6,6 @@ import {
   AutoSyncStatus,
   LIBRARY_SYNC_SERVICE,
   ObjectTransferProgress,
-  REMOTE_BOOK_BACKUP_SERVICE,
-  RemoteBookBackup,
   SYNC_PROVIDER_SELECTION,
   SyncWorkerOptions,
   SyncProviderKind,
@@ -21,7 +18,6 @@ import {
   SYNC_OPERATION_JOURNAL,
 } from '@omnia-reader/sync/git';
 import { MEGA_GATEWAY, MegaGateway } from '@omnia-reader/sync/mega';
-import { of } from 'rxjs';
 import { vi } from 'vitest';
 import { SyncSettingsPageComponent } from './sync-settings-page.component';
 
@@ -46,28 +42,6 @@ describe('SyncSettingsPageComponent', () => {
     recordManualSuccess: vi.fn(),
     clearHistory: vi.fn(),
   };
-  const remoteBackup: RemoteBookBackup = {
-    manifest: {
-      schemaVersion: 2,
-      bookId: 'sha256:remote-book',
-      format: 'epub',
-      fileName: 'remote-book.epub',
-      mediaType: 'application/epub+zip',
-      title: 'Remote book',
-      authors: ['Reader Example'],
-      size: 2048,
-      sha256: 'a'.repeat(64),
-      objectPath:
-        '.omnia-reader/library/remote-book--aaaaaaaaaaaa/remote-book.epub',
-      importedAt: '2026-07-26T12:00:00.000Z',
-      updatedAt: '2026-07-26T12:00:00.000Z',
-      appVersion: '1.0.0',
-    },
-    revision: 'revision-1',
-  };
-  const listRemoteBackups = vi.fn();
-  const deleteRemoteBackup = vi.fn();
-  const dialogOpen = vi.fn();
   const pending = vi.fn();
   const listOpenMembershipReconciliations = vi.fn();
   let autoSyncListener: ((status: AutoSyncStatus) => void) | null;
@@ -93,11 +67,6 @@ describe('SyncSettingsPageComponent', () => {
     autoSync.cancelActive.mockReset().mockReturnValue(true);
     autoSync.recordManualSuccess.mockReset();
     autoSync.clearHistory.mockReset();
-    listRemoteBackups.mockReset().mockResolvedValue([remoteBackup]);
-    deleteRemoteBackup.mockReset().mockResolvedValue(null);
-    dialogOpen.mockReset().mockReturnValue({
-      afterClosed: () => of(false),
-    });
     pending.mockReset().mockResolvedValue([]);
     selected = 'mega';
     selection = {
@@ -164,15 +133,7 @@ describe('SyncSettingsPageComponent', () => {
         { provide: GITHUB_GATEWAY, useValue: git },
         { provide: MEGA_GATEWAY, useValue: mega },
         { provide: LIBRARY_SYNC_SERVICE, useValue: { synchronize } },
-        {
-          provide: REMOTE_BOOK_BACKUP_SERVICE,
-          useValue: {
-            list: listRemoteBackups,
-            deleteBackup: deleteRemoteBackup,
-          },
-        },
         { provide: AUTO_SYNC_SCHEDULER, useValue: autoSync },
-        { provide: MatDialog, useValue: { open: dialogOpen } },
       ],
     }).compileComponents();
   });
@@ -229,11 +190,9 @@ describe('SyncSettingsPageComponent', () => {
     await vi.waitFor(() =>
       expect(fixture.componentInstance.loading).toBe(false),
     );
-    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
 
     await fixture.componentInstance.syncNow();
 
-    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
     expect(autoSync.recordManualSuccess).toHaveBeenCalledWith(
       expect.objectContaining({ unchanged: true }),
     );
@@ -655,7 +614,7 @@ describe('SyncSettingsPageComponent', () => {
     );
   });
 
-  it('refreshes queued changes and remote backups after automatic sync succeeds', async () => {
+  it('refreshes queued changes after automatic sync succeeds', async () => {
     pending.mockResolvedValueOnce([{}]).mockResolvedValueOnce([]);
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();
@@ -682,7 +641,6 @@ describe('SyncSettingsPageComponent', () => {
       '2026-07-27T14:00:00.000Z',
     );
     expect(pending).toHaveBeenCalledTimes(2);
-    expect(listRemoteBackups).toHaveBeenCalledTimes(2);
     const result = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="last-sync-result"]',
     );
@@ -693,13 +651,12 @@ describe('SyncSettingsPageComponent', () => {
     expect(result?.textContent).toContain('Conflicts retried');
   });
 
-  it('does not relist remote backups after an unchanged automatic sync', async () => {
+  it('refreshes queued changes after an unchanged automatic sync', async () => {
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();
     await vi.waitFor(() =>
       expect(fixture.componentInstance.loading).toBe(false),
     );
-    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
 
     autoSyncListener?.({
       phase: 'idle',
@@ -715,7 +672,6 @@ describe('SyncSettingsPageComponent', () => {
     });
 
     await vi.waitFor(() => expect(pending).toHaveBeenCalledTimes(2));
-    expect(listRemoteBackups).toHaveBeenCalledTimes(1);
   });
 
   it('offers an immediate manual retry when automatic sync needs attention', async () => {
@@ -1010,7 +966,10 @@ describe('SyncSettingsPageComponent', () => {
       );
     }
     expect(git?.textContent).toContain('Git + LFS');
-    expect(git?.textContent).toContain('Experimental');
+    expect(
+      git?.querySelector('[data-testid="sync-provider-git-maturity"]'),
+    ).toBeNull();
+    expect(git?.textContent).toContain('Recommended');
     expect(git?.textContent).toContain('keep another backup');
     expect(mega?.textContent).toContain('MEGA');
     expect(mega?.textContent).toContain('Experimental');
@@ -1126,6 +1085,7 @@ describe('SyncSettingsPageComponent', () => {
     synchronize.mockImplementationOnce(
       async (receivedOptions?: SyncWorkerOptions) => {
         options = receivedOptions;
+        expect(receivedOptions?.fullReconciliation).toBe(true);
         receivedOptions?.onTransferProgress?.({
           direction: 'upload',
           path: '.omnia-reader/v1/books/id/publication.epub',
@@ -1223,55 +1183,21 @@ describe('SyncSettingsPageComponent', () => {
     );
   });
 
-  it('lists publication backups stored in the selected destination', async () => {
+  it('does not expose remote backup management in sync settings', async () => {
     const fixture = TestBed.createComponent(SyncSettingsPageComponent);
     fixture.detectChanges();
     await vi.waitFor(() =>
       expect(fixture.componentInstance.loading).toBe(false),
     );
     fixture.detectChanges();
-
-    const backupSection = (
-      fixture.nativeElement as HTMLElement
-    ).querySelector<HTMLElement>('[data-testid="remote-book-backups"]');
-    expect(backupSection?.textContent).toContain('Remote book');
-    expect(backupSection?.textContent).toContain('Reader Example');
-    expect(backupSection?.textContent).toContain('2.0 KiB');
-  });
-
-  it('deletes a remote backup only after explicit confirmation', async () => {
-    dialogOpen.mockReturnValue({
-      afterClosed: () => of(true),
-    });
-    listRemoteBackups
-      .mockResolvedValueOnce([remoteBackup])
-      .mockResolvedValueOnce([]);
-    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
-    fixture.detectChanges();
-    await vi.waitFor(() =>
-      expect(fixture.componentInstance.loading).toBe(false),
+    expect(
+      fixture.nativeElement.querySelector(
+        '[data-testid="remote-book-backups"]',
+      ),
+    ).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain(
+      'Review orphan backups',
     );
-
-    await fixture.componentInstance.requestRemoteBackupDeletion(remoteBackup);
-    fixture.detectChanges();
-
-    expect(deleteRemoteBackup).toHaveBeenCalledWith('sha256:remote-book');
-    expect(fixture.componentInstance.remoteBackups).toEqual([]);
-    expect(fixture.componentInstance.statusMessage).toContain(
-      'Copies already stored on devices remain available',
-    );
-  });
-
-  it('keeps a remote backup when deletion is cancelled', async () => {
-    const fixture = TestBed.createComponent(SyncSettingsPageComponent);
-    fixture.detectChanges();
-    await vi.waitFor(() =>
-      expect(fixture.componentInstance.loading).toBe(false),
-    );
-
-    await fixture.componentInstance.requestRemoteBackupDeletion(remoteBackup);
-
-    expect(deleteRemoteBackup).not.toHaveBeenCalled();
   });
 });
 

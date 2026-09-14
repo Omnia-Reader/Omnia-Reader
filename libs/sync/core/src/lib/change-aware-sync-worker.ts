@@ -27,7 +27,7 @@ const UNCHANGED_RESULT: SyncWorkerResult = {
 };
 
 interface StoredSyncCheckpoint {
-  schemaVersion: 3;
+  schemaVersion: 6;
   git?: string;
   mega?: string;
 }
@@ -86,10 +86,10 @@ export class BrowserSyncCheckpointStore implements SyncCheckpointStore {
   private readStored(): StoredSyncCheckpoint {
     const serialized = this.storage?.getItem(STORAGE_KEY);
     if (!serialized || serialized.length > MAX_STORED_CHECKPOINT_LENGTH) {
-      return { schemaVersion: 3 };
+      return { schemaVersion: 6 };
     }
     const value: unknown = JSON.parse(serialized);
-    return isStoredSyncCheckpoint(value) ? { ...value } : { schemaVersion: 3 };
+    return isStoredSyncCheckpoint(value) ? { ...value } : { schemaVersion: 6 };
   }
 }
 
@@ -143,7 +143,11 @@ export class ChangeAwareSyncWorker implements SyncWorker {
     }
 
     const trustedCheckpoint = safeCheckpointRead(this.checkpoints, provider);
-    if (pendingBefore.length === 0 && trustedCheckpoint === revisionBefore) {
+    if (
+      !options.fullReconciliation &&
+      pendingBefore.length === 0 &&
+      trustedCheckpoint === revisionBefore
+    ) {
       const pendingAfterProbe = await this.journal.pending();
       throwIfSyncAborted(options.signal);
       if (pendingAfterProbe.length === 0) {
@@ -152,6 +156,7 @@ export class ChangeAwareSyncWorker implements SyncWorker {
     }
 
     if (
+      !options.fullReconciliation &&
       this.readingStateWorker &&
       (trustedCheckpoint === revisionBefore ||
         this.readingStateContinuationScope === revisionScope(revisionBefore)) &&
@@ -170,7 +175,10 @@ export class ChangeAwareSyncWorker implements SyncWorker {
       throwIfSyncAborted(options.signal);
       const pendingAfter = await this.journal.pending();
       throwIfSyncAborted(options.signal);
-      const canContinue = result.conflicts === 0 && result.rejected === 0;
+      const canContinue =
+        result.conflicts === 0 &&
+        result.rejected === 0 &&
+        !result.maintenancePending;
       this.readingStateContinuationScope = canContinue
         ? revisionScope(revisionBefore)
         : null;
@@ -195,6 +203,7 @@ export class ChangeAwareSyncWorker implements SyncWorker {
       pendingAfter.length === 0 &&
       result.conflicts === 0 &&
       result.rejected === 0 &&
+      !result.maintenancePending &&
       (result.pushed > 0 || revisionBefore !== revisionAfter)
     ) {
       const verification = await this.delegate.synchronize(options);
@@ -211,7 +220,8 @@ export class ChangeAwareSyncWorker implements SyncWorker {
         pendingAfterVerification.length === 0 &&
         verification.pushed === 0 &&
         verification.conflicts === 0 &&
-        verification.rejected === 0;
+        verification.rejected === 0 &&
+        !verification.maintenancePending;
       safeCheckpointWrite(
         this.checkpoints,
         provider,
@@ -226,7 +236,8 @@ export class ChangeAwareSyncWorker implements SyncWorker {
       pendingAfter.length === 0 &&
       result.pushed === 0 &&
       result.conflicts === 0 &&
-      result.rejected === 0;
+      result.rejected === 0 &&
+      !result.maintenancePending;
     safeCheckpointWrite(
       this.checkpoints,
       provider,
@@ -259,6 +270,7 @@ function combineResults(
 ): SyncWorkerResult {
   return {
     ...initial,
+    maintenancePending: verification.maintenancePending,
     pulled: initial.pulled + verification.pulled,
     pushed: initial.pushed + verification.pushed,
     conflicts: initial.conflicts + verification.conflicts,
@@ -296,7 +308,7 @@ function isStoredSyncCheckpoint(value: unknown): value is StoredSyncCheckpoint {
   }
   const candidate = value as Partial<StoredSyncCheckpoint>;
   return (
-    candidate.schemaVersion === 3 &&
+    candidate.schemaVersion === 6 &&
     (candidate.git === undefined || validRevision(candidate.git)) &&
     (candidate.mega === undefined || validRevision(candidate.mega))
   );

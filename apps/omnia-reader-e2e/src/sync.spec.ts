@@ -214,7 +214,7 @@ test('preserves successful Git sync details across an application reload', async
   );
 });
 
-test('finishes a stable repeated Git sync with only one revision request', async ({
+test('runs full manual Git reconciliation after upgrading an old checkpoint', async ({
   context,
   page,
 }) => {
@@ -225,7 +225,7 @@ test('finishes a stable repeated Git sync with only one revision request', async
   await context.addInitScript(() =>
     localStorage.setItem(
       'omnia-reader.sync-checkpoint',
-      JSON.stringify({ schemaVersion: 2, git: '1:main:e2e-r2' }),
+      JSON.stringify({ schemaVersion: 5, git: '1:main:e2e-r2' }),
     ),
   );
 
@@ -262,7 +262,7 @@ test('finishes a stable repeated Git sync with only one revision request', async
           ).schemaVersion,
       ),
     )
-    .toBe(3);
+    .toBe(6);
   await page.evaluate(() =>
     localStorage.removeItem('omnia-reader.sync-checkpoint'),
   );
@@ -288,11 +288,11 @@ test('finishes a stable repeated Git sync with only one revision request', async
   await expect
     .poll(() => gitSyncSuccessTimestamp(page), { timeout: 30_000 })
     .not.toBe(completedAt);
-  await expect(page.getByRole('status')).toContainText(
-    'Sync complete: 0 pulled, 0 pushed.',
-  );
+  await expect(page.getByRole('status')).toContainText('Sync complete:');
 
-  expect(gateway.requestHistory()).toEqual(['GET /revision']);
+  expect(gateway.requestHistory()).toContain(
+    'GET /files?prefix=.omnia-reader%2Flibrary',
+  );
 });
 
 async function gitSyncSuccessTimestamp(page: Page): Promise<string | null> {
@@ -572,6 +572,180 @@ async function verifySynchronizedRecoveryRetry(
     .length;
 }
 
+for (const provider of ['git', 'mega'] as const) {
+  for (const alreadyRecovered of [false, true]) {
+    test(`does not resurrect a backup absent from canonical library membership (provider=${provider}, alreadyRecovered=${alreadyRecovered})`, async ({
+      context,
+      page,
+      browser,
+    }) => {
+      test.setTimeout(90_000);
+      const publication = await createPdfFixture();
+      const gateway = new SimulatedSyncGateway(provider, {
+        expectedPublication: publication,
+      });
+      await gateway.install(context);
+      await page.goto('/');
+      await importSyncPublication(
+        page,
+        'orphan.pdf',
+        'application/pdf',
+        publication,
+        'Omnia PDF Fixture',
+      );
+      await page.goto('/settings/sync');
+      await selectSyncProvider(
+        page,
+        provider === 'git' ? /^Git \+ LFS/ : /^MEGA/,
+      );
+      await page
+        .getByRole('button', { name: 'Sync books and progress' })
+        .click();
+      await expect(page.getByRole('status')).toContainText('Sync complete:', {
+        timeout: 30_000,
+      });
+      const priorState = JSON.parse(
+        gateway.documentContent('.omnia-reader/logical-books/state.json') ??
+          '{}',
+      );
+      for (const entry of priorState.variants) {
+        entry.clock = {
+          deviceId: 'backup-recovery',
+          changeId: `change:backup-recovery:${entry.variant.id.slice(7)}`,
+          createdAt: entry.variant.importedAt,
+        };
+      }
+      for (const entry of priorState.books) {
+        const variantId = Object.values(entry.book.variants)[0] as string;
+        entry.clock = {
+          deviceId: 'backup-recovery',
+          changeId: `change:backup-recovery:${variantId.slice(7)}`,
+          createdAt: entry.book.importedAt,
+        };
+      }
+      priorState.heads = [
+        ...new Set(
+          [
+            ...priorState.books,
+            ...priorState.variants,
+            ...priorState.removedBooks,
+            ...priorState.removedVariants,
+            ...priorState.preferences,
+            ...priorState.reconciliations,
+          ].map((entry) => entry.clock.changeId),
+        ),
+      ].sort();
+      await page.close();
+      gateway.seedDocument(
+        '.omnia-reader/logical-books/state.json',
+        JSON.stringify(
+          alreadyRecovered
+            ? priorState
+            : {
+                schemaVersion: 1,
+                heads: [],
+                books: [],
+                removedBooks: [],
+                variants: [],
+                removedVariants: [],
+                preferences: [],
+                reconciliations: [],
+              },
+        ),
+      );
+      const fresh = await browser.newContext();
+      try {
+        await gateway.install(fresh);
+        const restored = await fresh.newPage();
+        await restored.clock.install();
+        await restored.goto('/settings/sync');
+        await selectSyncProvider(
+          restored,
+          provider === 'git' ? /^Git \+ LFS/ : /^MEGA/,
+        );
+        await restored
+          .getByRole('button', { name: 'Sync books and progress' })
+          .click();
+        await expect(restored.getByRole('status')).toContainText(
+          'Sync complete:',
+          {
+            timeout: 30_000,
+          },
+        );
+        await restored
+          .getByRole('link', { name: 'Library', exact: true })
+          .click();
+        await expect(
+          restored.getByText('Omnia PDF Fixture', { exact: true }),
+        ).toHaveCount(0);
+        const state = JSON.parse(
+          gateway.documentContent('.omnia-reader/logical-books/state.json') ??
+            '{}',
+        );
+        expect(state.books).toHaveLength(0);
+        expect(state.variants).toHaveLength(0);
+        await restored
+          .getByRole('link', { name: /(?:MEGA|GitHub):.*View sync details/ })
+          .click();
+        await expect(
+          restored.getByRole('button', { name: 'Sync books and progress' }),
+        ).toBeEnabled();
+        await expect
+          .poll(() =>
+            restored.evaluate(
+              (provider) =>
+                JSON.parse(
+                  localStorage.getItem(
+                    `omnia-reader.auto-sync.v1.history.${provider}`,
+                  ) ?? '{}',
+                ).lastResult?.maintenancePending,
+              provider,
+            ),
+          )
+          .toBe(true);
+        await restored.clock.fastForward(5 * 60_000 + 1_000);
+        await restored.clock.runFor(1_000);
+        await expect
+          .poll(
+            () =>
+              gateway
+                .documentPaths()
+                .some((path) => path.endsWith('/book.json')),
+            { timeout: 30_000 },
+          )
+          .toBe(false);
+        await expect(
+          restored.getByRole('heading', {
+            name: 'Remote book backups',
+            exact: true,
+          }),
+        ).toHaveCount(0);
+        await expectExcludedBook(restored, priorState.variants[0].variant.id);
+        expect(
+          gateway.documentPaths().some((path) => path.endsWith('/book.json')),
+        ).toBe(false);
+        expect(
+          gateway.objectPaths().some((path) => path.endsWith('/orphan.pdf')),
+        ).toBe(false);
+        await restored
+          .getByRole('button', { name: 'Sync books and progress' })
+          .click();
+        await expect(restored.getByRole('status')).toContainText(
+          'Sync complete:',
+        );
+        await restored
+          .getByRole('link', { name: 'Library', exact: true })
+          .click();
+        await expect(
+          restored.getByText('Omnia PDF Fixture', { exact: true }),
+        ).toHaveCount(0);
+      } finally {
+        await fresh.close();
+      }
+    });
+  }
+}
+
 test('deletes a synchronized publication locally and remotely', async ({
   context,
   page,
@@ -661,103 +835,6 @@ test('deletes a synchronized publication locally and remotely', async ({
   expect(gateway.documentContent(readmePath as string)).not.toContain(
     'Omnia PDF Fixture',
   );
-  expect(browserFailures()).toEqual([]);
-});
-
-test('deletes a remote publication backup without deleting the local copy', async ({
-  context,
-  page,
-}) => {
-  test.setTimeout(60_000);
-  const publication = await createPdfFixture();
-  const gateway = new SimulatedSyncGateway('mega', {
-    expectedPublication: publication,
-  });
-  await gateway.install(context);
-  const browserFailures = monitorSyncBrowserFailures(page);
-
-  await page.goto('/');
-  await importSyncPublication(
-    page,
-    'remote-deletion.pdf',
-    'application/pdf',
-    publication,
-    'Omnia PDF Fixture',
-  );
-  await page.goto('/settings/sync');
-  await selectSyncProvider(page, /^MEGA/);
-  await page.getByRole('button', { name: 'Sync books and progress' }).click();
-  await expect(page.getByRole('status')).toContainText('Sync complete:', {
-    timeout: 30_000,
-  });
-
-  const manifestPath = gateway
-    .documentPaths()
-    .find((path) => path.endsWith('/book.json'));
-  const libraryObjectPath = gateway
-    .objectPaths()
-    .find((path) => path.includes('/library/'));
-  expect(manifestPath).toBeDefined();
-  expect(libraryObjectPath).toBeDefined();
-  const bookId = JSON.parse(
-    gateway.documentContent(manifestPath as string) ?? '{}',
-  )['bookId'] as string;
-  await expect(
-    page.getByRole('button', {
-      name: 'Delete remote backup for Omnia PDF Fixture',
-    }),
-  ).toBeVisible();
-
-  await page
-    .getByRole('button', {
-      name: 'Delete remote backup for Omnia PDF Fixture',
-    })
-    .click();
-  const confirmation = page.getByRole('dialog');
-  await expect(confirmation).toContainText(
-    'It does not delete a copy already stored on this device',
-  );
-  await confirmation
-    .getByRole('button', { name: 'Delete remote backup' })
-    .click();
-
-  await expect(page.getByRole('status')).toContainText(
-    'Copies already stored on devices remain available',
-  );
-  await expect(
-    page.getByText('No publication files are stored in this sync destination'),
-  ).toBeVisible();
-  expect(
-    gateway.objectPaths(),
-    gateway.requestHistory().join('\n'),
-  ).not.toContain(libraryObjectPath);
-  expect(gateway.documentContent(manifestPath as string)).toBeNull();
-  const deletionPath = gateway
-    .documentPaths()
-    .find((path) => path.includes('/.deletions/books/'));
-  expect(deletionPath).toBeDefined();
-  expect(
-    JSON.parse(gateway.documentContent(deletionPath as string) ?? '{}'),
-  ).toMatchObject({
-    schemaVersion: 2,
-    deleted: true,
-  });
-  await expectExcludedBook(page, bookId);
-
-  await page.reload();
-  await expectExcludedBook(page, bookId);
-  await page.getByRole('button', { name: 'Sync books and progress' }).click();
-  await expect(page.getByRole('status')).toContainText('Sync complete:', {
-    timeout: 30_000,
-  });
-  expect(
-    gateway.objectPaths(),
-    gateway.requestHistory().join('\n'),
-  ).not.toContain(libraryObjectPath);
-  await page.goto('/');
-  await expect(
-    page.getByText('Omnia PDF Fixture', { exact: true }),
-  ).toBeVisible();
   expect(browserFailures()).toEqual([]);
 });
 

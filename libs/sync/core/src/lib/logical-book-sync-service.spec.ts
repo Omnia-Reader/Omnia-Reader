@@ -20,7 +20,12 @@ import {
   parseLogicalBookState,
   serializeLogicalBookState,
 } from './logical-book-state';
-import { bookObjectPath } from './book-sync-manifest';
+import {
+  bookObjectPath,
+  bookManifestPath,
+  createBookSyncManifest,
+  bookDeletionPath,
+} from './book-sync-manifest';
 import { BookSyncExclusions } from './book-sync-exclusions';
 
 const change = {
@@ -37,6 +42,255 @@ const change = {
 };
 
 describe('LogicalBookSyncService', () => {
+  it.each([false, true])(
+    'does not promote an unowned backup to library membership with conflict=%s',
+    async (conflict) => {
+      const remote = new MemoryTransport();
+      const publication = publicationFixture();
+      remote.documents.set(LOGICAL_BOOK_STATE_PATH, {
+        path: LOGICAL_BOOK_STATE_PATH,
+        content: serializeLogicalBookState(emptyLogicalBookState()) + '\n',
+        revision: 'state-1',
+      });
+      remote.writeConflicts = conflict ? 1 : 0;
+      remote.objects.set(bookObjectPath(publication.variant), {
+        path: bookObjectPath(publication.variant),
+        revision: 'object-1',
+        size: publication.variant.size,
+        sha256: publication.variant.id.slice(7),
+      });
+      const repository = {
+        listBooks: vi.fn().mockResolvedValue([publication.variant]),
+        getBook: vi.fn().mockResolvedValue(publication.variant),
+        replaceLogicalBookState: vi.fn(),
+      } as unknown as LogicalBookStateRepository;
+      const journal = {
+        pending: vi.fn().mockResolvedValue(
+          conflict
+            ? [
+                {
+                  id: 'op',
+                  entity: 'logical-book-change',
+                  entityId: change.changeId,
+                  operation: 'upsert',
+                  payload: change,
+                },
+              ]
+            : [],
+        ),
+        acknowledge: vi.fn(),
+      } as unknown as SyncOperationJournal;
+      const service = new LogicalBookSyncService(remote, journal, repository);
+      await service.synchronize();
+      expect(repository.replaceLogicalBookState).toHaveBeenCalledWith(
+        [],
+        [],
+        [],
+      );
+      expect(remote.writeAttempts).toBe(conflict ? 2 : 1);
+      const writes = remote.writeAttempts;
+      await service.synchronize();
+      expect(remote.writeAttempts).toBe(writes);
+    },
+  );
+
+  it('honors a concurrent deletion instead of recovering the backup on retry', async () => {
+    const remote = new MemoryTransport();
+    const publication = publicationFixture();
+    remote.documents.set(LOGICAL_BOOK_STATE_PATH, {
+      path: LOGICAL_BOOK_STATE_PATH,
+      content: serializeLogicalBookState(emptyLogicalBookState()) + '\n',
+      revision: 'state-1',
+    });
+    remote.objects.set(bookObjectPath(publication.variant), {
+      path: bookObjectPath(publication.variant),
+      revision: 'object-1',
+      size: publication.variant.size,
+      sha256: publication.variant.id.slice(7),
+    });
+    const write = remote.write.bind(remote);
+    vi.spyOn(remote, 'write')
+      .mockImplementationOnce(async () => {
+        const state = emptyLogicalBookState();
+        state.removedVariants.push({
+          variantId: publication.variant.id,
+          format: 'epub',
+          clock: {
+            changeId: 'change:concurrent-delete',
+            createdAt: publication.variant.importedAt,
+            deviceId: 'other-device',
+          },
+        });
+        remote.documents.set(LOGICAL_BOOK_STATE_PATH, {
+          path: LOGICAL_BOOK_STATE_PATH,
+          content: serializeLogicalBookState(state),
+          revision: 'state-2',
+        });
+        throw new SyncConflictError();
+      })
+      .mockImplementation(write);
+    const repository = {
+      listBooks: vi.fn().mockResolvedValue([publication.variant]),
+      getBook: vi.fn().mockResolvedValue(publication.variant),
+      replaceLogicalBookState: vi.fn(),
+    } as unknown as LogicalBookStateRepository;
+    const journal = {
+      pending: vi.fn().mockResolvedValue([
+        {
+          id: 'op',
+          entity: 'logical-book-change',
+          entityId: change.changeId,
+          operation: 'upsert',
+          payload: change,
+        },
+      ]),
+      acknowledge: vi.fn(),
+    } as unknown as SyncOperationJournal;
+    await new LogicalBookSyncService(remote, journal, repository).synchronize();
+    expect(repository.replaceLogicalBookState).toHaveBeenCalledWith([], [], []);
+  });
+
+  it.each([false, true])(
+    'retracts only untouched synthetic recovery membership, userEdited=%s',
+    async (userEdited) => {
+      const remote = new MemoryTransport();
+      const publication = publicationFixture();
+      const state = mergeLogicalBookChangesIntoState(emptyLogicalBookState(), [
+        publication.change,
+      ]);
+      const clock = {
+        deviceId: 'backup-recovery',
+        changeId: `change:backup-recovery:${publication.variant.id.slice(7)}`,
+        createdAt: publication.variant.importedAt,
+      };
+      state.books[0].clock = userEdited ? state.books[0].clock : clock;
+      state.variants[0].clock = clock;
+      remote.documents.set(LOGICAL_BOOK_STATE_PATH, {
+        path: LOGICAL_BOOK_STATE_PATH,
+        content: serializeLogicalBookState(state),
+        revision: 'state-1',
+      });
+      remote.objects.set(bookObjectPath(publication.variant), {
+        path: bookObjectPath(publication.variant),
+        revision: 'object-1',
+        size: publication.variant.size,
+        sha256: publication.variant.id.slice(7),
+      });
+      const repository = {
+        getBook: vi.fn().mockResolvedValue(publication.variant),
+        replaceLogicalBookState: vi.fn(),
+      } as unknown as LogicalBookStateRepository;
+      const journal = {
+        pending: vi.fn().mockResolvedValue([]),
+        acknowledge: vi.fn(),
+      } as unknown as SyncOperationJournal;
+      await new LogicalBookSyncService(
+        remote,
+        journal,
+        repository,
+      ).synchronize();
+      expect(repository.replaceLogicalBookState).toHaveBeenCalledWith(
+        userEdited ? [publication.logicalBook] : [],
+        [],
+        [],
+      );
+      expect(remote.objects.size).toBe(1);
+      const result = parseLogicalBookState(
+        remote.documents.get(LOGICAL_BOOK_STATE_PATH)!.content,
+      );
+      expect(result.variants).toHaveLength(userEdited ? 1 : 0);
+    },
+  );
+
+  it('retires deleted library backups and retries interrupted object cleanup', async () => {
+    const remote = new MemoryTransport();
+    const publication = publicationFixture();
+    const state = emptyLogicalBookState();
+    state.removedVariants.push({
+      variantId: publication.variant.id,
+      format: 'epub',
+      clock: {
+        changeId: 'change:removed',
+        createdAt: publication.variant.importedAt,
+        deviceId: 'device-b',
+      },
+    });
+    remote.documents.set(LOGICAL_BOOK_STATE_PATH, {
+      path: LOGICAL_BOOK_STATE_PATH,
+      content: serializeLogicalBookState(state),
+      revision: 'state-1',
+    });
+    const manifest = createBookSyncManifest(publication.variant);
+    remote.documents.set(bookManifestPath(manifest), {
+      path: bookManifestPath(manifest),
+      content: JSON.stringify(manifest),
+      revision: 'manifest-1',
+    });
+    remote.objects.set(manifest.objectPath, {
+      path: manifest.objectPath,
+      revision: 'object-1',
+      size: manifest.size,
+      sha256: manifest.sha256,
+    });
+    const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
+      replaceLogicalBookState: vi.fn(),
+    } as unknown as LogicalBookStateRepository;
+    const journal = {
+      pending: vi.fn().mockResolvedValue([]),
+      acknowledge: vi.fn(),
+    } as unknown as SyncOperationJournal;
+    const service = new LogicalBookSyncService(remote, journal, repository);
+    const deletion = vi
+      .spyOn(remote, 'deleteObject')
+      .mockRejectedValueOnce(new Error('interrupted deletion'));
+    await expect(service.synchronize()).rejects.toThrow('interrupted deletion');
+    expect(remote.documents.has(bookDeletionPath(publication.variant.id))).toBe(
+      true,
+    );
+    expect(remote.objects.size).toBe(1);
+    await service.synchronize();
+    expect(deletion).toHaveBeenCalledTimes(2);
+    expect(remote.objects.size).toBe(0);
+    expect(remote.documents.has(bookManifestPath(manifest))).toBe(false);
+    expect(
+      parseLogicalBookState(
+        remote.documents.get(LOGICAL_BOOK_STATE_PATH)!.content,
+      ).removedVariants,
+    ).toHaveLength(1);
+  });
+
+  it('does not recover a leftover variant with a canonical deletion marker', async () => {
+    const remote = new MemoryTransport();
+    const publication = publicationFixture();
+    const state = emptyLogicalBookState();
+    state.removedVariants.push({
+      variantId: publication.variant.id,
+      format: 'epub',
+      clock: {
+        changeId: 'change:removed',
+        createdAt: publication.variant.importedAt,
+        deviceId: 'device-b',
+      },
+    });
+    remote.documents.set(LOGICAL_BOOK_STATE_PATH, {
+      path: LOGICAL_BOOK_STATE_PATH,
+      content: serializeLogicalBookState(state),
+      revision: 'state-1',
+    });
+    const repository = {
+      listBooks: vi.fn().mockResolvedValue([publication.variant]),
+      replaceLogicalBookState: vi.fn(),
+    } as unknown as LogicalBookStateRepository;
+    const journal = {
+      pending: vi.fn().mockResolvedValue([]),
+      acknowledge: vi.fn(),
+    } as unknown as SyncOperationJournal;
+    await new LogicalBookSyncService(remote, journal, repository).synchronize();
+    expect(repository.replaceLogicalBookState).toHaveBeenCalledWith([], [], []);
+    expect(remote.objects.size).toBe(0);
+  });
+
   it('publishes a local change before acknowledging its journal operation', async () => {
     const remote = new MemoryTransport();
     const acknowledge = vi.fn().mockImplementation(async () => {
@@ -59,6 +313,7 @@ describe('LogicalBookSyncService', () => {
     } as unknown as SyncOperationJournal;
     const replaceLogicalBookState = vi.fn().mockResolvedValue(undefined);
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getLogicalLibrarySnapshot: vi.fn().mockResolvedValue(emptySnapshot()),
       replaceLogicalBookState,
     } as unknown as LogicalBookStateRepository;
@@ -66,7 +321,7 @@ describe('LogicalBookSyncService', () => {
     await expect(
       new LogicalBookSyncService(remote, journal, repository).synchronize(),
     ).resolves.toMatchObject({ pushed: 1, rejected: 0 });
-    expect(remote.listPrefixes).toEqual([]);
+    expect(remote.listPrefixes).toEqual(['.omnia-reader/library']);
     expect(remote.documents.size).toBe(1);
     expect([...remote.documents.keys()]).toEqual([LOGICAL_BOOK_STATE_PATH]);
     expect(replaceLogicalBookState).toHaveBeenCalledWith([], [], []);
@@ -101,6 +356,7 @@ describe('LogicalBookSyncService', () => {
       append: vi.fn(),
     } as unknown as SyncOperationJournal;
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getLogicalLibrarySnapshot: vi.fn().mockResolvedValue(emptySnapshot()),
       replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
     } as unknown as LogicalBookStateRepository;
@@ -143,6 +399,7 @@ describe('LogicalBookSyncService', () => {
       append: vi.fn(),
     } as unknown as SyncOperationJournal;
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getLogicalLibrarySnapshot: vi.fn().mockResolvedValue(emptySnapshot()),
       replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
     } as unknown as LogicalBookStateRepository;
@@ -231,6 +488,7 @@ describe('LogicalBookSyncService', () => {
     );
     const headObject = vi.spyOn(remote, 'headObject');
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       listLogicalBooks: vi.fn().mockResolvedValue([]),
       getBook: vi.fn().mockResolvedValue(null),
       replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
@@ -261,6 +519,7 @@ describe('LogicalBookSyncService', () => {
     const acknowledge = vi.fn();
     const journal = journalWithChange(acknowledge);
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getLogicalLibrarySnapshot: vi.fn().mockResolvedValue(emptySnapshot()),
       replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
     } as unknown as LogicalBookStateRepository;
@@ -279,6 +538,7 @@ describe('LogicalBookSyncService', () => {
     const acknowledge = vi.fn();
     const journal = journalWithChange(acknowledge);
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getLogicalLibrarySnapshot: vi.fn().mockResolvedValue(emptySnapshot()),
       replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
     } as unknown as LogicalBookStateRepository;
@@ -311,6 +571,7 @@ describe('LogicalBookSyncService', () => {
     remote.blobs.set(bookObjectPath(publication.variant), new Blob(['book']));
     const storeSyncedBook = vi.fn().mockResolvedValue(undefined);
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getBook: vi.fn().mockResolvedValue(null),
       storeSyncedBook,
       replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
@@ -345,6 +606,7 @@ describe('LogicalBookSyncService', () => {
       revision: 'state-1',
     });
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getBook: vi.fn().mockResolvedValue(publication.variant),
       getBookSource: vi.fn().mockResolvedValue({
         name: publication.variant.fileName,
@@ -389,6 +651,7 @@ describe('LogicalBookSyncService', () => {
     const remote = new MemoryTransport();
     const publication = publicationFixture();
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       getLogicalLibrarySnapshot: vi.fn().mockResolvedValue({
         revision: 'local-1',
         logicalBooks: [publication.logicalBook],
@@ -435,6 +698,7 @@ describe('LogicalBookSyncService', () => {
     remote.deleteError = new Error('cleanup unavailable');
     const acknowledge = vi.fn();
     const repository = {
+      listBooks: vi.fn().mockResolvedValue([]),
       replaceLogicalBookState: vi.fn().mockResolvedValue(undefined),
     } as unknown as LogicalBookStateRepository;
 
@@ -545,6 +809,24 @@ class MemoryTransport implements LibrarySyncTransport {
     this.objects.set(request.path, object);
     this.blobs.set(request.path, request.content);
     return Promise.resolve(object);
+  }
+
+  async deleteDocument(request: {
+    path: string;
+    expectedRevision?: string;
+  }): Promise<void> {
+    await this.deleteEntries([
+      { ...request, expectedRevision: request.expectedRevision ?? '' },
+    ]);
+  }
+
+  async deleteObject(request: {
+    path: string;
+    expectedRevision?: string;
+  }): Promise<void> {
+    if (this.deleteError) throw this.deleteError;
+    this.objects.delete(request.path);
+    this.blobs.delete(request.path);
   }
 
   deleteEntries(
